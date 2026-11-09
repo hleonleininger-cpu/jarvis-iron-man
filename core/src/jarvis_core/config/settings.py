@@ -3,7 +3,7 @@
 from pathlib import Path
 from typing import Self
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -29,6 +29,20 @@ class McpServerConfig(BaseModel):
     command: str
     args: list[str] = []
     tools: dict[str, RiskClass]
+    # Optional: CONFIRM-Werkzeug -> Vorschau-Werkzeug desselben Servers (schreibt nichts). Das
+    # Vorschau-Werkzeug steht nicht in `tools` und wird dem Modell nie angeboten.
+    previews: dict[str, str] = {}
+
+    @model_validator(mode="after")
+    def _previews_belong_to_tools(self) -> "McpServerConfig":
+        for tool, preview in self.previews.items():
+            if tool not in self.tools:
+                raise ValueError(f"previews: '{tool}' ist nicht in tools deklariert")
+            if preview in self.tools:
+                raise ValueError(
+                    f"previews: '{preview}' darf nicht selbst als Werkzeug angeboten werden"
+                )
+        return self
 
 
 class Settings(BaseSettings):

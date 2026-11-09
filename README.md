@@ -11,6 +11,8 @@ ollama pull qwen3.5:4b          # Beispiel: Befehl aus jarvis doctor übernehmen
 uv run jarvis chat "Wer bist du?"
 uv run jarvis serve             # nur 127.0.0.1
 uv run jarvis tools list        # MCP-Werkzeuge mit Risikoklasse
+uv run jarvis secrets set apple_caldav   # Apple-ID + App-Passwort -> Schlüsselbund
+uv run jarvis secrets status
 uv run jarvis audit verify
 ```
 
@@ -21,9 +23,13 @@ Policy die Risikoklasse; Aufrufe stehen im Audit-Log (nur Werkzeugname, keine Ar
 `jarvis chat "Wie ist das Wetter in Dortmund?"` ruft das Werkzeug über das lokale Modell auf.
 Siehe ADR-004.
 
+**Kalender (iCloud):** `list_events` (READ) liest Termine, `create_event` (CONFIRM) legt nach
+Vorschau und Rückfrage `[j/N]` an. API: SSE-Event `confirm`, Antwort per
+`POST /v1/confirm/{id}`. Zugangsdaten nur im OS-Schlüsselbund. Siehe ADR-005/006.
+
 ## Server
 - `GET /health`
-- `POST /v1/chat` mit `{"message": "..."}` → Server-Sent Events (`delta`, `tool`, `notice`, `done`, `error`)
+- `POST /v1/chat` mit `{"message": "..."}` → Server-Sent Events (`delta`, `tool`, `notice`, `confirm`, `done`, `error`)
 
 ## Konfiguration
 `core/jarvis.toml` (Vorlage: `core/jarvis.example.toml`) und Umgebungsvariablen `JARVIS_*`

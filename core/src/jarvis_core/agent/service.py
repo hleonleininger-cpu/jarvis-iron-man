@@ -3,7 +3,10 @@
 import asyncio
 import os
 from collections.abc import AsyncGenerator, AsyncIterable
+from contextlib import suppress
 from dataclasses import dataclass
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import structlog
 from pydantic_ai import Agent
@@ -14,10 +17,11 @@ from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.tools import RunContext
 
+from jarvis_core.agent.confirmation import ConfirmationBroker, ConfirmRequest
 from jarvis_core.audit import AuditLog
 from jarvis_core.config import Settings
 from jarvis_core.hardware import detect_hardware, recommend
-from jarvis_core.mcp_hub import McpHub, current_channel
+from jarvis_core.mcp_hub import McpHub, current_channel, current_confirmer
 
 # Kein Werbebanner von Pydantic AI auf stdout/stderr.
 os.environ.setdefault("PYDANTIC_AI_NO_BANNER", "1")
@@ -27,8 +31,22 @@ SYSTEM_PROMPT = (
     "Antworte immer auf Deutsch, knapp und sachlich. "
     "Nutze ein Werkzeug nur, wenn die Frage es wirklich braucht, und gib ausschließlich Werte "
     "wieder, die ein Werkzeug geliefert hat. Meldet ein Werkzeug einen Fehler, sage das ehrlich "
-    "und erfinde nichts."
+    "und erfinde nichts. Bei Datumsangaben für Werkzeuge nenne immer das konkrete Datum "
+    "(JJJJ-MM-TT), auch wenn der Nutzer nur einen Wochentag sagt. Für Werkzeuge, die etwas "
+    "verändern, holt das System die Bestätigung selbst beim Nutzer ein: rufe sie direkt auf und "
+    "frage vorher nicht nach."
 )
+WEEKDAYS_DE = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"]
+
+
+def system_prompt(now: datetime | None = None) -> str:
+    """Systemprompt mit heutigem Datum, damit relative Angaben ("Montag") auflösbar sind."""
+    today = (now or datetime.now(ZoneInfo("Europe/Berlin"))).astimezone(ZoneInfo("Europe/Berlin"))
+    return (
+        f"{SYSTEM_PROMPT} Heute ist {WEEKDAYS_DE[today.weekday()]}, der {today:%Y-%m-%d} "
+        f"(Uhrzeit {today:%H:%M}, Zeitzone Europe/Berlin)."
+    )
+
 
 log = structlog.get_logger("jarvis.chat")
 
@@ -50,7 +68,17 @@ class Notice:
     message: str
 
 
-StreamEvent = TextDelta | ToolUsed | Notice
+@dataclass(frozen=True)
+class ConfirmRequested:
+    """Ein CONFIRM-Werkzeug wartet auf Ja/Nein; Antwort über `ChatService.broker.resolve`."""
+
+    id: str
+    tool: str
+    preview: str
+    question: str
+
+
+StreamEvent = TextDelta | ToolUsed | Notice | ConfirmRequested
 
 
 class ChatError(Exception):
@@ -82,58 +110,57 @@ def _translate(exc: Exception, model_name: str, base_url: str) -> ChatError:
 
 class ChatService:
     def __init__(
-        self, model: Model, model_name: str, base_url: str, audit: AuditLog, hub: McpHub
+        self,
+        model: Model,
+        model_name: str,
+        base_url: str,
+        audit: AuditLog,
+        hub: McpHub,
+        broker: ConfirmationBroker | None = None,
     ) -> None:
         self.model_name = model_name
         self.hub = hub
+        self.broker = broker or ConfirmationBroker()
         self._model = model
         self._base_url = base_url
         self._audit = audit
 
     async def stream(self, message: str, *, channel: str) -> AsyncGenerator[StreamEvent]:
-        """Liefert Ereignisse. Schreibt genau einen Chat-Audit-Eintrag (ohne Inhalte)."""
-        status = "error"
-        tokens: int | None = None
-        pending: list[StreamEvent] = []
+        """Liefert Ereignisse. Schreibt genau einen Chat-Audit-Eintrag (ohne Inhalte).
+
+        Der Agent läuft in einem eigenen Task, damit Ereignisse (z. B. eine Bestätigungsanfrage)
+        auch dann ausgeliefert werden, während ein Werkzeugaufruf auf die Antwort wartet.
+        """
+        queue: asyncio.Queue[StreamEvent | BaseException | None] = asyncio.Queue()
+        usage: list[int | None] = [None]
+
+        def emit(request: ConfirmRequest) -> None:
+            queue.put_nowait(
+                ConfirmRequested(request.id, request.tool, request.preview, request.question)
+            )
+
+        async def confirmer(tool: str, preview: str, question: str) -> bool:
+            approved = await self.broker.ask(tool, preview, question, emit)
+            if not approved:  # feste Meldung, unabhängig davon, was das Modell danach sagt
+                queue.put_nowait(Notice(f"Abgelehnt: '{tool}' wurde nicht ausgeführt."))
+            return approved
+
         channel_token = current_channel.set(channel)
-
-        async def on_events(
-            _ctx: RunContext[object], events: AsyncIterable[AgentStreamEvent]
-        ) -> None:
-            async for event in events:
-                if not isinstance(event, FunctionToolCallEvent):
-                    continue
-                name = event.part.tool_name
-                if name in self.hub.offered_tools:
-                    pending.append(ToolUsed(name))
-                else:
-                    self.hub.record_unknown_tool(name)
-                    pending.append(Notice(f"Unbekanntes Werkzeug '{name[:60]}' wurde abgelehnt."))
-
-        def drain() -> list[StreamEvent]:
-            items = list(pending)
-            pending.clear()
-            return items
-
+        confirmer_token = current_confirmer.set(confirmer)
         try:
-            async with self.hub:
-                for failure in self.hub.failures:
-                    yield Notice(failure)
-                agent: Agent[None, str] = Agent(
-                    self._model, system_prompt=SYSTEM_PROMPT, toolsets=self.hub.toolsets
-                )
-                async with agent.run_stream(message, event_stream_handler=on_events) as result:
-                    for item in drain():
-                        yield item
-                    async for delta in result.stream_text(delta=True):
-                        for item in drain():
-                            yield item
-                        yield TextDelta(delta)
-                    for item in drain():
-                        yield item
-                    tokens = result.usage.total_tokens or None
+            task = asyncio.create_task(self._run(message, queue, usage))
+        finally:
+            current_channel.reset(channel_token)
+            current_confirmer.reset(confirmer_token)
+
+        status = "error"
+        try:
+            while (item := await queue.get()) is not None:
+                if isinstance(item, BaseException):
+                    raise item
+                yield item
             status = "ok"
-        except (asyncio.CancelledError, GeneratorExit):
+        except (asyncio.CancelledError, GeneratorExit, KeyboardInterrupt):
             status = "aborted"
             raise
         except Exception as exc:
@@ -142,9 +169,50 @@ class ChatService:
             )
             raise _translate(exc, self.model_name, self._base_url) from None
         finally:
-            current_channel.reset(channel_token)
-            self._audit.record(channel=channel, model=self.model_name, tokens=tokens, status=status)
+            if not task.done():
+                task.cancel()
+            with suppress(asyncio.CancelledError, Exception):
+                await task
+            self._audit.record(
+                channel=channel, model=self.model_name, tokens=usage[0], status=status
+            )
             log.info("chat_done", channel=channel, model=self.model_name, status=status)
+
+    async def _run(
+        self,
+        message: str,
+        queue: asyncio.Queue[StreamEvent | BaseException | None],
+        usage: list[int | None],
+    ) -> None:
+        async def on_events(
+            _ctx: RunContext[object], events: AsyncIterable[AgentStreamEvent]
+        ) -> None:
+            async for event in events:
+                if not isinstance(event, FunctionToolCallEvent):
+                    continue
+                name = event.part.tool_name
+                if name in self.hub.offered_tools:
+                    queue.put_nowait(ToolUsed(name))
+                else:
+                    self.hub.record_unknown_tool(name)
+                    queue.put_nowait(Notice(f"Unbekanntes Werkzeug '{name[:60]}' wurde abgelehnt."))
+
+        try:
+            async with self.hub:
+                for failure in self.hub.failures:
+                    queue.put_nowait(Notice(failure))
+                agent: Agent[None, str] = Agent(
+                    self._model, system_prompt=system_prompt(), toolsets=self.hub.toolsets
+                )
+                async with agent.run_stream(message, event_stream_handler=on_events) as result:
+                    async for delta in result.stream_text(delta=True):
+                        queue.put_nowait(TextDelta(delta))
+                    usage[0] = result.usage.total_tokens or None
+            queue.put_nowait(None)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            queue.put_nowait(exc)
 
 
 def build_service(

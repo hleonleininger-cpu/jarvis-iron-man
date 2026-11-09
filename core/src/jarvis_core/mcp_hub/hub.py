@@ -2,6 +2,7 @@
 Werkzeuge an den Agent und erzwingt vor JEDEM Aufruf die Policy. Jeder Aufruf geht ins Audit-Log
 (nur Werkzeugname, Risikoklasse, Entscheidung, Ergebnis; nie Argumente)."""
 
+import asyncio
 import sys
 from collections.abc import Awaitable, Callable
 from contextlib import AsyncExitStack
@@ -27,10 +28,20 @@ current_channel: ContextVar[str] = ContextVar("jarvis_channel", default="cli")
 INIT_TIMEOUT_SECONDS = 20.0
 _MAX_NAME_LENGTH = 80
 
-CONFIRM_MESSAGE = "Bestätigung nötig, kommt in M1b. Das Werkzeug wurde nicht ausgeführt."
+NO_CONFIRM_CHANNEL_MESSAGE = (
+    "Bestätigung nötig, aber hier ist keine Rückfrage möglich. Das Werkzeug wurde nicht ausgeführt."
+)
+USER_DECLINED_MESSAGE = (
+    "Der Nutzer hat abgelehnt. Es wurde NICHTS ausgeführt oder angelegt. "
+    "Sage das dem Nutzer kurz und frage nicht erneut nach."
+)
+CONFIRM_TIMEOUT_MESSAGE = USER_DECLINED_MESSAGE
 DENY_MESSAGE = "Die Policy lehnt dieses Werkzeug ab. Es wurde nicht ausgeführt."
 
 CallTool = Callable[[str, dict[str, Any]], Awaitable[Any]]
+# (Werkzeug, Vorschau, Frage) -> Nutzer bestätigt? Gesetzt vom Agent je Anfrage.
+Confirmer = Callable[[str, str, str], Awaitable[bool]]
+current_confirmer: ContextVar[Confirmer | None] = ContextVar("jarvis_confirmer", default=None)
 
 
 @dataclass(frozen=True)
@@ -149,26 +160,86 @@ class McpHub:
             self._record(channel, name, "UNKNOWN", Decision.DENY, "blocked")
             return DENY_MESSAGE
         decision = decide(risk, PolicyContext(channel=channel))
-        if decision is Decision.CONFIRM:
-            self._record(channel, name, risk, decision, "blocked")
-            return CONFIRM_MESSAGE
         if decision is Decision.DENY:
             self._record(channel, name, risk, decision, "blocked")
             return DENY_MESSAGE
+        if decision is Decision.CONFIRM:
+            return await self._confirmed_call(server, call_tool, name, args, risk, channel)
+        return await self._execute(server, call_tool, name, args, risk, decision, channel)
+
+    async def _execute(
+        self,
+        server: str,
+        call_tool: CallTool,
+        name: str,
+        args: dict[str, Any],
+        risk: RiskClass,
+        decision: Decision | str,
+        channel: str,
+    ) -> Any:
         try:
             result: Any = await call_tool(name, args)
         except Exception:
             self._record(channel, name, risk, decision, "error")
             raise
         self._record(channel, name, risk, decision, "error" if _is_failure(result) else "ok")
-        log.info("tool_call", server=server, tool=name, risk=str(risk), status="ok")
+        log.info("tool_call", server=server, tool=name, risk=str(risk))
         return result
+
+    async def _preview(
+        self, server: str, call_tool: CallTool, name: str, args: dict[str, Any]
+    ) -> tuple[str, str] | dict[str, Any]:
+        """(Vorschau, Frage) oder ein Fehler-Dict des Vorschau-Werkzeugs (ungültige Eingabe)."""
+        preview_tool = self._servers[server].previews.get(name)
+        if preview_tool is not None:
+            result: Any = await call_tool(preview_tool, args)
+            if _is_failure(result):
+                return result  # pyright: ignore[reportUnknownVariableType]
+            if isinstance(result, dict):
+                data: dict[str, Any] = result  # pyright: ignore[reportUnknownVariableType]
+                if isinstance(data.get("vorschau"), str):
+                    return data["vorschau"], str(data.get("frage") or "Ausführen?")
+        shown = ", ".join(f"{k}={v!r}" for k, v in args.items())
+        return f"{name}({shown})"[:300], "Ausführen?"
+
+    async def _confirmed_call(
+        self,
+        server: str,
+        call_tool: CallTool,
+        name: str,
+        args: dict[str, Any],
+        risk: RiskClass,
+        channel: str,
+    ) -> Any:
+        """CONFIRM: Vorschau, Ja/Nein abwarten, nur nach Ja ausführen (zwei Audit-Zeilen)."""
+        try:
+            preview = await self._preview(server, call_tool, name, args)
+        except Exception:
+            self._record(channel, name, risk, Decision.CONFIRM, "error")
+            raise
+        if isinstance(preview, dict):  # ungültige Eingabe: dem Modell melden, nichts fragen
+            self._record(channel, name, risk, Decision.CONFIRM, "invalid")
+            return preview
+        confirmer = current_confirmer.get()
+        if confirmer is None:
+            self._record(channel, name, risk, Decision.CONFIRM, "blocked")
+            return NO_CONFIRM_CHANNEL_MESSAGE
+        self._record(channel, name, risk, Decision.CONFIRM, "pending")
+        try:
+            approved = await confirmer(name, *preview)
+        except asyncio.CancelledError:
+            self._record(channel, name, risk, "DENIED", "aborted")
+            raise
+        if not approved:
+            self._record(channel, name, risk, "DENIED", "denied")
+            return USER_DECLINED_MESSAGE
+        return await self._execute(server, call_tool, name, args, risk, "CONFIRMED", channel)
 
     def record_unknown_tool(self, name: str) -> None:
         """Modell wollte ein unbekanntes Werkzeug aufrufen: abgelehnt und protokolliert."""
         self._record(current_channel.get(), name, "UNKNOWN", Decision.DENY, "blocked")
 
-    def _record(self, channel: str, tool: str, risk: str, decision: Decision, status: str) -> None:
+    def _record(self, channel: str, tool: str, risk: str, decision: str, status: str) -> None:
         self._audit.record_tool_call(
             channel=channel,
             model=self._model_name,

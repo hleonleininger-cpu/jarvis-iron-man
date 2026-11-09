@@ -1,6 +1,8 @@
+from jarvis_core.agent.confirmation import ConfirmationBroker, ConfirmRequest
 from jarvis_core.agent.service import (
     ChatError,
     ChatService,
+    ConfirmRequested,
     Notice,
     StreamEvent,
     TextDelta,
@@ -12,6 +14,9 @@ from jarvis_core.agent.service import (
 __all__ = [
     "ChatError",
     "ChatService",
+    "ConfirmRequest",
+    "ConfirmRequested",
+    "ConfirmationBroker",
     "Notice",
     "StreamEvent",
     "TextDelta",

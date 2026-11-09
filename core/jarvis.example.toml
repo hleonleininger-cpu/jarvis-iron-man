@@ -17,3 +17,16 @@ args = ["-m", "mcp_servers.weather"]
 
 [mcp_servers.weather.tools]
 get_weather = "READ"
+
+# Apple-Kalender (iCloud/CalDAV). Zugangsdaten: `jarvis secrets set apple_caldav` (OS-Schlüsselbund).
+# create_event ist WRITE_REVERSIBLE -> Policy: CONFIRM (Vorschau + Rückfrage vor dem Anlegen).
+# `previews` nennt das Vorschau-Werkzeug (schreibt nichts, wird dem Modell nicht angeboten).
+# Optional: einen bestimmten Kalender wählen mit args = [..., "--kalender", "Privat"].
+[mcp_servers.calendar]
+command = "python"
+args = ["-m", "mcp_servers.calendar"]
+previews = { create_event = "preview_create_event" }
+
+[mcp_servers.calendar.tools]
+list_events = "READ"
+create_event = "WRITE_REVERSIBLE"
