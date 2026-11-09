@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from pydantic_ai.models import Model
 
 from jarvis_core import __version__
-from jarvis_core.agent import ChatError, ChatService, build_service
+from jarvis_core.agent import ChatError, ChatService, Notice, TextDelta, ToolUsed, build_service
 from jarvis_core.audit import AuditLog
 from jarvis_core.config import Settings
 
@@ -37,8 +37,14 @@ def create_app(
     async def chat(request: ChatRequest) -> StreamingResponse:  # pyright: ignore[reportUnusedFunction]
         async def events() -> AsyncIterator[str]:
             try:
-                async for delta in service.stream(request.message, channel="api"):
-                    yield _sse("delta", {"text": delta})
+                async for event in service.stream(request.message, channel="api"):
+                    match event:
+                        case TextDelta(text):
+                            yield _sse("delta", {"text": text})
+                        case ToolUsed(name):
+                            yield _sse("tool", {"name": name})
+                        case Notice(message):
+                            yield _sse("notice", {"message": message})
             except ChatError as exc:
                 yield _sse("error", {"message": str(exc)})
                 return

@@ -3,7 +3,7 @@
 from pathlib import Path
 from typing import Self
 
-from pydantic import Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -11,8 +11,24 @@ from pydantic_settings import (
     TomlConfigSettingsSource,
 )
 
+from jarvis_core.policy import RiskClass
+
 # Wildcard-Adressen würden den Server in jedem Netz erreichbar machen (ADR-003).
 FORBIDDEN_HOSTS = frozenset({"0.0.0.0", "::", "[::]", "*", ""})  # noqa: S104
+
+
+class McpServerConfig(BaseModel):
+    """Ein in jarvis.toml deklarierter MCP-Server (stdio). Nur deklarierte werden gestartet.
+
+    `tools` ist die einzige Stelle für Werkzeug-Metadaten: nur dort genannte Werkzeuge werden dem
+    Modell angeboten, jeweils mit ihrer Risikoklasse.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    command: str
+    args: list[str] = []
+    tools: dict[str, RiskClass]
 
 
 class Settings(BaseSettings):
@@ -28,6 +44,7 @@ class Settings(BaseSettings):
     model: str | None = None
     data_dir: Path = Path("data")
     log_level: str = "INFO"
+    mcp_servers: dict[str, McpServerConfig] = {}
 
     @field_validator("host")
     @classmethod

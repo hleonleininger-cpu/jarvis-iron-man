@@ -10,12 +10,20 @@ uv run jarvis doctor            # Hardware, Ollama, empfohlenes Modell
 ollama pull qwen3.5:4b          # Beispiel: Befehl aus jarvis doctor übernehmen
 uv run jarvis chat "Wer bist du?"
 uv run jarvis serve             # nur 127.0.0.1
+uv run jarvis tools list        # MCP-Werkzeuge mit Risikoklasse
 uv run jarvis audit verify
 ```
 
+## Werkzeuge (MCP)
+In `core/jarvis.toml` deklarierte MCP-Server (Vorlage: `core/jarvis.example.toml`) stellen
+Werkzeuge bereit, z. B. `get_weather` (Open-Meteo, ohne Schlüssel). Vor jedem Aufruf prüft die
+Policy die Risikoklasse; Aufrufe stehen im Audit-Log (nur Werkzeugname, keine Argumente).
+`jarvis chat "Wie ist das Wetter in Dortmund?"` ruft das Werkzeug über das lokale Modell auf.
+Siehe ADR-004.
+
 ## Server
 - `GET /health`
-- `POST /v1/chat` mit `{"message": "..."}` → Server-Sent Events (`delta`, `done`, `error`)
+- `POST /v1/chat` mit `{"message": "..."}` → Server-Sent Events (`delta`, `tool`, `notice`, `done`, `error`)
 
 ## Konfiguration
 `core/jarvis.toml` (Vorlage: `core/jarvis.example.toml`) und Umgebungsvariablen `JARVIS_*`

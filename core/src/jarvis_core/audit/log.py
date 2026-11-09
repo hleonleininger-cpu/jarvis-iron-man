@@ -1,7 +1,8 @@
 """Audit-Log: SQLite, nur anhängen, jede Zeile trägt den SHA-256 der vorherigen.
 
-Gespeichert werden ausschließlich Metadaten (Zeit, Kanal, Modell, Tokenzahl, Status),
-niemals Nachrichteninhalte.
+Gespeichert werden ausschließlich Metadaten (Zeit, Kanal, Modell, Tokenzahl, Status; bei
+Werkzeugaufrufen Werkzeugname, Risikoklasse, Entscheidung), niemals Nachrichten- oder
+Argumentinhalte.
 """
 
 import hashlib
@@ -23,9 +24,15 @@ CREATE TABLE IF NOT EXISTS audit (
     tokens INTEGER,
     status TEXT NOT NULL,
     prev_hash TEXT NOT NULL,
-    hash TEXT NOT NULL
+    hash TEXT NOT NULL,
+    tool TEXT,
+    risk TEXT,
+    decision TEXT
 )
 """
+
+# Spalten, die erst mit M1a dazukamen (Werkzeugaufrufe); ältere Datenbanken werden ergänzt.
+_TOOL_COLUMNS = ("tool", "risk", "decision")
 
 
 @dataclass(frozen=True)
@@ -37,11 +44,21 @@ class VerifyResult:
 
 
 def _compute_hash(
-    prev_hash: str, ts: str, channel: str, model: str, tokens: int | None, status: str
+    prev_hash: str,
+    ts: str,
+    channel: str,
+    model: str,
+    tokens: int | None,
+    status: str,
+    tool: str | None = None,
+    risk: str | None = None,
+    decision: str | None = None,
 ) -> str:
-    payload = json.dumps(
-        [prev_hash, ts, channel, model, tokens, status], ensure_ascii=True, separators=(",", ":")
-    )
+    fields: list[object] = [prev_hash, ts, channel, model, tokens, status]
+    if tool is not None or risk is not None or decision is not None:
+        # Chat-Zeilen behalten die M0-Hashform, damit bestehende Ketten gültig bleiben.
+        fields += [tool, risk, decision]
+    payload = json.dumps(fields, ensure_ascii=True, separators=(",", ":"))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
@@ -52,11 +69,39 @@ class AuditLog:
         path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as conn:
             conn.execute(_SCHEMA)
+            existing = {row[1] for row in conn.execute("PRAGMA table_info(audit)")}
+            for column in _TOOL_COLUMNS:
+                if column not in existing:
+                    conn.execute(f"ALTER TABLE audit ADD COLUMN {column} TEXT")
 
     def _connect(self) -> sqlite3.Connection:
         return sqlite3.connect(self._path, isolation_level=None, timeout=10.0)
 
-    def record(self, *, channel: str, model: str, tokens: int | None, status: str) -> int:
+    def record_tool_call(
+        self, *, channel: str, model: str, tool: str, risk: str, decision: str, status: str
+    ) -> int:
+        """Werkzeugaufruf: nur Name, Risikoklasse, Entscheidung und Ergebnis, keine Argumente."""
+        return self.record(
+            channel=channel,
+            model=model,
+            tokens=None,
+            status=status,
+            tool=tool,
+            risk=risk,
+            decision=decision,
+        )
+
+    def record(
+        self,
+        *,
+        channel: str,
+        model: str,
+        tokens: int | None,
+        status: str,
+        tool: str | None = None,
+        risk: str | None = None,
+        decision: str | None = None,
+    ) -> int:
         """Hängt einen Eintrag an und gibt dessen Zeilen-ID zurück."""
         ts = datetime.now(UTC).isoformat(timespec="milliseconds")
         with self._lock:
@@ -65,11 +110,13 @@ class AuditLog:
                 conn.execute("BEGIN IMMEDIATE")
                 row = conn.execute("SELECT hash FROM audit ORDER BY id DESC LIMIT 1").fetchone()
                 prev_hash = str(row[0]) if row else GENESIS_HASH
-                new_hash = _compute_hash(prev_hash, ts, channel, model, tokens, status)
+                new_hash = _compute_hash(
+                    prev_hash, ts, channel, model, tokens, status, tool, risk, decision
+                )
                 cur = conn.execute(
-                    "INSERT INTO audit (ts, channel, model, tokens, status, prev_hash, hash) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (ts, channel, model, tokens, status, prev_hash, new_hash),
+                    "INSERT INTO audit (ts, channel, model, tokens, status, prev_hash, hash, "
+                    "tool, risk, decision) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (ts, channel, model, tokens, status, prev_hash, new_hash, tool, risk, decision),
                 )
                 conn.execute("COMMIT")
                 return int(cur.lastrowid or 0)
@@ -85,24 +132,27 @@ class AuditLog:
         conn = self._connect()
         try:
             rows = conn.execute(
-                "SELECT id, ts, channel, model, tokens, status, prev_hash, hash "
-                "FROM audit ORDER BY id"
+                "SELECT id, ts, channel, model, tokens, status, prev_hash, hash, "
+                "tool, risk, decision FROM audit ORDER BY id"
             ).fetchall()
         finally:
             conn.close()
 
         expected_prev = GENESIS_HASH
         expected_id = rows[0][0] if rows else 1
-        for count, (row_id, ts, channel, model, tokens, status, prev_hash, row_hash) in enumerate(
-            rows
-        ):
+        for count, row in enumerate(rows):
+            (row_id, ts, channel, model, tokens, status, prev_hash, row_hash) = row[:8]
+            tool, risk, decision = row[8:]
             if count == 0 and row_id != 1:
                 return VerifyResult(False, count, row_id, "Vorherige Einträge fehlen")
             if row_id != expected_id:
                 return VerifyResult(False, count, row_id, "Lücke in der Zeilenfolge")
             if prev_hash != expected_prev:
                 return VerifyResult(False, count, row_id, "Verweis auf Vorgänger stimmt nicht")
-            if _compute_hash(prev_hash, ts, channel, model, tokens, status) != row_hash:
+            if (
+                _compute_hash(prev_hash, ts, channel, model, tokens, status, tool, risk, decision)
+                != row_hash
+            ):
                 return VerifyResult(False, count, row_id, "Inhalt passt nicht zum Hash")
             expected_prev = row_hash
             expected_id = row_id + 1

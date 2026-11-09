@@ -6,3 +6,14 @@ ollama_base_url = "http://127.0.0.1:11434/v1"
 # model = "qwen3.5:4b"       # ohne Eintrag gilt die Empfehlung von `jarvis doctor`
 data_dir = "data"
 log_level = "INFO"
+
+# MCP-Server: nur hier deklarierte werden gestartet. `tools` ist die einzige Stelle für
+# Werkzeug-Metadaten; nicht aufgeführte Werkzeuge werden dem Modell nie angeboten.
+# Risikoklassen: READ, WRITE_REVERSIBLE, IRREVERSIBLE, EXTERNAL_COMMUNICATION, FINANCIAL.
+# command = "python" steht für den Interpreter des Cores (venv).
+[mcp_servers.weather]
+command = "python"
+args = ["-m", "mcp_servers.weather"]
+
+[mcp_servers.weather.tools]
+get_weather = "READ"

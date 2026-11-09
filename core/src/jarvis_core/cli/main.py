@@ -7,7 +7,7 @@ import typer
 import uvicorn
 from pydantic import ValidationError
 
-from jarvis_core.agent import ChatError, build_service
+from jarvis_core.agent import ChatError, Notice, TextDelta, ToolUsed, build_service
 from jarvis_core.audit import AuditLog
 from jarvis_core.config import Settings, configure_logging, load_settings
 from jarvis_core.hardware import (
@@ -21,6 +21,8 @@ from jarvis_core.hardware import (
 app = typer.Typer(help="JARVIS Core", no_args_is_help=True, add_completion=False)
 audit_app = typer.Typer(help="Audit-Log", no_args_is_help=True)
 app.add_typer(audit_app, name="audit")
+tools_app = typer.Typer(help="MCP-Werkzeuge", no_args_is_help=True)
+app.add_typer(tools_app, name="tools")
 
 
 def _settings(log_level: str | None = None) -> Settings:
@@ -47,8 +49,14 @@ def serve() -> None:
 
 async def _chat(text: str, settings: Settings) -> None:
     service = build_service(settings, AuditLog(settings.audit_db_path))
-    async for delta in service.stream(text, channel="cli"):
-        sys.stdout.write(delta)
+    async for event in service.stream(text, channel="cli"):
+        match event:
+            case TextDelta(chunk):
+                sys.stdout.write(chunk)
+            case ToolUsed(name):
+                sys.stdout.write(f"[Werkzeug: {name}]\n")
+            case Notice(message):
+                typer.echo(f"Hinweis: {message}", err=True)
         sys.stdout.flush()
     sys.stdout.write("\n")
 
@@ -127,3 +135,28 @@ def audit_verify() -> None:
         err=True,
     )
     raise typer.Exit(1)
+
+
+async def _list_tools(settings: Settings) -> None:
+    from jarvis_core.mcp_hub import McpHub
+
+    audit = AuditLog(settings.audit_db_path)
+    async with McpHub(settings.mcp_servers, audit, model_name="-") as hub:
+        for failure in hub.failures:
+            typer.echo(f"Hinweis: {failure}", err=True)
+        tools = hub.list_tools()
+        if not tools:
+            typer.echo("Keine Werkzeuge verfügbar (siehe mcp_servers in jarvis.toml).")
+            return
+        width = max(len(t.name) for t in tools)
+        for tool in tools:
+            typer.echo(
+                f"{tool.name:<{width}}  {tool.risk:<24}  [{tool.server}]  {tool.description}"
+            )
+
+
+@tools_app.command("list")
+def tools_list() -> None:
+    """Listet verfügbare Werkzeuge mit Risikoklasse."""
+    settings = _settings("WARNING")
+    asyncio.run(_list_tools(settings))

@@ -43,3 +43,27 @@ def test_unknown_toml_key_rejected(tmp_path: Path) -> None:
 def test_non_http_ollama_url_rejected() -> None:
     with pytest.raises(ValidationError):
         Settings(ollama_base_url="file:///etc/passwd")
+
+
+def test_mcp_servers_from_toml(tmp_path: Path) -> None:
+    (tmp_path / "jarvis.toml").write_text(
+        '[mcp_servers.weather]\ncommand = "python"\nargs = ["-m", "mcp_servers.weather"]\n'
+        '[mcp_servers.weather.tools]\nget_weather = "READ"\n',
+        encoding="utf-8",
+    )
+    server = Settings().mcp_servers["weather"]
+    assert server.command == "python"
+    assert server.tools == {"get_weather": "READ"}
+
+
+def test_no_mcp_servers_by_default() -> None:
+    assert Settings().mcp_servers == {}
+
+
+def test_unknown_risk_class_rejected(tmp_path: Path) -> None:
+    (tmp_path / "jarvis.toml").write_text(
+        '[mcp_servers.x]\ncommand = "python"\n[mcp_servers.x.tools]\nfoo = "HARMLOS"\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(ValidationError):
+        Settings()

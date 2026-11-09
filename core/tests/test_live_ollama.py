@@ -2,7 +2,7 @@
 
 import pytest
 
-from jarvis_core.agent import build_service
+from jarvis_core.agent import TextDelta, build_service
 from jarvis_core.audit import AuditLog
 from jarvis_core.config import Settings
 from jarvis_core.hardware import check_ollama, recommend
@@ -19,5 +19,11 @@ async def test_live_chat(settings: Settings) -> None:
     if wanted not in status.models:
         pytest.skip(f"Modell {wanted} nicht installiert (ollama pull {wanted})")
     service = build_service(settings, AuditLog(settings.audit_db_path), model_name=wanted)
-    text = "".join([d async for d in service.stream("Sag kurz Hallo.", channel="cli")])
+    text = "".join(
+        [
+            e.text
+            async for e in service.stream("Sag kurz Hallo.", channel="cli")
+            if isinstance(e, TextDelta)
+        ]
+    )
     assert text.strip()
