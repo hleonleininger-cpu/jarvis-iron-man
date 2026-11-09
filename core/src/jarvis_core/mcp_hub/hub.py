@@ -132,7 +132,7 @@ class McpHub:
             return await self.gated_call(server, call_tool, name, args)
 
         return MCPToolset(
-            StdioTransport(command=command, args=cfg.args),
+            StdioTransport(command=command, args=cfg.args, env=cfg.env or None),
             process_tool_call=process,  # pyright: ignore[reportArgumentType]
             tool_error_behavior="failed",
             init_timeout=INIT_TIMEOUT_SECONDS,

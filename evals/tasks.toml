@@ -9,7 +9,7 @@
 # answer_any    (optional) mindestens einer dieser Texte muss in der Antwort vorkommen
 # answer_forbid (optional) keiner dieser Texte darf vorkommen (z. B. erfundene Werte)
 #
-# Die Attrappen liefern: Wetter 11,5 °C / bedeckt / 14 km/h für Dortmund, Berlin, München,
+# Die Attrappen liefern: Notion siehe unten; Wetter 11,5 °C / bedeckt / 14 km/h für Dortmund, Berlin, München,
 # Hamburg, Köln (sonst "Ort nicht gefunden"); Kalendertermine "Besprechung" und
 # "Handballtraining" im jeweils angefragten Zeitraum.
 
@@ -140,6 +140,27 @@ expect_tools = ["create_event"]
 confirm = "no"
 expect_confirm = true
 expect_writes = 0
+
+# ---------------------------------------------------------------- Notion (nur Lesen, Attrappe)
+# Attrappe: mission_control = JARVIS OS fertigstellen, Mathe LK wiederholen, Handballtraining
+# planen (Steuerunterlagen sortieren ist erledigt); academy = Atomic Habits (Kapitel 7), Deep Work.
+[[task]]
+id = "notion-mission-control"
+prompt = "Was steht in Mission Control an?"
+expect_tools = ["notion_query"]
+answer_any = ["JARVIS OS", "Mathe LK", "Handballtraining"]
+
+[[task]]
+id = "notion-search-handball"
+prompt = "Suche in meinen Notizen nach Handball."
+expect_tools = ["notion_search"]
+answer_any = ["Handballtraining"]
+
+[[task]]
+id = "notion-reading-academy"
+prompt = "Welches Buch lese ich gerade laut meiner Academy?"
+expect_tools = ["notion_query"]
+answer_any = ["Atomic Habits"]
 
 # ---------------------------------------------------------------- unsinnig / kein passendes Werkzeug
 [[task]]

@@ -18,6 +18,8 @@ def test_shipped_tasks_are_valid_and_cover_the_required_categories() -> None:
     assert any("Xyzqwertplatz" in t.prompt for t in tasks)  # unbekannter Ort
     assert any("Montag" in t.prompt for t in tasks)  # mehrdeutige Zeit
     assert any(t.id.startswith("nonsense") for t in tasks)  # unsinnige Bitte
+    assert any(t.expect_tools == ["notion_query"] for t in tasks)  # Notion lesen
+    assert any(t.expect_tools == ["notion_search"] for t in tasks)
     for t in tasks:  # Nein darf nie schreiben
         if t.confirm == "no":
             assert t.expect_writes == 0

@@ -1,7 +1,7 @@
 """Zugangsdaten im OS-Schlüsselbund (keyring). Werte werden nie ausgegeben oder geloggt.
 
 Die MCP-Server lesen denselben Eintrag selbst (Dienst "jarvis", Name = Secret-Name); das Format
-ist JSON {"username": ..., "password": ...} (siehe ADR-006).
+ist JSON mit den Feldern des Secrets, z. B. {"username", "password"} oder {"token"} (ADR-006).
 """
 
 import json
@@ -14,14 +14,29 @@ KEYRING_SERVICE = "jarvis"
 
 
 @dataclass(frozen=True)
+class SecretField:
+    key: str
+    label: str
+    hidden: bool = False
+
+
+@dataclass(frozen=True)
 class SecretSpec:
     name: str
-    username_label: str
-    password_label: str
+    fields: tuple[SecretField, ...]
 
 
 SECRETS: dict[str, SecretSpec] = {
-    "apple_caldav": SecretSpec("apple_caldav", "Apple-ID", "App-spezifisches Passwort"),
+    "apple_caldav": SecretSpec(
+        "apple_caldav",
+        (
+            SecretField("username", "Apple-ID"),
+            SecretField("password", "App-spezifisches Passwort", hidden=True),
+        ),
+    ),
+    "notion": SecretSpec(
+        "notion", (SecretField("token", "Notion-Integration-Token", hidden=True),)
+    ),
 }
 
 
@@ -29,15 +44,15 @@ class SecretsError(Exception):
     """Schlüsselbund nicht verfügbar oder Zugriff fehlgeschlagen (deutsche Meldung)."""
 
 
-def store_secret(name: str, username: str, password: str) -> None:
-    if name not in SECRETS:
+def store_secret(name: str, **values: str) -> None:
+    spec = SECRETS.get(name)
+    if spec is None:
         raise SecretsError(f"Unbekanntes Secret '{name}'. Bekannt: {', '.join(SECRETS)}.")
-    if not username or not password:
-        raise SecretsError("Benutzername und Passwort dürfen nicht leer sein.")
+    keys = {f.key for f in spec.fields}
+    if set(values) != keys or not all(v.strip() for v in values.values()):
+        raise SecretsError("Alle Felder müssen ausgefüllt sein.")
     try:
-        keyring.set_password(
-            KEYRING_SERVICE, name, json.dumps({"username": username, "password": password})
-        )
+        keyring.set_password(KEYRING_SERVICE, name, json.dumps(values))
     except KeyringError as exc:
         raise SecretsError(
             f"Der OS-Schlüsselbund ist nicht verfügbar ({type(exc).__name__})."

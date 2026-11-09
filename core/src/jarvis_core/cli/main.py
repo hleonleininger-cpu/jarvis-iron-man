@@ -216,10 +216,9 @@ def secrets_set(name: str = typer.Argument(..., help="z. B. apple_caldav")) -> N
     if spec is None:
         typer.echo(f"Unbekanntes Secret '{name}'. Bekannt: {', '.join(SECRETS)}.", err=True)
         raise typer.Exit(2)
-    username = typer.prompt(spec.username_label)
-    password = typer.prompt(spec.password_label, hide_input=True)
+    values = {f.key: typer.prompt(f.label, hide_input=f.hidden).strip() for f in spec.fields}
     try:
-        store_secret(name, username.strip(), password)
+        store_secret(name, **values)
     except SecretsError as exc:
         typer.echo(f"Fehler: {exc}", err=True)
         raise typer.Exit(1) from None

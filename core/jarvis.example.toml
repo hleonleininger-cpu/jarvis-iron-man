@@ -30,3 +30,17 @@ previews = { create_event = "preview_create_event" }
 [mcp_servers.calendar.tools]
 list_events = "READ"
 create_event = "WRITE_REVERSIBLE"
+
+# Notion (NUR LESEN, JARVIS-OS-Daten). Token: `jarvis secrets set notion` (OS-Schlüsselbund).
+# env ordnet Namen den Datenbank-IDs (Data-Source-IDs) zu: NOTION_DB_<NAME> = "<ID>".
+# Bekannte Namen: MISSION_CONTROL, ACADEMY, FORGE, OLYMPUS, VAULT (frei erweiterbar). Die Datenbank
+# muss in Notion mit der Integration geteilt sein (Seite > Verbindungen).
+[mcp_servers.notion]
+command = "python"
+args = ["-m", "mcp_servers.notion"]
+env = { NOTION_DB_MISSION_CONTROL = "<ID>", NOTION_DB_ACADEMY = "<ID>" }
+
+[mcp_servers.notion.tools]
+notion_search = "READ"
+notion_query = "READ"
+notion_get = "READ"

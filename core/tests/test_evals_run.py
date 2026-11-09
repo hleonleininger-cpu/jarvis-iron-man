@@ -27,6 +27,8 @@ ARGS = {
     "get_weather": {"ort": "Dortmund"},
     "list_events": {"zeitraum": "morgen"},
     "create_event": {"titel": "Zahnarzt", "start": "2026-12-12T15:00"},
+    "notion_query": {"datenbank": "mission_control"},
+    "notion_search": {"begriff": "Handball"},
 }
 
 
@@ -47,6 +49,8 @@ def scripted_model(tasks: list[EvalTask], *, use_tools: bool = True) -> Function
             args = dict(ARGS[name])
             if name == "get_weather" and "Xyzqwertplatz" in prompt:
                 args["ort"] = "Xyzqwertplatz"  # der Agent fragt nach dem Ort aus der Eingabe
+            if name == "notion_query" and "Academy" in prompt:
+                args["datenbank"] = "academy"
             yield {0: DeltaToolCall(name=name, json_args=json.dumps(args))}
         elif returned:
             yield f"Ergebnis: {returned[-1].content}"

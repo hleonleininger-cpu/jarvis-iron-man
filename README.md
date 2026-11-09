@@ -12,6 +12,7 @@ uv run jarvis chat "Wer bist du?"
 uv run jarvis serve             # nur 127.0.0.1
 uv run jarvis tools list        # MCP-Werkzeuge mit Risikoklasse
 uv run jarvis secrets set apple_caldav   # Apple-ID + App-Passwort -> Schlüsselbund
+uv run jarvis secrets set notion          # Notion-Integration-Token (nur Lesen)
 uv run jarvis secrets status
 uv run jarvis evals list        # Eval-Aufgaben
 uv run jarvis evals run --model qwen3.5:4b --runs 3   # Werkzeugwahl messen
@@ -28,6 +29,10 @@ Siehe ADR-004.
 **Kalender (iCloud):** `list_events` (READ) liest Termine, `create_event` (CONFIRM) legt nach
 Vorschau und Rückfrage `[j/N]` an. API: SSE-Event `confirm`, Antwort per
 `POST /v1/confirm/{id}`. Zugangsdaten nur im OS-Schlüsselbund. Siehe ADR-005/006.
+
+**Notion (nur Lesen):** `notion_search`, `notion_query`, `notion_get` (alle READ). Token im
+Schlüsselbund, Datenbank-IDs in `jarvis.toml` (`[mcp_servers.notion] env`). Es gibt keinen
+Schreib-Endpunkt im Code. Siehe ADR-008.
 
 ## Evals
 `jarvis evals run` misst, wie zuverlässig das lokale Modell Werkzeuge wählt (Aufgaben in

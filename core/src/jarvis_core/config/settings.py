@@ -28,6 +28,8 @@ class McpServerConfig(BaseModel):
 
     command: str
     args: list[str] = []
+    # Umgebungsvariablen für den Server-Prozess (keine Secrets; die liegen im Schlüsselbund).
+    env: dict[str, str] = {}
     tools: dict[str, RiskClass]
     # Optional: CONFIRM-Werkzeug -> Vorschau-Werkzeug desselben Servers (schreibt nichts). Das
     # Vorschau-Werkzeug steht nicht in `tools` und wird dem Modell nie angeboten.

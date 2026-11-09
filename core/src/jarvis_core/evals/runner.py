@@ -32,6 +32,13 @@ class EvalAbort(Exception):
     """Lauf abbrechen (z. B. Ollama nicht erreichbar); es wird kein Teilergebnis gespeichert."""
 
 
+# Beispiel-IDs für die Notion-Attrappe (UUID-Form wie die echten Data-Source-IDs).
+EVAL_NOTION_ENV = {
+    "NOTION_DB_MISSION_CONTROL": "00000000-0000-0000-0000-0000000000a1",
+    "NOTION_DB_ACADEMY": "00000000-0000-0000-0000-0000000000a2",
+}
+
+
 def eval_servers(writes_log: Path) -> dict[str, McpServerConfig]:
     """Dieselben Werkzeuge und Risikoklassen wie jarvis.example.toml, aber mit Attrappen."""
     return {
@@ -39,6 +46,16 @@ def eval_servers(writes_log: Path) -> dict[str, McpServerConfig]:
             command="python",
             args=["-m", "mcp_servers.doubles.weather"],
             tools={"get_weather": RiskClass.READ},
+        ),
+        "notion": McpServerConfig(
+            command="python",
+            args=["-m", "mcp_servers.doubles.notion"],
+            env=EVAL_NOTION_ENV,
+            tools={
+                "notion_search": RiskClass.READ,
+                "notion_query": RiskClass.READ,
+                "notion_get": RiskClass.READ,
+            },
         ),
         "calendar": McpServerConfig(
             command="python",
