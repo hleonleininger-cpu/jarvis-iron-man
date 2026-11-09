@@ -1,0 +1,8 @@
+# Kopie als jarvis.toml ablegen (wird nicht eingecheckt). Umgebungsvariablen mit
+# Präfix JARVIS_ (z. B. JARVIS_MODEL) haben Vorrang.
+host = "127.0.0.1"          # 0.0.0.0 wird abgelehnt
+port = 8765
+ollama_base_url = "http://127.0.0.1:11434/v1"
+# model = "qwen3.5:4b"       # ohne Eintrag gilt die Empfehlung von `jarvis doctor`
+data_dir = "data"
+log_level = "INFO"

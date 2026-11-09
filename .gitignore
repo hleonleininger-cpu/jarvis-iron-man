@@ -1,0 +1,12 @@
+.env
+.env.*
+data/
+*.sqlite3
+jarvis.toml
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.pyright/
+*.egg-info/
+dist/
