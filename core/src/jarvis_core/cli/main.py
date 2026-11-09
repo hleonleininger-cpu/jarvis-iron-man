@@ -2,6 +2,7 @@
 
 import asyncio
 import sys
+from pathlib import Path
 
 import typer
 import uvicorn
@@ -14,9 +15,21 @@ from jarvis_core.agent import (
     TextDelta,
     ToolUsed,
     build_service,
+    resolve_model_name,
 )
 from jarvis_core.audit import AuditLog
 from jarvis_core.config import Settings, configure_logging, load_settings
+from jarvis_core.evals import (
+    EvalAbort,
+    EvalTask,
+    EvalTaskError,
+    RunResult,
+    default_evals_dir,
+    format_table,
+    load_tasks,
+    run_evals,
+    save_report,
+)
 from jarvis_core.hardware import (
     HardwareInfo,
     check_ollama,
@@ -30,6 +43,10 @@ app = typer.Typer(help="JARVIS Core", no_args_is_help=True, add_completion=False
 audit_app = typer.Typer(help="Audit-Log", no_args_is_help=True)
 app.add_typer(audit_app, name="audit")
 tools_app = typer.Typer(help="MCP-Werkzeuge", no_args_is_help=True)
+evals_app = typer.Typer(
+    help="Eval-Harness: Zuverlässigkeit der Werkzeugwahl messen", no_args_is_help=True
+)
+app.add_typer(evals_app, name="evals")
 secrets_app = typer.Typer(help="Zugangsdaten im OS-Schlüsselbund", no_args_is_help=True)
 app.add_typer(secrets_app, name="secrets")
 app.add_typer(tools_app, name="tools")
@@ -214,3 +231,99 @@ def secrets_status() -> None:
     """Zeigt nur, ob Secrets gesetzt sind (nie den Wert)."""
     for name in SECRETS:
         typer.echo(f"{name}: {'gesetzt' if is_set(name) else 'nicht gesetzt'}")
+
+
+def _eval_tasks(directory: Path | None) -> tuple[list[EvalTask], Path]:
+    base = directory or default_evals_dir()
+    try:
+        return load_tasks(base / "tasks.toml"), base
+    except EvalTaskError as exc:
+        typer.echo(f"Fehler: {exc}", err=True)
+        raise typer.Exit(2) from None
+
+
+@evals_app.command("list")
+def evals_list(
+    directory: Path | None = typer.Option(None, "--dir", help="Ordner mit tasks.toml"),
+) -> None:
+    """Listet die Eval-Aufgaben mit erwartetem Werkzeug."""
+    tasks, _ = _eval_tasks(directory)
+    rows = [("Aufgabe", "Erwartet", "Bestätigung", "Schreibt", "Eingabe")]
+    for task in tasks:
+        confirm = ("Ja" if task.confirm == "yes" else "Nein") if task.expect_confirm else "-"
+        rows.append(
+            (task.id, ", ".join(task.expect_tools) or "keins", confirm, str(task.expect_writes),
+             task.prompt)
+        )  # fmt: skip
+    widths = [max(len(r[i]) for r in rows) for i in range(4)]
+    for row in rows:
+        typer.echo("  ".join(c.ljust(widths[i]) for i, c in enumerate(row[:4])) + f"  {row[4]}")
+    typer.echo(f"\n{len(tasks)} Aufgaben")
+
+
+@evals_app.command("run")
+def evals_run(
+    model: str | None = typer.Option(None, "--model", help="Ollama-Modell (Standard: Empfehlung)"),
+    runs: int = typer.Option(3, "--runs", min=1, help="Durchläufe je Aufgabe"),
+    only: list[str] = typer.Option([], "--task", help="Nur diese Aufgaben-ID (mehrfach möglich)"),
+    limit_s: float = typer.Option(240.0, "--timeout", help="Sekunden je Durchlauf"),
+    directory: Path | None = typer.Option(None, "--dir", help="Ordner mit tasks.toml"),
+) -> None:
+    """Lässt die Aufgaben gegen Agent + Ollama laufen (Attrappen, kein Netz außer Ollama)."""
+    settings = _settings("WARNING")
+    model_name = model or resolve_model_name(settings)
+    tasks, base = _eval_tasks(directory)
+    if only:
+        unknown = [i for i in only if i not in {t.id for t in tasks}]
+        if unknown:
+            typer.echo(f"Unbekannte Aufgaben-ID(s): {', '.join(unknown)}", err=True)
+            raise typer.Exit(2)
+        tasks = [t for t in tasks if t.id in only]
+
+    def ensure_ollama() -> None:
+        status = check_ollama(settings.ollama_base_url)
+        if not status.running:
+            raise EvalAbort(
+                f"Ollama ist unter {settings.ollama_base_url} nicht erreichbar. "
+                "Starte Ollama (z. B. 'ollama serve') und wiederhole den Lauf."
+            )
+        if not is_installed(model_name, status.models):
+            raise EvalAbort(
+                f"Das Modell '{model_name}' ist nicht installiert. "
+                f"Installiere es mit: ollama pull {model_name}"
+            )
+
+    total = len(tasks) * runs
+    counter = [0]
+
+    def progress(task: EvalTask, index: int, result: RunResult) -> None:
+        counter[0] += 1
+        mark = "ok" if result.ok else "FEHL"
+        detail = "" if result.ok else f"  ({'; '.join(result.reasons)[:110]})"
+        typer.echo(
+            f"[{counter[0]}/{total}] {task.id} {index}/{runs} {mark} "
+            f"{result.observation.duration_s:.0f}s{detail}",
+            err=True,
+        )
+
+    try:
+        ensure_ollama()
+        typer.echo(
+            f"Eval: {len(tasks)} Aufgaben x {runs} Durchläufe, Modell {model_name}", err=True
+        )
+        report = asyncio.run(
+            run_evals(
+                tasks, settings, model_name, runs,
+                limit_s=limit_s, before_run=ensure_ollama, on_run=progress,
+            )
+        )  # fmt: skip
+    except EvalAbort as exc:
+        typer.echo(f"\nAbgebrochen: {exc} Es wurde kein Ergebnis gespeichert.", err=True)
+        raise typer.Exit(1) from None
+    except KeyboardInterrupt:
+        typer.echo("\nAbgebrochen. Es wurde kein Ergebnis gespeichert.", err=True)
+        raise typer.Exit(130) from None
+    typer.echo("")
+    typer.echo(format_table(report))
+    path = save_report(report, base / "results")
+    typer.echo(f"\nErgebnisdatei: {path}")

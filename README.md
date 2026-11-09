@@ -13,6 +13,8 @@ uv run jarvis serve             # nur 127.0.0.1
 uv run jarvis tools list        # MCP-Werkzeuge mit Risikoklasse
 uv run jarvis secrets set apple_caldav   # Apple-ID + App-Passwort -> Schlüsselbund
 uv run jarvis secrets status
+uv run jarvis evals list        # Eval-Aufgaben
+uv run jarvis evals run --model qwen3.5:4b --runs 3   # Werkzeugwahl messen
 uv run jarvis audit verify
 ```
 
@@ -26,6 +28,11 @@ Siehe ADR-004.
 **Kalender (iCloud):** `list_events` (READ) liest Termine, `create_event` (CONFIRM) legt nach
 Vorschau und Rückfrage `[j/N]` an. API: SSE-Event `confirm`, Antwort per
 `POST /v1/confirm/{id}`. Zugangsdaten nur im OS-Schlüsselbund. Siehe ADR-005/006.
+
+## Evals
+`jarvis evals run` misst, wie zuverlässig das lokale Modell Werkzeuge wählt (Aufgaben in
+`evals/tasks.toml`, echte MCP-Server mit Attrappen, kein Netz außer Ollama). Ergebnisse:
+`evals/results/`. Siehe ADR-007.
 
 ## Server
 - `GET /health`

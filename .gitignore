@@ -10,3 +10,6 @@ __pycache__/
 .pyright/
 *.egg-info/
 dist/
+
+# Generierte Eval-Ergebnisse (kein Quellcode)
+evals/results/
