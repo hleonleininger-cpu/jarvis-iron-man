@@ -215,3 +215,9 @@ expect_writes = 0
 id = "notes-list"
 prompt = "Was steht auf meiner Merkliste?"
 expect_tools = ["list_notes"]
+
+# ---------------------------------------------------------------- Tagesüberblick
+[[task]]
+id = "day-overview"
+prompt = "Was steht heute an? Ich bin in Dortmund."
+expect_tools = ["list_events", "list_notes", "get_weather"]

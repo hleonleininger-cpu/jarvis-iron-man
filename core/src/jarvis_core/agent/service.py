@@ -68,13 +68,23 @@ BUSY_MESSAGE = "Eine andere Anfrage läuft noch; diese wartet, bis sie fertig is
 WEEKDAYS_DE = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"]
 
 
-def system_prompt(now: datetime | None = None) -> str:
-    """Systemprompt mit heutigem Datum, damit relative Angaben ("Montag") auflösbar sind."""
+DAY_OVERVIEW = (
+    "Fragt der Nutzer nach seinem Tag (z. B. 'Was steht heute an?'), nutze die verfügbaren "
+    "Werkzeuge zusammen: Termine von heute, offene Notizen und Aufgaben, das Wetter."
+)
+
+
+def system_prompt(now: datetime | None = None, home: str | None = None) -> str:
+    """Systemprompt mit heutigem Datum (relative Angaben wie "Montag" werden auflösbar) und,
+    falls bekannt, dem Wohnort (Wetter ohne Ortsangabe)."""
     today = (now or datetime.now(ZoneInfo("Europe/Berlin"))).astimezone(ZoneInfo("Europe/Berlin"))
-    return (
-        f"{SYSTEM_PROMPT} Heute ist {WEEKDAYS_DE[today.weekday()]}, der {today:%Y-%m-%d} "
-        f"(Uhrzeit {today:%H:%M}, Zeitzone Europe/Berlin)."
+    text = (
+        f"{SYSTEM_PROMPT} {DAY_OVERVIEW} Heute ist {WEEKDAYS_DE[today.weekday()]}, der "
+        f"{today:%Y-%m-%d} (Uhrzeit {today:%H:%M}, Zeitzone Europe/Berlin)."
     )
+    if home:
+        text += f" Der Nutzer wohnt in {home}; ohne Ortsangabe gilt dieser Ort (z. B. beim Wetter)."
+    return text
 
 
 log = structlog.get_logger("jarvis.chat")
@@ -173,8 +183,10 @@ class ChatService:
         hub: McpHub,
         broker: ConfirmationBroker | None = None,
         sessions: SessionStore | None = None,
+        home: str | None = None,
     ) -> None:
         self.model_name = model_name
+        self.home = home
         self.hub = hub
         self.broker = broker or ConfirmationBroker()
         self.sessions = sessions or SessionStore()
@@ -309,7 +321,9 @@ class ChatService:
                 # `instructions` statt `system_prompt`: gilt je Anfrage neu (aktuelles Datum) und
                 # landet nicht im gespeicherten Verlauf.
                 agent: Agent[None, str] = Agent(
-                    self._model, instructions=system_prompt(), toolsets=self.hub.toolsets
+                    self._model,
+                    instructions=system_prompt(home=self.home),
+                    toolsets=self.hub.toolsets,
                 )
                 history = self.sessions.history(session_id) if session_id else None
                 # `run` statt `run_stream`: nur so geht es nach einem Werkzeugaufruf weiter, wenn
@@ -365,4 +379,7 @@ def build_service(
         )
     hub = hub or McpHub(settings.mcp_servers, audit, name)
     sessions = SessionStore(settings.history_max_turns, settings.history_max_chars)
-    return ChatService(model, name, settings.ollama_base_url, audit, hub, sessions=sessions)
+    return ChatService(
+        model, name, settings.ollama_base_url, audit, hub, sessions=sessions,
+        home=settings.home_location,
+    )  # fmt: skip

@@ -197,3 +197,32 @@ async def test_tools_list_fails_when_a_server_is_missing(
         await cli_main._list_tools(settings)  # pyright: ignore[reportPrivateUsage]
     assert err.value.exit_code == 1
     await cli_main._list_tools(_settings(tmp_path))  # pyright: ignore[reportPrivateUsage]
+
+
+# ------------------------------------------------------------------------- Wohnort und Tag
+def test_system_prompt_names_home_and_day_overview() -> None:
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from jarvis_core.agent.service import system_prompt
+
+    now = datetime(2026, 11, 12, 7, 15, tzinfo=ZoneInfo("Europe/Berlin"))
+    with_home = system_prompt(now, home="Dortmund")
+    assert "Der Nutzer wohnt in Dortmund" in with_home and "Donnerstag, der 2026-11-12" in with_home
+    assert "Was steht heute an?" in with_home
+    assert "wohnt" not in system_prompt(now)
+
+
+async def test_home_location_reaches_the_model(tmp_path: Path) -> None:
+    seen: list[str | None] = []
+
+    async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        seen.append(info.instructions)
+        yield "ok"
+
+    settings = Settings(data_dir=tmp_path / "data", home_location="Dortmund")
+    service = build_service(
+        settings, AuditLog(settings.audit_db_path), FunctionModel(stream_function=stream_fn), "test"
+    )
+    await _collect(service, "Wie ist das Wetter?")
+    assert seen and seen[0] is not None and "wohnt in Dortmund" in seen[0]

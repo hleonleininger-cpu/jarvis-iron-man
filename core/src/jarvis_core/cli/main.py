@@ -6,7 +6,10 @@ import os
 import re
 import socket
 import sys
+import threading
+import webbrowser
 from pathlib import Path
+from typing import Annotated
 
 import typer
 import uvicorn
@@ -134,8 +137,12 @@ def init() -> None:
 
 
 @app.command()
-def serve() -> None:
-    """Startet den Core-Server (Standard: nur 127.0.0.1)."""
+def serve(
+    open_browser: Annotated[
+        bool, typer.Option("--open", help="Web-Oberfläche danach im Browser öffnen")
+    ] = False,
+) -> None:
+    """Startet den Core-Server (Standard: nur 127.0.0.1) mit Web-Oberfläche."""
     settings = _settings()
     from jarvis_core.api import create_app
     from jarvis_core.api.app import token_required
@@ -164,6 +171,10 @@ def serve() -> None:
         "Browser. Beenden mit Strg+C.",
         err=True,
     )
+    if open_browser:
+        url = f"http://{_url_host(settings.host)}:{settings.port}/"
+        # Erst öffnen, wenn uvicorn lauscht; ein Timer reicht dafür (Start dauert < 1 s).
+        threading.Timer(1.0, webbrowser.open, args=(url,)).start()
     uvicorn.run(app_, host=settings.host, port=settings.port, log_config=None)
 
 

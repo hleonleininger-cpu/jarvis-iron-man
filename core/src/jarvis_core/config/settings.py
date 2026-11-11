@@ -100,6 +100,8 @@ class Settings(BaseSettings):
     history_max_turns: int = Field(default=10, ge=0, le=100)
     history_max_chars: int = Field(default=16_000, ge=1_000, le=200_000)
     mcp_servers: dict[str, McpServerConfig] = {}
+    # Wohnort für Fragen ohne Ortsangabe (z. B. "Wie ist das Wetter?"), etwa "Dortmund".
+    home_location: str | None = Field(default=None, max_length=80)
     # Zugangstoken für /v1/* (ADR-011). None = automatisch: Pflicht, sobald host nicht lokal ist.
     require_api_token: bool | None = None
 

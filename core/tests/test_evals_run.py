@@ -46,8 +46,10 @@ def scripted_model(tasks: list[EvalTask], *, use_tools: bool = True) -> Function
         )
         returned = [p for m in messages for p in m.parts if isinstance(p, ToolReturnPart)]
         task = by_prompt[prompt]
-        if use_tools and task.expect_tools and not returned:
-            name = task.expect_tools[0]
+        done = {p.tool_name for p in returned}
+        pending = [name for name in task.expect_tools if name not in done]
+        if use_tools and pending:
+            name = pending[0]  # mehrere erwartete Werkzeuge nacheinander aufrufen
             args = dict(ARGS[name])
             if name == "get_weather" and "Xyzqwertplatz" in prompt:
                 args["ort"] = "Xyzqwertplatz"  # der Agent fragt nach dem Ort aus der Eingabe

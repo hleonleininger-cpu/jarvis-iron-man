@@ -390,3 +390,38 @@ def test_init_honours_jarvis_config(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     monkeypatch.setenv("JARVIS_CONFIG", str(target))
     assert CliRunner().invoke(app, ["init"]).exit_code == 0
     assert target.is_file()
+
+
+def test_serve_open_starts_the_browser(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import threading
+    import webbrowser
+
+    import uvicorn
+
+    from jarvis_core.cli import main as cli_main
+
+    opened: list[str] = []
+
+    class Immediately:
+        def __init__(self, delay: float, function: object, args: tuple[str]) -> None:
+            self.args = args
+
+        def start(self) -> None:
+            opened.append(self.args[0])
+
+    monkeypatch.setattr(threading, "Timer", Immediately)
+
+    def wrong_open(url: str) -> None:
+        opened.append("falsch")
+
+    def no_server(*args: object, **kwargs: object) -> None:
+        return None
+
+    monkeypatch.setattr(webbrowser, "open", wrong_open)
+    monkeypatch.setattr(uvicorn, "run", no_server)
+    monkeypatch.setattr(cli_main, "load_settings", lambda: Settings(data_dir=tmp_path, model="m"))
+    cli_main.serve(open_browser=True)
+    assert opened == ["http://127.0.0.1:8765/"]
+    opened.clear()
+    cli_main.serve()  # ohne --open: kein Browser
+    assert opened == []

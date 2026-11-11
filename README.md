@@ -11,7 +11,7 @@ uv run jarvis doctor            # Hardware, Ollama, empfohlenes Modell
 ollama pull qwen3.5:4b          # Beispiel: Befehl aus jarvis doctor übernehmen
 uv run jarvis chat "Wer bist du?"   # Einzelanfrage
 uv run jarvis chat              # Dialog mit Gesprächsverlauf (/neu, /ende)
-uv run jarvis serve             # nur 127.0.0.1; Web-Oberfläche: http://127.0.0.1:8765/
+uv run jarvis serve --open      # nur 127.0.0.1; öffnet die Web-Oberfläche im Browser
 uv run jarvis tools list        # MCP-Werkzeuge mit Risikoklasse
 uv run jarvis secrets set apple_caldav   # Apple-ID + App-Passwort -> Schlüsselbund
 uv run jarvis secrets set notion          # Notion-Integration-Token (nur Lesen)
@@ -61,6 +61,12 @@ Ja/Nein). Fürs iPhone den Server an die Tailnet-Adresse binden (`host = "100.x.
 `http://<tailnet-name>:8765/` öffnen; beim ersten Senden fragt die Seite nach dem Token.
 Ohne Token startet ein nicht-lokaler Server nicht. Siehe ADR-010/011.
 
+**Autostart unter Windows** (Aufgabenplanung, einmalig in einer Eingabeaufforderung; Pfad anpassen):
+```bat
+schtasks /Create /TN "JARVIS" /SC ONLOGON /TR "cmd /c cd /d C:\Pfad\jarvis-iron-man\core && uv run jarvis serve"
+```
+Entfernen mit `schtasks /Delete /TN "JARVIS"`.
+
 ## Server
 - `GET /` Web-Client, `GET /health`
 - `POST /v1/chat` mit `{"message": "...", "session_id": "..."}` → Server-Sent Events (`delta`,
@@ -79,6 +85,8 @@ Ohne Token startet ein nicht-lokaler Server nicht. Siehe ADR-010/011.
 Die Datei wird im aktuellen Ordner gesucht; `JARVIS_CONFIG=/pfad/zur/jarvis.toml` nennt einen
 anderen Ort. `jarvis doctor` zeigt, welche Datei gilt, welche MCP-Server deklariert und welche
 Zugangsdaten gesetzt sind. Ein relativer `data_dir` gilt relativ zur Konfigurationsdatei.
+`home_location = "Dortmund"` nennt den Wohnort: Fragen ohne Ort (z. B. "Wie ist das Wetter?")
+beziehen sich dann darauf.
 `ollama_base_url` muss auf diesen Rechner, das Heimnetz oder das Tailnet zeigen (keine
 Cloud-Modelle); Anfragen an Ollama gehen nie über einen System-Proxy und brechen nach 300 s
 Funkstille ab.
