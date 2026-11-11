@@ -98,6 +98,10 @@ function confirmCard(data) {
 }
 
 function handle(event, data, state) {
+  if (state.waiting) {  // erstes Ereignis: "denkt nach" entfernen
+    state.waiting.remove();
+    state.waiting = null;
+  }
   switch (event) {
     case "delta":
       if (!state.answer) {
@@ -123,6 +127,9 @@ function handle(event, data, state) {
       element("div", "info error", "Fehler: " + data.message);
       break;
     case "done":
+      if (sessionId && data.neu) {
+        element("div", "info", "Hinweis: JARVIS kannte das bisherige Gespräch nicht mehr (z. B. nach einem Neustart). Diese Antwort beruht nur auf der letzten Nachricht.");
+      }
       sessionId = data.session_id;
       break;
   }
@@ -134,12 +141,13 @@ async function ask(message) {
   if (sessionId) body.session_id = sessionId;
   const response = await call("POST", "/v1/chat", body, running.signal);
   if (!response.ok || !response.body) {
+    for (const node of log.querySelectorAll(".thinking")) node.remove();
     element("div", "info error", "Fehler: Anfrage abgelehnt (HTTP " + response.status + ").");
     return;
   }
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
-  const state = { answer: null, text: "" };
+  const state = { answer: null, text: "", waiting: element("div", "info thinking", "JARVIS denkt nach …") };
   let buffer = "";
   for (;;) {
     const { value, done } = await reader.read();
@@ -165,6 +173,7 @@ form.addEventListener("submit", async (submitEvent) => {
   const message = input.value.trim();
   if (!message || send.disabled) return;
   input.value = "";
+  input.style.height = "auto";
   send.disabled = true;
   running = new AbortController();
   stop.hidden = false;
@@ -174,6 +183,7 @@ form.addEventListener("submit", async (submitEvent) => {
     const aborted = error && error.name === "AbortError";
     element("div", aborted ? "info" : "info error", aborted ? "Abgebrochen." : "Fehler: Verbindung zu JARVIS unterbrochen.");
   } finally {
+    for (const node of log.querySelectorAll(".thinking")) node.remove();
     running = null;
     stop.hidden = true;
     send.disabled = false;
@@ -183,6 +193,12 @@ form.addEventListener("submit", async (submitEvent) => {
 
 stop.addEventListener("click", () => {
   if (running) running.abort();  // der Server bricht die Anfrage dann ebenfalls ab
+});
+
+// Eingabefeld wächst mit dem Text (bis 40 % der Höhe, dann scrollt es).
+input.addEventListener("input", () => {
+  input.style.height = "auto";
+  input.style.height = input.scrollHeight + "px";
 });
 
 input.addEventListener("keydown", (keyEvent) => {

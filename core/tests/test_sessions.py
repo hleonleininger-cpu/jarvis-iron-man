@@ -348,3 +348,20 @@ def test_cli_strips_terminal_control_sequences(
     out = capfd.readouterr().out
     assert "\x1b" not in out and "\x07" not in out
     assert "Hallo ]52;c;Ym9zZQ==Welt[2J" in out  # Text bleibt lesbar, wirkt aber nicht mehr
+
+
+def test_api_says_when_a_session_was_unknown(settings: Settings) -> None:
+    """Nach Neustart oder Ablauf kennt der Server die ID nicht mehr; der Client soll es erfahren."""
+    recorder = _Recorder()
+    client = TestClient(
+        create_app(settings, FunctionModel(stream_function=recorder.stream), "test"),
+        base_url="http://127.0.0.1",
+    )
+    first = _post(client, {"message": "eins", "session_id": "s1"})
+    second = _post(client, {"message": "zwei", "session_id": "s1"})
+    assert first[-1][1]["neu"] is True and second[-1][1]["neu"] is False
+    restarted = TestClient(
+        create_app(settings, FunctionModel(stream_function=recorder.stream), "test"),
+        base_url="http://127.0.0.1",
+    )
+    assert _post(restarted, {"message": "drei", "session_id": "s1"})[-1][1]["neu"] is True

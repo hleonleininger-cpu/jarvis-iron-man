@@ -181,6 +181,9 @@ def create_app(
     @app.post("/v1/chat", dependencies=guarded)
     async def chat(request: ChatRequest) -> StreamingResponse:  # pyright: ignore[reportUnusedFunction]
         session_id = request.session_id or service.sessions.new_id()
+        # Gab es zu dieser ID keinen Verlauf (neu, abgelaufen, Server neu gestartet)? Der Client
+        # erfährt es im `done`-Ereignis und kann sagen, dass JARVIS das Gespräch nicht mehr kennt.
+        fresh = not service.sessions.history(session_id)
 
         async def events() -> AsyncIterator[str]:
             stream = service.stream(request.message, channel="api", session_id=session_id)
@@ -204,7 +207,9 @@ def create_app(
             except ChatError as exc:
                 yield _sse("error", {"message": str(exc)})
                 return
-            yield _sse("done", {"model": service.model_name, "session_id": session_id})
+            yield _sse(
+                "done", {"model": service.model_name, "session_id": session_id, "neu": fresh}
+            )
 
         return StreamingResponse(events(), media_type="text/event-stream", headers=SSE_HEADERS)
 
