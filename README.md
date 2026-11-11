@@ -44,6 +44,9 @@ Gespeichert in `~/.jarvis/notizen.sqlite3`, kein Netz. Siehe ADR-012.
 Schlüsselbund, Datenbank-IDs in `jarvis.toml` (`[mcp_servers.notion] env`). Es gibt keinen
 Schreib-Endpunkt im Code. Siehe ADR-008.
 
+**Diagnose:** Was die Werkzeug-Server auf stderr schreiben (z. B. `[caldav:EVENTS] status=401`),
+steht in `data/logs/<server>.log`, jeweils nur vom letzten Lauf.
+
 ## Evals
 `jarvis evals run` misst, wie zuverlässig das lokale Modell Werkzeuge wählt (Aufgaben in
 `evals/tasks.toml`, echte MCP-Server mit Attrappen, kein Netz außer Ollama). Ergebnisse:

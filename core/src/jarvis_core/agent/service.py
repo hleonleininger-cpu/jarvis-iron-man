@@ -377,7 +377,7 @@ def build_service(
         model = OpenAIChatModel(
             name, provider=OpenAIProvider(openai_client=_ollama_client(settings))
         )
-    hub = hub or McpHub(settings.mcp_servers, audit, name)
+    hub = hub or McpHub(settings.mcp_servers, audit, name, log_dir=settings.data_dir / "logs")
     sessions = SessionStore(settings.history_max_turns, settings.history_max_chars)
     return ChatService(
         model, name, settings.ollama_base_url, audit, hub, sessions=sessions,

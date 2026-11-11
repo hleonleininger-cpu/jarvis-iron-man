@@ -10,6 +10,7 @@ import json
 import sqlite3
 import threading
 from collections.abc import Iterable
+from contextlib import closing
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -64,12 +65,25 @@ def _compute_hash(
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+class AuditError(Exception):
+    """Audit-Log nicht nutzbar (beschädigt, gesperrt, nicht schreibbar). Ohne Audit kein Betrieb."""
+
+
 class AuditLog:
     def __init__(self, path: Path) -> None:
         self._path = path
         self._lock = threading.Lock()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with self._connect() as conn:
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            self._init_schema()
+        except (sqlite3.DatabaseError, OSError) as exc:
+            raise AuditError(
+                f"Das Audit-Log {path} ist nicht nutzbar ({exc}). Ohne Audit-Log arbeitet JARVIS "
+                "nicht; Datei prüfen oder umbenennen (dann wird ein neues angelegt)."
+            ) from None
+
+    def _init_schema(self) -> None:
+        with closing(self._connect()) as conn:  # `with conn` allein schließt nicht
             conn.execute(_SCHEMA)
             existing = {row[1] for row in conn.execute("PRAGMA table_info(audit)")}
             for column in _TOOL_COLUMNS:

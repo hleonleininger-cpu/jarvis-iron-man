@@ -7,6 +7,7 @@ import re
 import socket
 import sys
 import threading
+import tomllib
 import webbrowser
 from pathlib import Path
 from typing import Annotated
@@ -26,7 +27,7 @@ from jarvis_core.agent import (
     build_service,
     resolve_model_name,
 )
-from jarvis_core.audit import AuditLog
+from jarvis_core.audit import AuditError, AuditLog
 from jarvis_core.config import (
     ConfigFileMissing,
     Settings,
@@ -91,11 +92,28 @@ app.add_typer(tools_app, name="tools")
 INTERACTIVE_LOG_LEVEL = "ERROR"
 
 
+def _audit(path: Path) -> AuditLog:
+    """Audit-Log öffnen; ist es nicht nutzbar, klare Meldung statt Traceback (und kein Betrieb)."""
+    try:
+        return AuditLog(path)
+    except AuditError as exc:
+        typer.echo(f"Fehler: {exc}", err=True)
+        raise typer.Exit(1) from None
+
+
 def _settings(log_level: str | None = None) -> Settings:
     try:
         settings = load_settings()
     except ConfigFileMissing as exc:
         typer.echo(f"Ungültige Konfiguration: {exc}", err=True)
+        raise typer.Exit(2) from None
+    except (
+        tomllib.TOMLDecodeError
+    ) as exc:  # Tippfehler in jarvis.toml: Zeile nennen, kein Traceback
+        typer.echo(f"Ungültige Konfiguration ({config_path().resolve()}): {exc}", err=True)
+        raise typer.Exit(2) from None
+    except OSError as exc:
+        typer.echo(f"Konfiguration nicht lesbar ({config_path().resolve()}): {exc}", err=True)
         raise typer.Exit(2) from None
     except ValidationError as exc:
         for err in exc.errors():
@@ -162,7 +180,11 @@ def serve(
                 err=True,
             )
             raise typer.Exit(1)
-    app_ = create_app(settings, api_token=token)
+    try:
+        app_ = create_app(settings, api_token=token)
+    except AuditError as exc:
+        typer.echo(f"Fehler: {exc}", err=True)
+        raise typer.Exit(1) from None
     # uvicorn bleibt still (log_config=None): ohne diese Zeile sähe man nach dem Start nichts.
     typer.echo(
         f"JARVIS Core läuft auf http://{_url_host(settings.host)}:{settings.port} "
@@ -291,7 +313,7 @@ def chat(
 ) -> None:
     """Beantwortet eine Nachricht (gestreamt) oder führt ohne Argument einen Dialog."""
     settings = _settings(INTERACTIVE_LOG_LEVEL)  # Terminal bleibt frei von JSON-Logs
-    service = build_service(settings, AuditLog(settings.audit_db_path))
+    service = build_service(settings, _audit(settings.audit_db_path))
     service.broker = ConfirmationBroker(timeout=None)  # der Nutzer sitzt vor der Rückfrage
     if text is None:
         _dialog(service)
@@ -373,7 +395,7 @@ def audit_verify() -> None:
         # Nichts anlegen: ein falscher Ordner soll nicht als "gültig, 0 Einträge" durchgehen.
         typer.echo(f"Kein Audit-Log unter {path.resolve()}.", err=True)
         raise typer.Exit(1)
-    result = AuditLog(path).verify_chain()
+    result = _audit(path).verify_chain()
     if result.ok:
         typer.echo(f"Audit-Kette gültig ({result.checked} Einträge, {path.resolve()}).")
         return
@@ -393,7 +415,7 @@ def _one_line(text: str, limit: int = 90) -> str:
 async def _list_tools(settings: Settings) -> None:
     from jarvis_core.mcp_hub import McpHub
 
-    audit = AuditLog(settings.audit_db_path)
+    audit = _audit(settings.audit_db_path)
     async with McpHub(settings.mcp_servers, audit, model_name="-") as hub:
         for failure in hub.failures:
             typer.echo(f"Hinweis: {failure}", err=True)

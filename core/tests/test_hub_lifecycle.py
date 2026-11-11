@@ -306,3 +306,24 @@ async def test_servers_start_in_parallel(tmp_path: Path) -> None:
     async with McpHub(servers, AuditLog(tmp_path / "audit.sqlite3"), "test"):
         elapsed = time.monotonic() - started
     assert elapsed < 2.5, f"{elapsed:.1f} s – Server starten nicht parallel"
+
+
+# ------------------------------------------------------------------------------------- Runde 13
+async def test_server_stderr_goes_to_a_per_run_log_file(
+    tmp_path: Path, capfd: pytest.CaptureFixture[str]
+) -> None:
+    noisy = tmp_path / "noisy_server.py"
+    noisy.write_text(
+        "import sys\nprint('Diagnose: Lauf', file=sys.stderr, flush=True)\n"
+        f"exec(open({FAKE_SERVER!r}, encoding='utf-8').read())\n",
+        encoding="utf-8",
+    )
+    servers = {"laut": McpServerConfig(command="python", args=[str(noisy)],
+                                       tools={"get_weather": RiskClass.READ})}  # fmt: skip
+    logs = tmp_path / "logs"
+    for _ in range(2):
+        async with McpHub(servers, AuditLog(tmp_path / "audit.sqlite3"), "test", log_dir=logs):
+            pass
+    assert "Diagnose" not in capfd.readouterr().err  # Terminal bleibt sauber
+    text = (logs / "laut.log").read_text(encoding="utf-8")
+    assert text.count("Diagnose: Lauf") == 1  # je Lauf neu, nicht angehängt

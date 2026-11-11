@@ -1,3 +1,3 @@
-from jarvis_core.audit.log import AuditLog, VerifyResult
+from jarvis_core.audit.log import AuditError, AuditLog, VerifyResult
 
-__all__ = ["AuditLog", "VerifyResult"]
+__all__ = ["AuditError", "AuditLog", "VerifyResult"]

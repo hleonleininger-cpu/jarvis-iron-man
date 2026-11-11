@@ -9,8 +9,9 @@ import sys
 from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from dataclasses import dataclass
+from pathlib import Path
 from types import TracebackType
-from typing import Any, Self
+from typing import Any, Self, TextIO
 
 import structlog
 from fastmcp.client.transports import StdioTransport
@@ -95,9 +96,16 @@ def _is_failure(result: Any) -> bool:
 
 class McpHub:
     def __init__(
-        self, servers: dict[str, McpServerConfig], audit: AuditLog, model_name: str
+        self,
+        servers: dict[str, McpServerConfig],
+        audit: AuditLog,
+        model_name: str,
+        log_dir: Path | None = None,
     ) -> None:
         self._servers = servers
+        # Fehlerausgabe der Server je Lauf in <log_dir>/<server>.log (überschrieben, nicht
+        # angehängt); ohne log_dir landet sie auf stderr.
+        self._log_dir = log_dir
         self._audit = audit
         self._model_name = model_name
         self._running: list[asyncio.Task[None]] | None = None
@@ -168,7 +176,8 @@ class McpHub:
         stop: asyncio.Event,
     ) -> None:
         """Öffnet die Verbindung zu einem Server, hält sie bis `stop` und schließt sie wieder."""
-        toolset = self._build_toolset(name, cfg)
+        log_file = self._open_log(name)
+        toolset = self._build_toolset(name, cfg, log_file)
         try:
             async with toolset:
                 if ready.done():  # Start wurde inzwischen abgebrochen: gleich wieder beenden
@@ -183,6 +192,17 @@ class McpHub:
         finally:
             if not ready.done():
                 ready.cancel()
+            if log_file is not None:
+                log_file.close()
+
+    def _open_log(self, server: str) -> TextIO | None:
+        if self._log_dir is None:
+            return None
+        try:
+            self._log_dir.mkdir(parents=True, exist_ok=True)
+            return (self._log_dir / f"{server}.log").open("w", encoding="utf-8")
+        except OSError:  # Log nicht schreibbar: dann eben auf stderr, die Anfrage läuft weiter
+            return None
 
     def _server_failed(self, server: str, exc: Exception) -> None:
         self.failures.append(
@@ -211,7 +231,9 @@ class McpHub:
             await stopping
             raise
 
-    def _build_toolset(self, server: str, cfg: McpServerConfig) -> MCPToolset[Any]:
+    def _build_toolset(
+        self, server: str, cfg: McpServerConfig, log_file: TextIO | None = None
+    ) -> MCPToolset[Any]:
         command = sys.executable if cfg.command == "python" else cfg.command
 
         async def process(
@@ -222,7 +244,11 @@ class McpHub:
         return MCPToolset(
             # keep_alive=False: sonst lebt der Server-Prozess nach jeder Anfrage weiter (Leck).
             StdioTransport(
-                command=command, args=cfg.args, env=server_env(cfg.env), keep_alive=False
+                command=command,
+                args=cfg.args,
+                env=server_env(cfg.env),
+                keep_alive=False,
+                log_file=log_file,
             ),
             process_tool_call=process,  # pyright: ignore[reportArgumentType]
             tool_error_behavior="failed",

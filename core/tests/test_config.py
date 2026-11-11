@@ -425,3 +425,29 @@ def test_serve_open_starts_the_browser(tmp_path: Path, monkeypatch: pytest.Monke
     opened.clear()
     cli_main.serve()  # ohne --open: kein Browser
     assert opened == []
+
+
+# --------------------------------------------------------------------------- Runde 13
+def test_toml_syntax_error_is_reported_without_traceback(tmp_path: Path) -> None:
+    from typer.testing import CliRunner
+
+    from jarvis_core.cli.main import app
+
+    (tmp_path / "jarvis.toml").write_text('port = 8765\nmodel = "qwen\n', encoding="utf-8")
+    result = CliRunner().invoke(app, ["doctor"])
+    assert result.exit_code == 2
+    assert "Ungültige Konfiguration" in result.output and "line 2" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_broken_audit_log_stops_with_a_clear_message(tmp_path: Path) -> None:
+    from typer.testing import CliRunner
+
+    from jarvis_core.cli.main import app
+
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "audit.sqlite3").write_bytes(b"das ist keine Datenbank" * 100)
+    for command in (["audit", "verify"], ["chat", "Hallo"]):
+        result = CliRunner().invoke(app, command)
+        assert result.exit_code == 1, command
+        assert "Audit-Log" in result.output and "nicht nutzbar" in result.output
