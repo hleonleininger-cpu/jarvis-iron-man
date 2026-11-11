@@ -28,5 +28,7 @@ Sicherheit:
 
 ## Konsequenzen
 - Läuft auf dem iPhone im Browser (Tailnet-Adresse), ohne App-Store.
-- Kein Markdown-Rendering: Antworten erscheinen als Text mit Zeilenumbrüchen.
+- Schlankes Markdown (Absätze, Listen, Überschriften, fett, kursiv, Code) wird als DOM-Knoten
+  gebaut, nie als HTML; Tabellen und Links bleiben Text.
+- Ein Stopp-Knopf bricht die laufende Antwort ab (der Server protokolliert `aborted`).
 - Getestet mit TestClient (Header, Auslieferung) und einmalig per Headless-Chromium Ende-zu-Ende.

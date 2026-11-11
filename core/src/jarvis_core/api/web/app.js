@@ -6,6 +6,8 @@ const log = document.getElementById("log");
 const form = document.getElementById("ask");
 const input = document.getElementById("message");
 const send = document.getElementById("send");
+const stop = document.getElementById("stop");
+let running = null;  // AbortController der laufenden Anfrage
 const TOKEN_KEY = "jarvis-token";
 let sessionId = null;
 
@@ -26,13 +28,50 @@ function headers(json) {
   return result;
 }
 
-async function call(method, path, body) {
-  let response = await fetch(path, { method, headers: headers(body !== undefined), body: body === undefined ? undefined : JSON.stringify(body) });
+// Schlankes Markdown (Absätze, Listen, Überschriften, **fett**, *kursiv*, `code`), nur als
+// DOM-Knoten mit textContent gebaut: Modelltext wird nie als HTML ausgewertet.
+const INLINE = /(\*\*[^*\n]+\*\*|`[^`\n]+`|\*[^*\s][^*\n]*\*)/g;
+
+function inline(parent, text) {
+  let last = 0;
+  for (const match of text.matchAll(INLINE)) {
+    if (match.index > last) parent.appendChild(document.createTextNode(text.slice(last, match.index)));
+    const token = match[0];
+    const tag = token.startsWith("**") ? "strong" : token.startsWith("`") ? "code" : "em";
+    const cut = tag === "strong" ? 2 : 1;
+    parent.appendChild(Object.assign(document.createElement(tag), { textContent: token.slice(cut, -cut) }));
+    last = match.index + token.length;
+  }
+  if (last < text.length) parent.appendChild(document.createTextNode(text.slice(last)));
+}
+
+function renderMarkdown(container, text) {
+  container.replaceChildren();
+  let list = null;
+  for (const line of text.split("\n")) {
+    const item = line.match(/^\s*(?:([-*•])|(\d+)[.)])\s+(.*)$/);
+    if (item) {
+      const tag = item[1] ? "ul" : "ol";
+      if (!list || list.tagName.toLowerCase() !== tag) list = container.appendChild(document.createElement(tag));
+      inline(list.appendChild(document.createElement("li")), item[3]);
+      continue;
+    }
+    list = null;
+    if (!line.trim()) continue;
+    const heading = line.match(/^#{1,4}\s+(.*)$/);
+    const paragraph = container.appendChild(document.createElement("p"));
+    if (heading) inline(paragraph.appendChild(document.createElement("strong")), heading[1]);
+    else inline(paragraph, line);
+  }
+}
+
+async function call(method, path, body, signal) {
+  let response = await fetch(path, { method, signal, headers: headers(body !== undefined), body: body === undefined ? undefined : JSON.stringify(body) });
   if (response.status === 401) {
     const token = window.prompt("Zugangstoken für JARVIS (jarvis secrets generate api_token):");
     if (!token) return response;
     try { localStorage.setItem(TOKEN_KEY, token.trim()); } catch (_) { /* nur für diese Anfrage */ }
-    response = await fetch(path, { method, headers: { ...headers(body !== undefined), Authorization: "Bearer " + token.trim() }, body: body === undefined ? undefined : JSON.stringify(body) });
+    response = await fetch(path, { method, signal, headers: { ...headers(body !== undefined), Authorization: "Bearer " + token.trim() }, body: body === undefined ? undefined : JSON.stringify(body) });
   }
   return response;
 }
@@ -61,8 +100,12 @@ function confirmCard(data) {
 function handle(event, data, state) {
   switch (event) {
     case "delta":
-      if (!state.answer) state.answer = element("div", "msg jarvis", "");
-      state.answer.textContent += data.text;
+      if (!state.answer) {
+        state.answer = element("div", "msg jarvis");
+        state.text = "";
+      }
+      state.text += data.text;
+      renderMarkdown(state.answer, state.text);
       log.scrollTop = log.scrollHeight;
       break;
     case "tool":
@@ -89,14 +132,14 @@ async function ask(message) {
   element("div", "msg me", message);
   const body = { message };
   if (sessionId) body.session_id = sessionId;
-  const response = await call("POST", "/v1/chat", body);
+  const response = await call("POST", "/v1/chat", body, running.signal);
   if (!response.ok || !response.body) {
     element("div", "info error", "Fehler: Anfrage abgelehnt (HTTP " + response.status + ").");
     return;
   }
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
-  const state = { answer: null };
+  const state = { answer: null, text: "" };
   let buffer = "";
   for (;;) {
     const { value, done } = await reader.read();
@@ -123,14 +166,23 @@ form.addEventListener("submit", async (submitEvent) => {
   if (!message || send.disabled) return;
   input.value = "";
   send.disabled = true;
+  running = new AbortController();
+  stop.hidden = false;
   try {
     await ask(message);
   } catch (error) {
-    element("div", "info error", "Fehler: Verbindung zu JARVIS unterbrochen.");
+    const aborted = error && error.name === "AbortError";
+    element("div", aborted ? "info" : "info error", aborted ? "Abgebrochen." : "Fehler: Verbindung zu JARVIS unterbrochen.");
   } finally {
+    running = null;
+    stop.hidden = true;
     send.disabled = false;
     input.focus();
   }
+});
+
+stop.addEventListener("click", () => {
+  if (running) running.abort();  // der Server bricht die Anfrage dann ebenfalls ab
 });
 
 input.addEventListener("keydown", (keyEvent) => {
