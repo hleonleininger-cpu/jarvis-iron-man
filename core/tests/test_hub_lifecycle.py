@@ -134,6 +134,7 @@ async def test_tool_of_one_server_is_not_offered_by_another(tmp_path: Path) -> N
     assert not (tmp_path / "writes.log").exists()
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="Prozessliste über /proc")
 async def test_server_process_ends_with_the_request(tmp_path: Path) -> None:
     before = _children()
     async with McpHub({"a": _weather()}, AuditLog(tmp_path / "audit.sqlite3"), "test"):
@@ -302,10 +303,16 @@ async def test_servers_start_in_parallel(tmp_path: Path) -> None:
         )
         for i in range(3)
     }
+    audit = AuditLog(tmp_path / "audit.sqlite3")
     started = time.monotonic()
-    async with McpHub(servers, AuditLog(tmp_path / "audit.sqlite3"), "test"):
-        elapsed = time.monotonic() - started
-    assert elapsed < 2.5, f"{elapsed:.1f} s – Server starten nicht parallel"
+    async with McpHub({"s0": servers["s0"]}, audit, "test"):
+        single = time.monotonic() - started
+    started = time.monotonic()
+    async with McpHub(servers, audit, "test"):
+        three = time.monotonic() - started
+    # Nacheinander wären es ~3 x single; parallel kaum mehr als einer (Python startet unter
+    # Windows deutlich langsamer, daher relativ statt einer festen Sekundengrenze).
+    assert three < 2 * single, f"{three:.1f} s für drei, {single:.1f} s für einen Server"
 
 
 # ------------------------------------------------------------------------------------- Runde 13
@@ -327,3 +334,19 @@ async def test_server_stderr_goes_to_a_per_run_log_file(
     assert "Diagnose" not in capfd.readouterr().err  # Terminal bleibt sauber
     text = (logs / "laut.log").read_text(encoding="utf-8")
     assert text.count("Diagnose: Lauf") == 1  # je Lauf neu, nicht angehängt
+
+
+def test_server_env_has_each_name_once_on_windows(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Windows: HTTPS_PROXY und https_proxy sind dieselbe Variable; doppelt übergeben wäre offen,
+    welche gilt, und eine Überschreibung aus jarvis.toml könnte verloren gehen."""
+    from jarvis_core.mcp_hub import hub as hub_module
+    from jarvis_core.mcp_hub.hub import PASS_THROUGH_ENV, server_env
+
+    for key in PASS_THROUGH_ENV:
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("HTTPS_PROXY", "http://proxy:3128")
+    monkeypatch.setenv("https_proxy", "http://proxy:3128")
+    monkeypatch.setattr(hub_module.os, "name", "nt")
+    env = server_env({"https_proxy": "http://aus-der-toml:1"}) or {}
+    assert [k for k in env if k.upper() == "HTTPS_PROXY"] == ["https_proxy"]
+    assert env["https_proxy"] == "http://aus-der-toml:1"

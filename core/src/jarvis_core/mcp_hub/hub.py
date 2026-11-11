@@ -68,9 +68,23 @@ PASS_THROUGH_ENV = (
 
 
 def server_env(declared: dict[str, str]) -> dict[str, str] | None:
-    """Durchgereichte Variablen plus die in jarvis.toml deklarierten (diese haben Vorrang)."""
-    inherited = {key: os.environ[key] for key in PASS_THROUGH_ENV if key in os.environ}
-    return {**inherited, **declared} or None
+    """Durchgereichte Variablen plus die in jarvis.toml deklarierten (diese haben Vorrang).
+
+    Unter Windows sind Namen unabhängig von Groß-/Kleinschreibung: HTTPS_PROXY und https_proxy
+    sind dieselbe Variable und dürfen nur einmal übergeben werden, sonst ist offen, welche gilt.
+    """
+    fold = str.upper if os.name == "nt" else str
+    result: dict[str, str] = {}
+    seen: set[str] = set()
+    for key in PASS_THROUGH_ENV:
+        if key in os.environ and fold(key) not in seen:
+            result[key] = os.environ[key]
+            seen.add(fold(key))
+    for key, value in declared.items():
+        for existing in [k for k in result if fold(k) == fold(key)]:
+            del result[existing]
+        result[key] = value
+    return result or None
 
 
 CallTool = Callable[[str, dict[str, Any]], Awaitable[Any]]

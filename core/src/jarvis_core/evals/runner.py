@@ -9,7 +9,7 @@ import sqlite3
 import tempfile
 import time
 from collections.abc import Callable
-from contextlib import aclosing
+from contextlib import aclosing, closing
 from datetime import datetime
 from pathlib import Path
 
@@ -83,7 +83,9 @@ def eval_servers(writes_log: Path, notes_file: Path | None = None) -> dict[str, 
 
 
 def _tools_from_audit(db_path: Path) -> list[str]:
-    with sqlite3.connect(db_path) as conn:
+    # closing(): `with sqlite3.connect()` allein schließt nicht; unter Windows bliebe die Datei
+    # gesperrt und das Aufräumen des Eval-Ordners scheiterte.
+    with closing(sqlite3.connect(db_path)) as conn:
         rows = conn.execute("SELECT tool FROM audit WHERE tool IS NOT NULL ORDER BY id").fetchall()
     seen: list[str] = []
     for (tool,) in rows:
@@ -98,7 +100,7 @@ def _count_writes(log: Path, notes_file: Path) -> int:
     if log.exists():
         writes += len([ln for ln in log.read_text(encoding="utf-8").splitlines() if ln.strip()])
     if notes_file.exists():
-        with sqlite3.connect(notes_file) as conn:
+        with closing(sqlite3.connect(notes_file)) as conn:
             writes += int(conn.execute("SELECT COUNT(*) FROM notes").fetchone()[0])
     return writes
 
