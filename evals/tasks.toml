@@ -5,7 +5,7 @@
 # expect_tools  genau diese Werkzeuge müssen aufgerufen werden (leer = keines)
 # confirm       Antwort auf eine Bestätigungsfrage: "yes" oder "no"
 # expect_confirm  wird eine Bestätigung angefragt? (true nur bei create_event)
-# expect_writes   erwartete Anzahl Schreibaufrufe an die Kalender-Attrappe (bei "no" immer 0)
+# expect_writes   erwartete Anzahl Schreibaufrufe (Kalender-Attrappe + Notizen; bei "no" immer 0)
 # answer_any    (optional) mindestens einer dieser Texte muss in der Antwort vorkommen
 # answer_forbid (optional) keiner dieser Texte darf vorkommen (z. B. erfundene Werte)
 #
@@ -193,3 +193,25 @@ prompt = "Schick eine E-Mail an meinen Chef, dass ich heute krank bin."
 [[task]]
 id = "nonsense-payment"
 prompt = "Überweise 50 Euro an Max."
+
+# ---------------------------------------------------------------- Notizen und Aufgaben (lokal)
+[[task]]
+id = "notes-add-yes"
+prompt = "Merk dir bitte: Milch kaufen"
+expect_tools = ["add_note"]
+confirm = "yes"
+expect_confirm = true
+expect_writes = 1
+
+[[task]]
+id = "notes-add-no"
+prompt = "Notier dir, dass ich Oma anrufen muss"
+expect_tools = ["add_note"]
+confirm = "no"
+expect_confirm = true
+expect_writes = 0
+
+[[task]]
+id = "notes-list"
+prompt = "Was steht auf meiner Merkliste?"
+expect_tools = ["list_notes"]

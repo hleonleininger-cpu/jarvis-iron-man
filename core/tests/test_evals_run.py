@@ -29,6 +29,8 @@ ARGS = {
     "create_event": {"titel": "Zahnarzt", "start": "2026-12-12T15:00"},
     "notion_query": {"datenbank": "mission_control"},
     "notion_search": {"begriff": "Handball"},
+    "add_note": {"text": "Milch kaufen"},
+    "list_notes": {},
 }
 
 

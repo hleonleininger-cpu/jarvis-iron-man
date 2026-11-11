@@ -39,7 +39,7 @@ EVAL_NOTION_ENV = {
 }
 
 
-def eval_servers(writes_log: Path) -> dict[str, McpServerConfig]:
+def eval_servers(writes_log: Path, notes_file: Path | None = None) -> dict[str, McpServerConfig]:
     """Dieselben Werkzeuge und Risikoklassen wie jarvis.example.toml, aber mit Attrappen."""
     return {
         "weather": McpServerConfig(
@@ -63,6 +63,22 @@ def eval_servers(writes_log: Path) -> dict[str, McpServerConfig]:
             tools={"list_events": RiskClass.READ, "create_event": RiskClass.WRITE_REVERSIBLE},
             previews={"create_event": "preview_create_event"},
         ),
+        # Der echte Notiz-Server: er arbeitet ohnehin nur lokal, hier mit einer Wegwerf-Datei.
+        "notes": McpServerConfig(
+            command="python",
+            args=[
+                "-m",
+                "mcp_servers.notes",
+                "--datei",
+                str(notes_file or writes_log.with_suffix(".notes")),
+            ],
+            tools={
+                "add_note": RiskClass.WRITE_REVERSIBLE,
+                "list_notes": RiskClass.READ,
+                "complete_note": RiskClass.WRITE_REVERSIBLE,
+            },
+            previews={"add_note": "preview_add_note", "complete_note": "preview_complete_note"},
+        ),
     }
 
 
@@ -76,10 +92,15 @@ def _tools_from_audit(db_path: Path) -> list[str]:
     return seen
 
 
-def _count_writes(log: Path) -> int:
-    if not log.exists():
-        return 0
-    return len([line for line in log.read_text(encoding="utf-8").splitlines() if line.strip()])
+def _count_writes(log: Path, notes_file: Path) -> int:
+    """Schreibaufrufe: Zeilen im Protokoll der Kalender-Attrappe plus gespeicherte Notizen."""
+    writes = 0
+    if log.exists():
+        writes += len([ln for ln in log.read_text(encoding="utf-8").splitlines() if ln.strip()])
+    if notes_file.exists():
+        with sqlite3.connect(notes_file) as conn:
+            writes += int(conn.execute("SELECT COUNT(*) FROM notes").fetchone()[0])
+    return writes
 
 
 async def _consume(service: ChatService, task: EvalTask) -> tuple[str, int]:
@@ -106,8 +127,9 @@ async def run_once(
     with tempfile.TemporaryDirectory(prefix="jarvis-eval-") as tmp:
         workdir = Path(tmp)
         writes_log = workdir / "writes.jsonl"
+        notes_file = workdir / "notizen.sqlite3"
         settings = base.model_copy(
-            update={"data_dir": workdir, "mcp_servers": eval_servers(writes_log)}
+            update={"data_dir": workdir, "mcp_servers": eval_servers(writes_log, notes_file)}
         )
         audit = AuditLog(settings.audit_db_path)
         service = build_service(settings, audit, model, model_name)
@@ -120,7 +142,7 @@ async def run_once(
             error = f"{type(exc).__name__}: {str(exc)[:200]}"
         observation = Observation(
             tools_called=_tools_from_audit(settings.audit_db_path),
-            writes=_count_writes(writes_log),
+            writes=_count_writes(writes_log, notes_file),
             confirm_requests=confirms,
             answer=answer,
             error=error,

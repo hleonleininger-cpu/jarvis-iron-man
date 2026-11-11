@@ -35,6 +35,18 @@ previews = { create_event = "preview_create_event" }
 list_events = "READ"
 create_event = "WRITE_REVERSIBLE"
 
+# Notizen und Aufgaben, lokal (SQLite, kein Netz). Standard-Datei: ~/.jarvis/notizen.sqlite3,
+# andere mit args = [..., "--datei", "D:/jarvis/notizen.sqlite3"]. Schreiben nur nach Rückfrage.
+[mcp_servers.notes]
+command = "python"
+args = ["-m", "mcp_servers.notes"]
+previews = { add_note = "preview_add_note", complete_note = "preview_complete_note" }
+
+[mcp_servers.notes.tools]
+add_note = "WRITE_REVERSIBLE"
+list_notes = "READ"
+complete_note = "WRITE_REVERSIBLE"
+
 # Notion (NUR LESEN, JARVIS-OS-Daten). Token: `jarvis secrets set notion` (OS-Schlüsselbund).
 # env ordnet Namen den Datenbank-IDs (Data-Source-IDs) zu: NOTION_DB_<NAME> = "<ID>".
 # Bekannte Namen: MISSION_CONTROL, ACADEMY, FORGE, OLYMPUS, VAULT (frei erweiterbar). Die Datenbank
