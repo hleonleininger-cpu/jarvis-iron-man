@@ -7,7 +7,6 @@ import os
 import re
 import sys
 from collections.abc import Awaitable, Callable
-from contextlib import AsyncExitStack
 from contextvars import ContextVar
 from dataclasses import dataclass
 from types import TracebackType
@@ -101,7 +100,8 @@ class McpHub:
         self._servers = servers
         self._audit = audit
         self._model_name = model_name
-        self._stack: AsyncExitStack | None = None
+        self._running: list[asyncio.Task[None]] | None = None
+        self._stop = asyncio.Event()
         self._connected: dict[str, MCPToolset[Any]] = {}
         self._infos: list[ToolInfo] = []
         self.failures: list[str] = []
@@ -128,26 +128,61 @@ class McpHub:
         return [only_declared(server, ts) for server, ts in self._connected.items()]
 
     async def __aenter__(self) -> Self:
-        if self._stack is not None:
+        if self._running is not None:
             # Ein Hub trägt genau eine laufende Anfrage; der Agent reiht Anfragen deshalb ein.
             raise RuntimeError("McpHub ist bereits aktiv.")
-        self._stack = AsyncExitStack()
+        self._running = []
+        self._stop = asyncio.Event()
         self.failures = []
         try:
+            # Alle Server gleichzeitig starten (sonst summieren sich die Startzeiten je Anfrage).
+            # Jeder Server lebt in einer eigenen Task, die ihn auch wieder beendet: MCP-Verbindungen
+            # müssen in derselben Task geschlossen werden, in der sie geöffnet wurden.
+            ready: dict[str, asyncio.Future[MCPToolset[Any]]] = {}
+            loop = asyncio.get_running_loop()
             for name, cfg in self._servers.items():
-                toolset = self._build_toolset(name, cfg)
-                try:
-                    await self._stack.enter_async_context(toolset)
-                except Exception as exc:
-                    self._server_failed(name, exc)
-                    continue
-                self._connected[name] = toolset
+                ready[name] = loop.create_future()
+                self._running.append(
+                    asyncio.create_task(self._serve(name, cfg, ready[name], self._stop))
+                )
+            results = await asyncio.gather(*ready.values(), return_exceptions=True)
+            for name, result in zip(ready, results, strict=True):
+                if isinstance(result, Exception):
+                    self._server_failed(name, result)
+                elif isinstance(result, BaseException):
+                    raise result
+                else:
+                    self._connected[name] = result
             self._infos = await self._fetch_tool_infos()
         except BaseException:
             # Auch bei Abbruch mitten im Start: bereits gestartete Server-Prozesse beenden.
             await self.__aexit__(None, None, None)
             raise
         return self
+
+    async def _serve(
+        self,
+        name: str,
+        cfg: McpServerConfig,
+        ready: asyncio.Future[MCPToolset[Any]],
+        stop: asyncio.Event,
+    ) -> None:
+        """Öffnet die Verbindung zu einem Server, hält sie bis `stop` und schließt sie wieder."""
+        toolset = self._build_toolset(name, cfg)
+        try:
+            async with toolset:
+                if ready.done():  # Start wurde inzwischen abgebrochen: gleich wieder beenden
+                    return
+                ready.set_result(toolset)
+                await stop.wait()
+        except Exception as exc:
+            if not ready.done():
+                ready.set_exception(exc)
+            else:  # Fehler beim Beenden: nicht die Anfrage scheitern lassen
+                log.info("mcp_server_stop_failed", server=name, error=type(exc).__name__)
+        finally:
+            if not ready.done():
+                ready.cancel()
 
     def _server_failed(self, server: str, exc: Exception) -> None:
         self.failures.append(
@@ -162,11 +197,19 @@ class McpHub:
         exc: BaseException | None,
         tb: TracebackType | None,
     ) -> None:
-        stack, self._stack = self._stack, None
+        running, self._running = self._running, None
         self._connected = {}
         self._infos = []
-        if stack is not None:
-            await stack.__aexit__(exc_type, exc, tb)
+        if running is None:
+            return
+        self._stop.set()
+        # Auch bei Abbruch (Strg+C, Client weg) zu Ende warten, damit keine Prozesse übrig bleiben.
+        stopping = asyncio.gather(*running, return_exceptions=True)
+        try:
+            await asyncio.shield(stopping)
+        except asyncio.CancelledError:
+            await stopping
+            raise
 
     def _build_toolset(self, server: str, cfg: McpServerConfig) -> MCPToolset[Any]:
         command = sys.executable if cfg.command == "python" else cfg.command

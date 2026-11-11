@@ -1,6 +1,8 @@
 """Lokale Ablage für Notizen und Aufgaben (SQLite). Nur dieser Server liest und schreibt sie."""
 
 import sqlite3
+from collections.abc import Generator
+from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -47,8 +49,12 @@ class NoteStore:
         with self._connect() as conn:
             conn.execute(_SCHEMA)
 
-    def _connect(self) -> sqlite3.Connection:
-        return sqlite3.connect(self._path, timeout=10.0)
+    @contextmanager
+    def _connect(self) -> Generator[sqlite3.Connection]:
+        """Verbindung mit Commit am Ende, die IMMER geschlossen wird. (`with sqlite3.connect()`
+        allein schließt nicht; unter Windows bliebe die Datei gesperrt.)"""
+        with closing(sqlite3.connect(self._path, timeout=10.0)) as conn, conn:
+            yield conn
 
     def add(self, text: str, due: date | None, now: datetime | None = None) -> Note:
         created = (now or datetime.now(UTC)).isoformat(timespec="seconds")

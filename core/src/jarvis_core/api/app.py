@@ -155,7 +155,8 @@ def create_app(
     async def authorized(authorization: str | None = Header(default=None)) -> None:
         if expected is None:
             return
-        given = (authorization or "").removeprefix("Bearer ").strip().encode()
+        scheme, _, value = (authorization or "").strip().partition(" ")
+        given = value.strip().encode() if scheme.lower() == "bearer" else b"\0"
         if not hmac.compare_digest(given, expected):
             raise HTTPException(
                 status_code=401,

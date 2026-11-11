@@ -35,8 +35,9 @@ Pydantic-AI-Agent. Eigene Server liegen in `mcp_servers/` und kennen den Core ni
 ## Konsequenzen
 - Neue Abhängigkeit: Extra `mcp` von `pydantic-ai-slim` (MCP-Client) und das `mcp`-SDK für die
   eigenen Server.
-- Server werden derzeit pro Anfrage gestartet (einfach, robust, ca. 1 s Latenz); dauerhafte
-  Verbindungen sind eine spätere Optimierung.
+- Server werden pro Anfrage gestartet, und zwar gleichzeitig (jeder in einer eigenen Task, die
+  ihn auch wieder beendet). Gemessen mit vier Servern: ca. 0,7 s statt 2,7 s nacheinander.
+  Dauerhafte Verbindungen über Anfragen hinweg sind eine spätere Optimierung.
 - Das Audit-Schema bekam die Spalten `tool`, `risk`, `decision`; M0-Datenbanken werden beim
   Öffnen ergänzt und bleiben verifizierbar.
 - Risikoklasse wird aus der Konfiguration vertraut, nicht aus der Selbstauskunft des Servers.

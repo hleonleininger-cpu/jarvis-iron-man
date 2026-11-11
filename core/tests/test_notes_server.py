@@ -120,3 +120,19 @@ async def test_add_note_asks_first_and_writes_only_on_yes(tmp_path: Path, approv
         rows = conn.execute("SELECT tool, decision FROM audit WHERE tool IS NOT NULL").fetchall()
     assert rows[0] == ("add_note", "CONFIRM")
     assert b"Milch" not in settings.audit_db_path.read_bytes()  # Inhalte nie im Audit
+
+
+def test_store_closes_its_connections(tmp_path: Path) -> None:
+    """Offene Verbindungen sperren die Datei unter Windows; nach jeder Operation ist sie frei."""
+    import gc
+    import warnings
+
+    path = tmp_path / "notizen.sqlite3"
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", ResourceWarning)
+        store = NoteStore(path)
+        store.add("Milch", None)
+        store.list()
+        store.complete(1)
+        gc.collect()
+    path.rename(tmp_path / "verschoben.sqlite3")  # ginge unter Windows mit offener Datei nicht

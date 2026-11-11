@@ -284,3 +284,25 @@ async def test_tool_servers_do_not_log_into_the_terminal(
             await toolset.client.call_tool("get_weather", {"falsch": 1})
     await asyncio.sleep(0.2)
     assert "rejected" not in capfd.readouterr().err
+
+
+# ------------------------------------------------------------------------------------- Runde 11
+async def test_servers_start_in_parallel(tmp_path: Path) -> None:
+    """Früher nacheinander: vier Server kosteten je Anfrage die Summe ihrer Startzeiten."""
+    import time
+
+    slow = tmp_path / "slow_server.py"
+    slow.write_text(
+        f"import time\ntime.sleep(1.0)\nexec(open({FAKE_SERVER!r}, encoding='utf-8').read())\n",
+        encoding="utf-8",
+    )
+    servers = {
+        f"s{i}": McpServerConfig(
+            command="python", args=[str(slow)], tools={f"tool_{i}": RiskClass.READ}
+        )
+        for i in range(3)
+    }
+    started = time.monotonic()
+    async with McpHub(servers, AuditLog(tmp_path / "audit.sqlite3"), "test"):
+        elapsed = time.monotonic() - started
+    assert elapsed < 2.5, f"{elapsed:.1f} s – Server starten nicht parallel"

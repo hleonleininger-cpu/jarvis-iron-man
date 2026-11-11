@@ -137,3 +137,15 @@ def test_serve_off_localhost_refuses_without_token(
     CliRunner().invoke(cli, ["secrets", "generate", "api_token"])
     cli_main.serve()
     assert len(started) == 1 and "Zugang nur mit Token" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("scheme", ["Bearer", "bearer", "BEARER"])
+def test_bearer_scheme_is_case_insensitive(settings: Settings, scheme: str) -> None:
+    client = _client(settings.model_copy(update={"require_api_token": True}), TOKEN)
+    response = client.delete("/v1/sessions/abc", headers={"Authorization": f"{scheme} {TOKEN}"})
+    assert response.status_code == 404  # durchgelassen; die Sitzung gibt es nur nicht
+
+
+def test_token_without_scheme_is_rejected(settings: Settings) -> None:
+    client = _client(settings.model_copy(update={"require_api_token": True}), TOKEN)
+    assert client.delete("/v1/sessions/abc", headers={"Authorization": TOKEN}).status_code == 401
