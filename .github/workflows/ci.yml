@@ -19,3 +19,15 @@ jobs:
       - run: uv run pyright
       # Live-Tests (echtes Netz, Ollama, iCloud, Notion) gehören nicht in die CI.
       - run: uv run pytest -m "not live"
+
+  # JARVIS läuft beim Nutzer unter Windows: dieselben Tests dort (Pfade, Prozesse, Kodierung).
+  test-windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: core
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --locked
+      - run: uv run pytest -m "not live"
