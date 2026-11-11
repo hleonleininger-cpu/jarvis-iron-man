@@ -7,6 +7,9 @@ dependencies = [
     "fastapi",
     "uvicorn",
     "pydantic-ai-slim[openai,mcp]",
+    # direkt genutzt für den Ollama-Client (ohne Proxy, mit Zeitlimit); kommen mit pydantic-ai
+    "openai",
+    "httpx2",
     "pydantic-settings",
     "structlog",
     "typer",

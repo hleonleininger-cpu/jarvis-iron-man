@@ -93,6 +93,18 @@ expect_tools = ["list_events"]
 answer_any = ["Besprechung", "Handballtraining"]
 
 [[task]]
+id = "calendar-read-day-after-tomorrow"
+prompt = "Habe ich übermorgen Termine?"
+expect_tools = ["list_events"]
+answer_any = ["Besprechung", "Handballtraining"]
+
+[[task]]
+id = "calendar-read-next-week"
+prompt = "Was steht nächste Woche an?"
+expect_tools = ["list_events"]
+answer_any = ["Besprechung", "Handballtraining"]
+
+[[task]]
 id = "calendar-read-date"
 prompt = "Was habe ich am 20. November 2026 vor?"
 expect_tools = ["list_events"]

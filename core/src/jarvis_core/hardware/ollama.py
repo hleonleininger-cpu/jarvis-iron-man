@@ -22,6 +22,10 @@ class OllamaStatus:
     error: str | None = None
 
 
+# Ollama ist lokal: nie über einen System-Proxy ansprechen.
+_NO_PROXY = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
 def _native_root(base_url: str) -> str:
     root = base_url.rstrip("/")
     return root.removesuffix("/v1")
@@ -30,7 +34,7 @@ def _native_root(base_url: str) -> str:
 def check_ollama(base_url: str, timeout: float = 2.0) -> OllamaStatus:
     url = f"{_native_root(base_url)}/api/tags"
     try:
-        with urllib.request.urlopen(url, timeout=timeout) as resp:  # noqa: S310
+        with _NO_PROXY.open(url, timeout=timeout) as resp:  # noqa: S310
             body = resp.read()
         tags = _Tags.model_validate_json(body)
     except (urllib.error.URLError, OSError, TimeoutError) as exc:

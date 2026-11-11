@@ -185,3 +185,49 @@ async def test_keepalive_closes_the_source_when_the_client_leaves() -> None:
     assert await anext(stream) is None  # Lebenszeichen, Quelle wartet noch
     await stream.aclose()
     assert closed == [True]
+
+
+# ------------------------------------------------------------------------------------- Runde 8
+def test_tailnet_name_is_accepted_only_when_bound_to_the_tailnet(settings: Settings) -> None:
+    from jarvis_core.api.app import allowed_hosts
+
+    assert "*.ts.net" in allowed_hosts("100.101.102.103")
+    assert "*.ts.net" not in allowed_hosts("127.0.0.1")
+    tailnet = settings.model_copy(update={"host": "100.101.102.103"})
+    client = TestClient(create_app(tailnet, TestModel(), "test"), base_url="http://100.101.102.103")
+    assert client.get("/health", headers={"Host": "pc.tail1234.ts.net"}).status_code == 200
+    assert client.get("/health", headers={"Host": "evil.example"}).status_code == 400
+
+
+def test_model_requests_ignore_system_proxy_and_time_out(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch, fake_server: Starter
+) -> None:
+    """Gesprächsinhalte gehen nie über HTTP_PROXY; ein hängendes Modell blockiert nicht ewig."""
+    import asyncio
+
+    from jarvis_core.agent import service as service_module
+
+    hits: list[str] = []
+
+    def slow(path: str) -> tuple[int, dict[str, object]]:
+        hits.append(path)
+        import time
+
+        time.sleep(1.5)
+        return 200, {}
+
+    url = fake_server(slow)
+    monkeypatch.setenv("HTTP_PROXY", "http://10.255.255.1:9")
+    monkeypatch.setenv("NO_PROXY", "")
+    monkeypatch.setenv("no_proxy", "")
+    monkeypatch.setattr(service_module, "MODEL_TIMEOUT_SECONDS", 0.5)
+    local = settings.model_copy(update={"ollama_base_url": f"{url}/v1"})
+    service = build_service(local, AuditLog(local.audit_db_path), model_name="langsam:1b")
+
+    async def ask() -> None:
+        async for _ in service.stream("Hallo", channel="cli"):
+            pass
+
+    with pytest.raises(ChatError, match="nicht geantwortet"):
+        asyncio.run(ask())
+    assert hits == ["/v1/chat/completions"]  # direkt beim lokalen Server, genau ein Versuch

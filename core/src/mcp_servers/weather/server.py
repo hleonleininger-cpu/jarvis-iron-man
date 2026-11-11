@@ -56,6 +56,10 @@ class WeatherError(Exception):
     """Erwarteter Fehler mit nutzerlesbarer Meldung (kein Netz, Ort unbekannt, ...)."""
 
 
+class PlaceNotFound(WeatherError):
+    """Der Geocoding-Dienst kennt den Ort nicht."""
+
+
 def fetch(url: str, params: dict[str, str]) -> bytes:
     """HTTP-GET, liefert den Antwortkörper. Wird in Tests ersetzt (keine Netzzugriffe)."""
     full = f"{url}?{urllib.parse.urlencode(params)}"
@@ -137,7 +141,7 @@ def parse_geocoding(body: bytes, ort: str) -> Place:
     except ValidationError as exc:
         raise WeatherError("Unerwartete Antwort vom Geocoding-Dienst.") from exc
     if not results:
-        raise WeatherError(f"Der Ort '{ort}' wurde nicht gefunden.")
+        raise PlaceNotFound(f"Der Ort '{ort}' wurde nicht gefunden.")
     return results[0]
 
 
@@ -170,7 +174,7 @@ def _find_place(name: str) -> Place:
     params = {"count": "1", "language": "de", "format": "json"}
     try:
         return parse_geocoding(fetch(GEOCODING_URL, {"name": name, **params}), name)
-    except WeatherError:
+    except PlaceNotFound:  # bei Netzfehlern nicht ein zweites Mal warten
         short = name.split(",", 1)[0].strip()
         if not short or short == name:
             raise

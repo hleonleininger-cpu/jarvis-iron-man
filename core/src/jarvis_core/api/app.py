@@ -1,6 +1,7 @@
 """FastAPI-Server: GET /health, POST /v1/chat (Server-Sent Events), Sitzungen, Bestätigungen."""
 
 import asyncio
+import ipaddress
 import json
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import suppress
@@ -51,6 +52,23 @@ KEEPALIVE = ": ping\n\n"
 
 LOCAL_HOSTS = ("127.0.0.1", "localhost", "::1")
 
+
+def allowed_hosts(host: str) -> list[str]:
+    """Host-Header, unter denen der Core antwortet. An einer Tailnet-Adresse gebunden, kommt das
+    iPhone meist über den MagicDNS-Namen (pc.tailXXXX.ts.net); diese Namen vergibt nur Tailscale."""
+    names = {*LOCAL_HOSTS, host.strip("[]")}
+    if not is_loopback(host):
+        names.add("*.ts.net")
+    return sorted(names)
+
+
+def is_loopback(host: str) -> bool:
+    try:
+        return ipaddress.ip_address(host.strip("[]")).is_loopback
+    except ValueError:
+        return host == "localhost"
+
+
 # Ereignisse sofort und unverändert ausliefern: kein Zwischenspeichern, kein Proxy-Puffer.
 SSE_HEADERS = {"Cache-Control": "no-store", "X-Accel-Buffering": "no"}
 
@@ -98,9 +116,7 @@ def create_app(
     app = FastAPI(title="JARVIS Core", version=__version__)
     # Nur Anfragen an die eigene Adresse annehmen: sonst könnte eine fremde Webseite per
     # DNS-Rebinding im Browser des Nutzers mit dem Core sprechen (ADR-003).
-    app.add_middleware(
-        TrustedHostMiddleware, allowed_hosts=sorted({*LOCAL_HOSTS, settings.host.strip("[]")})
-    )
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts(settings.host))
 
     @app.get("/health")
     async def health() -> dict[str, str]:  # pyright: ignore[reportUnusedFunction]

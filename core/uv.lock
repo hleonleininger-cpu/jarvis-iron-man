@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = "==3.12.*"
 
 [[package]]
@@ -447,7 +447,9 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },
+    { name = "httpx2" },
     { name = "keyring" },
+    { name = "openai" },
     { name = "pydantic-ai-slim", extra = ["mcp", "openai"] },
     { name = "pydantic-settings" },
     { name = "structlog" },
@@ -466,7 +468,9 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "fastapi" },
+    { name = "httpx2" },
     { name = "keyring" },
+    { name = "openai" },
     { name = "pydantic-ai-slim", extras = ["openai", "mcp"] },
     { name = "pydantic-settings" },
     { name = "structlog" },

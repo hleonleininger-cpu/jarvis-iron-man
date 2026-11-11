@@ -8,11 +8,14 @@ from dataclasses import dataclass
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+import httpx2
 import structlog
+from openai import AsyncOpenAI
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import (
     ModelAPIError,
     ModelHTTPError,
+    ModelTimeoutError,
     UnexpectedModelBehavior,
     UsageLimitExceeded,
 )
@@ -54,6 +57,9 @@ SYSTEM_PROMPT = (
 # Modellaufrufe je Anfrage (jeder Werkzeugaufruf kostet einen weiteren). Kleine lokale Modelle
 # drehen sich sonst gelegentlich endlos im Kreis und blockieren alle folgenden Anfragen.
 MAX_MODEL_REQUESTS = 8
+# Längste Funkstille des Modells (auch das erstmalige Laden großer Modelle). Ohne Grenze hielte
+# ein hängendes Ollama die Anfrage (und alle wartenden) bis zu 30 Minuten fest.
+MODEL_TIMEOUT_SECONDS = 300.0
 # Höchstens so viele Anfragen warten hinter der laufenden; weitere werden sofort abgewiesen,
 # statt sich unbegrenzt anzustauen.
 MAX_WAITING = 3
@@ -118,6 +124,11 @@ def resolve_model_name(settings: Settings) -> str:
 def _translate(exc: Exception, model_name: str, base_url: str) -> ChatError:
     if isinstance(exc, ChatError):  # schon nutzerlesbar (z. B. ausgelastet)
         return exc
+    if isinstance(exc, ModelTimeoutError):
+        return ChatError(
+            f"Das Modell '{model_name}' hat {MODEL_TIMEOUT_SECONDS:.0f} s lang nicht geantwortet. "
+            "Läuft Ollama noch? Ein kleineres Modell antwortet schneller."
+        )
     if isinstance(exc, ModelHTTPError) and exc.status_code == 404:
         return ChatError(
             f"Das Modell '{model_name}' ist nicht installiert. "
@@ -267,11 +278,17 @@ class ChatService:
         queue: asyncio.Queue[StreamEvent | BaseException | None],
         usage: list[int | None],
     ) -> None:
+        started = False  # Leerraum vor dem ersten Wort (z. B. nach <think>-Block) weglassen
+
         async def on_events(
             _ctx: RunContext[object], events: AsyncIterable[AgentStreamEvent]
         ) -> None:
+            nonlocal started
             async for event in events:
                 text = _text_of(event)
+                if text and not started:
+                    text = text.lstrip()
+                    started = bool(text)
                 if text:
                     queue.put_nowait(TextDelta(text))
                 if not isinstance(event, FunctionToolCallEvent):
@@ -314,6 +331,21 @@ class ChatService:
             queue.put_nowait(exc)
 
 
+def _ollama_client(settings: Settings) -> AsyncOpenAI:
+    """Client für das lokale Ollama.
+
+    trust_env=False: Gesprächsinhalte gehen nie über einen System-Proxy (HTTP_PROXY), auch wenn
+    NO_PROXY die Ollama-Adresse nicht ausnimmt. Keine Wiederholungen: ein lokales Modell, das
+    nicht antwortet, antwortet beim zweiten Versuch auch nicht, und der Nutzer wartete doppelt.
+    """
+    http = httpx2.AsyncClient(
+        trust_env=False, timeout=httpx2.Timeout(MODEL_TIMEOUT_SECONDS, connect=5.0)
+    )
+    return AsyncOpenAI(
+        base_url=settings.ollama_base_url, api_key="ollama", http_client=http, max_retries=0
+    )
+
+
 def build_service(
     settings: Settings,
     audit: AuditLog,
@@ -323,8 +355,9 @@ def build_service(
 ) -> ChatService:
     name = model_name or resolve_model_name(settings)
     if model is None:
-        provider = OpenAIProvider(base_url=settings.ollama_base_url, api_key="ollama")
-        model = OpenAIChatModel(name, provider=provider)
+        model = OpenAIChatModel(
+            name, provider=OpenAIProvider(openai_client=_ollama_client(settings))
+        )
     hub = hub or McpHub(settings.mcp_servers, audit, name)
     sessions = SessionStore(settings.history_max_turns, settings.history_max_chars)
     return ChatService(model, name, settings.ollama_base_url, audit, hub, sessions=sessions)

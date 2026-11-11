@@ -167,3 +167,33 @@ async def test_model_that_keeps_calling_tools_is_stopped(tmp_path: Path) -> None
     assert calls["n"] == MAX_MODEL_REQUESTS
     with sqlite3.connect(settings.audit_db_path) as conn:
         assert conn.execute("SELECT status FROM audit WHERE tool IS NULL").fetchone() == ("error",)
+
+
+async def test_leading_blank_lines_are_not_shown(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+
+    async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        yield "\n\n  "
+        yield "\nHallo!\n\nZweiter Absatz."
+
+    service = build_service(
+        settings, AuditLog(settings.audit_db_path), FunctionModel(stream_function=stream_fn), "test"
+    )
+    events = await _collect(service, "Hallo")
+    assert (
+        "".join(e.text for e in events if isinstance(e, TextDelta)) == "Hallo!\n\nZweiter Absatz."
+    )
+
+
+async def test_tools_list_fails_when_a_server_is_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import typer
+
+    from jarvis_core.cli import main as cli_main
+
+    settings = _settings(tmp_path, command="gibt-es-nicht-xyz", args=[])
+    with pytest.raises(typer.Exit) as err:
+        await cli_main._list_tools(settings)  # pyright: ignore[reportPrivateUsage]
+    assert err.value.exit_code == 1
+    await cli_main._list_tools(_settings(tmp_path))  # pyright: ignore[reportPrivateUsage]

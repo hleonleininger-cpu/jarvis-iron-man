@@ -156,3 +156,16 @@ def test_http_errors_are_not_reported_as_unreachable(
     result = get_weather_data("Dortmund")
     assert result["ok"] is False and text in result["fehler"]
     assert "nicht erreichbar" not in result["fehler"]
+
+
+# --------------------------------------------------------------------------- Runde 8
+def test_network_error_is_not_retried_with_the_short_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+
+    def down(url: str, params: dict[str, str]) -> bytes:
+        calls.append(params.get("name", ""))
+        raise WeatherError("Der Wetterdienst Open-Meteo ist gerade nicht erreichbar.")
+
+    monkeypatch.setattr(server, "fetch", down)
+    assert "nicht erreichbar" in get_weather_data("Dortmund, Deutschland")["fehler"]
+    assert calls == ["Dortmund, Deutschland"]

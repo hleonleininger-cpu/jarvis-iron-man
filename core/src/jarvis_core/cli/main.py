@@ -317,11 +317,13 @@ async def _list_tools(settings: Settings) -> None:
         tools = hub.list_tools()
         if not tools:
             typer.echo("Keine Werkzeuge verfügbar (siehe mcp_servers in jarvis.toml).")
-            return
-        width = max(len(t.name) for t in tools)
-        for tool in tools:
-            line = f"{tool.name:<{width}}  {tool.risk:<24}  [{tool.server}]"
-            typer.echo(f"{line}  {_one_line(tool.description)}")
+        else:
+            width = max(len(t.name) for t in tools)
+            for tool in tools:
+                line = f"{tool.name:<{width}}  {tool.risk:<24}  [{tool.server}]"
+                typer.echo(f"{line}  {_one_line(tool.description)}")
+        if hub.failures:  # Skripte sollen merken, dass etwas fehlt
+            raise typer.Exit(1)
 
 
 @tools_app.command("list")

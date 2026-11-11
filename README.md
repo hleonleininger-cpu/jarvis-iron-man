@@ -30,8 +30,11 @@ Policy die Risikoklasse; Aufrufe stehen im Audit-Log (nur Werkzeugname, keine Ar
 Siehe ADR-004.
 
 **Kalender (iCloud):** `list_events` (READ) liest Termine aus allen Kalendern, `create_event`
-(CONFIRM) legt nach Vorschau und Rückfrage `[j/N]` im ersten bzw. gewählten Kalender an. API: SSE-Event `confirm`, Antwort per
-`POST /v1/confirm/{id}`. Zugangsdaten nur im OS-Schlüsselbund. Siehe ADR-005/006.
+(CONFIRM) legt nach Vorschau und Rückfrage `[j/N]` im ersten bzw. gewählten Kalender an; die
+Vorschau nennt Datum mit Jahr und Zielkalender und warnt bei Terminen in der Vergangenheit.
+Zeiträume: heute, morgen, übermorgen, woche, nächste woche, ein Datum oder von/bis (max. 92 Tage).
+API: SSE-Event `confirm`, Antwort per `POST /v1/confirm/{id}`. Zugangsdaten nur im
+OS-Schlüsselbund. Siehe ADR-005/006.
 
 **Notion (nur Lesen):** `notion_search`, `notion_query`, `notion_get` (alle READ). Token im
 Schlüsselbund, Datenbank-IDs in `jarvis.toml` (`[mcp_servers.notion] env`). Es gibt keinen
@@ -51,16 +54,23 @@ Schreib-Endpunkt im Code. Siehe ADR-008.
 - `GET /health`
 - `POST /v1/chat` mit `{"message": "...", "session_id": "..."}` → Server-Sent Events (`delta`,
   `tool`, `notice`, `confirm`, `done`, `error`). `session_id` ist optional; `done` nennt die ID,
-  mit der das Gespräch fortgesetzt wird.
+  mit der das Gespräch fortgesetzt wird. Während Funkstille (z. B. offene Rückfrage) kommt alle
+  15 s ein Kommentar `: ping`, damit Clients die Verbindung nicht trennen.
 - `POST /v1/confirm/{id}` mit `{"approve": true|false}` beantwortet eine Rückfrage.
 - `DELETE /v1/sessions/{id}` vergisst ein Gespräch.
+- Es läuft immer nur eine Anfrage zugleich; bis zu 3 warten (mit Hinweis), weitere werden mit
+  `error` abgewiesen. Der Server antwortet nur unter seiner eigenen Adresse (Host-Header-Prüfung),
+  bei Tailnet-Bindung auch unter dem MagicDNS-Namen (`*.ts.net`).
 
 ## Konfiguration
 `core/jarvis.toml` (Vorlage: `core/jarvis.example.toml`) und Umgebungsvariablen `JARVIS_*`
 (z. B. `JARVIS_MODEL`). Umgebung schlägt Datei. `host = 0.0.0.0` wird abgelehnt.
 Die Datei wird im aktuellen Ordner gesucht; `JARVIS_CONFIG=/pfad/zur/jarvis.toml` nennt einen
 anderen Ort. `jarvis doctor` zeigt, welche Datei gilt, welche MCP-Server deklariert und welche
-Zugangsdaten gesetzt sind.
+Zugangsdaten gesetzt sind. Ein relativer `data_dir` gilt relativ zur Konfigurationsdatei.
+`ollama_base_url` muss auf diesen Rechner, das Heimnetz oder das Tailnet zeigen (keine
+Cloud-Modelle); Anfragen an Ollama gehen nie über einen System-Proxy und brechen nach 300 s
+Funkstille ab.
 
 ## Qualität
 ```bash
