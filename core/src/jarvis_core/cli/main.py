@@ -1,6 +1,8 @@
-"""CLI: jarvis serve | chat | doctor | audit verify."""
+"""CLI: jarvis serve | chat | doctor | tools | secrets | evals | audit."""
 
 import asyncio
+import re
+import socket
 import sys
 from pathlib import Path
 
@@ -10,6 +12,8 @@ from pydantic import ValidationError
 
 from jarvis_core.agent import (
     ChatError,
+    ChatService,
+    ConfirmationBroker,
     ConfirmRequested,
     Notice,
     TextDelta,
@@ -18,7 +22,13 @@ from jarvis_core.agent import (
     resolve_model_name,
 )
 from jarvis_core.audit import AuditLog
-from jarvis_core.config import Settings, configure_logging, load_settings
+from jarvis_core.config import (
+    ConfigFileMissing,
+    Settings,
+    config_path,
+    configure_logging,
+    load_settings,
+)
 from jarvis_core.evals import (
     EvalAbort,
     EvalTask,
@@ -37,9 +47,21 @@ from jarvis_core.hardware import (
     is_installed,
     recommend,
 )
-from jarvis_core.secrets import SECRETS, SecretsError, is_set, store_secret
+from jarvis_core.secrets import SECRETS, SecretsError, delete_secret, secret_state, store_secret
 
 app = typer.Typer(help="JARVIS Core", no_args_is_help=True, add_completion=False)
+
+
+@app.callback()
+def _tolerant_output() -> None:
+    """Zeichen, die die Ausgabe-Kodierung nicht kennt (z. B. Emoji bei cp1252 unter Windows,
+    wenn die Ausgabe umgeleitet ist), werden ersetzt statt den Befehl abzubrechen."""
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            reconfigure(errors="replace")
+
+
 audit_app = typer.Typer(help="Audit-Log", no_args_is_help=True)
 app.add_typer(audit_app, name="audit")
 tools_app = typer.Typer(help="MCP-Werkzeuge", no_args_is_help=True)
@@ -55,6 +77,9 @@ app.add_typer(tools_app, name="tools")
 def _settings(log_level: str | None = None) -> Settings:
     try:
         settings = load_settings()
+    except ConfigFileMissing as exc:
+        typer.echo(f"Ungültige Konfiguration: {exc}", err=True)
+        raise typer.Exit(2) from None
     except ValidationError as exc:
         for err in exc.errors():
             where = ".".join(str(p) for p in err["loc"]) or "Konfiguration"
@@ -71,7 +96,44 @@ def serve() -> None:
     settings = _settings()
     from jarvis_core.api import create_app
 
-    uvicorn.run(create_app(settings), host=settings.host, port=settings.port, log_config=None)
+    _ensure_port_free(settings.host, settings.port)
+    app_ = create_app(settings)
+    # uvicorn bleibt still (log_config=None): ohne diese Zeile sähe man nach dem Start nichts.
+    typer.echo(
+        f"JARVIS Core läuft auf http://{_url_host(settings.host)}:{settings.port} "
+        f"(Modell {resolve_model_name(settings)}). Beenden mit Strg+C.",
+        err=True,
+    )
+    uvicorn.run(app_, host=settings.host, port=settings.port, log_config=None)
+
+
+def _ensure_port_free(host: str, port: int) -> None:
+    """Belegter Port: klare Meldung statt eines stillen Abbruchs (uvicorn loggt hier nicht)."""
+    family = socket.AF_INET6 if ":" in host else socket.AF_INET
+    with socket.socket(family, socket.SOCK_STREAM) as probe:
+        try:
+            probe.bind((host.strip("[]"), port))
+        except OSError as exc:
+            typer.echo(
+                f"Kann nicht auf {_url_host(host)}:{port} starten ({exc.strerror or exc}). "
+                "Läuft JARVIS schon? Sonst einen anderen port in jarvis.toml wählen.",
+                err=True,
+            )
+            raise typer.Exit(1) from None
+
+
+def _url_host(host: str) -> str:
+    return f"[{host}]" if ":" in host and not host.startswith("[") else host
+
+
+# Steuerzeichen außer Zeilenumbruch und Tab. Modellausgabe und Vorschau stammen (indirekt) vom
+# Modell bzw. aus Kalender/Notion; ESC-Sequenzen könnten das Terminal umfärben, Text verstecken
+# oder per OSC die Zwischenablage setzen.
+_CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
+
+
+def _printable(text: str) -> str:
+    return _CONTROL.sub("", text)
 
 
 def _ask_yes_no(question: str) -> bool:
@@ -83,33 +145,82 @@ def _ask_yes_no(question: str) -> bool:
     return answer.strip().lower() in ("j", "ja", "y", "yes")
 
 
-async def _chat(text: str, settings: Settings) -> None:
-    service = build_service(settings, AuditLog(settings.audit_db_path))
+async def _chat(service: ChatService, text: str, session_id: str | None = None) -> None:
     at_line_start = True
-    async for event in service.stream(text, channel="cli"):
+    async for event in service.stream(text, channel="cli", session_id=session_id):
         match event:
-            case TextDelta(chunk):
+            case TextDelta(raw):
+                chunk = _printable(raw)
                 sys.stdout.write(chunk)
                 at_line_start = chunk.endswith("\n") if chunk else at_line_start
             case ToolUsed(name):
                 sys.stdout.write(f"{'' if at_line_start else chr(10)}[Werkzeug: {name}]\n")
                 at_line_start = True
             case Notice(message):
-                typer.echo(f"Hinweis: {message}", err=True)
+                typer.echo(f"Hinweis: {_printable(message)}", err=True)
             case ConfirmRequested(request_id, _tool, preview, question):
-                sys.stdout.write(f"{'' if at_line_start else chr(10)}{preview}\n")
+                sys.stdout.write(f"{'' if at_line_start else chr(10)}{_printable(preview)}\n")
                 at_line_start = True
-                service.broker.resolve(request_id, _ask_yes_no(question))
+                service.broker.resolve(request_id, _ask_yes_no(_printable(question)))
         sys.stdout.flush()
     sys.stdout.write("\n")
 
 
+DIALOG_EXIT = ("/ende", "/exit", "/quit")
+DIALOG_RESET = ("/neu", "/new")
+
+
+def _dialog(service: ChatService) -> None:
+    """Gespräch über mehrere Nachrichten; der Verlauf lebt nur in diesem Prozess (ADR-009)."""
+    session_id = service.sessions.new_id()
+    typer.echo(
+        f"JARVIS-Dialog (Modell {service.model_name}). "
+        "/neu beginnt ein neues Gespräch, /ende beendet."
+    )
+    while True:
+        try:
+            text = input("du> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            typer.echo("")
+            return
+        if not text:
+            continue
+        if text.lower() in DIALOG_EXIT:
+            return
+        if text.lower() in DIALOG_RESET:
+            service.sessions.clear(session_id)
+            typer.echo("Neues Gespräch.")
+            continue
+        if text.startswith("/") and " " not in text:
+            # Ein vertippter Befehl soll nicht als Frage ans Modell gehen.
+            typer.echo(f"Unbekannter Befehl '{text}'. Es gibt /neu und /ende.")
+            continue
+        try:
+            asyncio.run(_chat(service, text, session_id))
+        except ChatError as exc:
+            typer.echo(f"\nFehler: {exc}", err=True)
+        except KeyboardInterrupt:
+            typer.echo("\nAbgebrochen.", err=True)
+
+
 @app.command()
-def chat(text: str = typer.Argument(..., help="Nachricht an JARVIS")) -> None:
-    """Beantwortet eine Nachricht gestreamt über das lokale Ollama-Modell."""
+def chat(
+    text: str | None = typer.Argument(
+        None, help="Nachricht an JARVIS; ohne Angabe startet ein Dialog"
+    ),
+) -> None:
+    """Beantwortet eine Nachricht (gestreamt) oder führt ohne Argument einen Dialog."""
     settings = _settings("WARNING")  # Terminal bleibt frei von JSON-Logs
+    service = build_service(settings, AuditLog(settings.audit_db_path))
+    service.broker = ConfirmationBroker(timeout=None)  # der Nutzer sitzt vor der Rückfrage
+    if text is None:
+        _dialog(service)
+        return
+    if not text.strip():
+        typer.echo("Die Nachricht ist leer.", err=True)
+        raise typer.Exit(2)
     try:
-        asyncio.run(_chat(text, settings))
+        asyncio.run(_chat(service, text))
     except ChatError as exc:
         typer.echo(f"\nFehler: {exc}", err=True)
         raise typer.Exit(1) from None
@@ -149,6 +260,12 @@ def _rows(info: HardwareInfo, settings: Settings) -> list[tuple[str, str]]:
     if settings.model:
         installed = "installiert" if is_installed(settings.model, status.models) else "FEHLT"
         rows.append(("Konfiguriertes Modell", f"{settings.model} ({installed})"))
+    path = config_path()
+    found = "gefunden" if path.is_file() else "nicht gefunden, es gelten Standardwerte"
+    rows.append(("Konfiguration", f"{path.resolve()} ({found})"))
+    rows.append(("MCP-Server", ", ".join(settings.mcp_servers) or "keine (ohne Werkzeuge)"))
+    secrets = ", ".join(f"{name}: {secret_state(name)}" for name in SECRETS)
+    rows.append(("Zugangsdaten", secrets))
     return rows
 
 
@@ -168,9 +285,14 @@ def doctor() -> None:
 def audit_verify() -> None:
     """Prüft die Hash-Kette des Audit-Logs."""
     settings = _settings()
-    result = AuditLog(settings.audit_db_path).verify_chain()
+    path = settings.audit_db_path
+    if not path.is_file():
+        # Nichts anlegen: ein falscher Ordner soll nicht als "gültig, 0 Einträge" durchgehen.
+        typer.echo(f"Kein Audit-Log unter {path.resolve()}.", err=True)
+        raise typer.Exit(1)
+    result = AuditLog(path).verify_chain()
     if result.ok:
-        typer.echo(f"Audit-Kette gültig ({result.checked} Einträge).")
+        typer.echo(f"Audit-Kette gültig ({result.checked} Einträge, {path.resolve()}).")
         return
     typer.echo(
         f"Audit-Kette UNGÜLTIG: erste fehlerhafte Zeile: {result.first_invalid_id} "
@@ -216,7 +338,12 @@ def secrets_set(name: str = typer.Argument(..., help="z. B. apple_caldav")) -> N
     if spec is None:
         typer.echo(f"Unbekanntes Secret '{name}'. Bekannt: {', '.join(SECRETS)}.", err=True)
         raise typer.Exit(2)
-    values = {f.key: typer.prompt(f.label, hide_input=f.hidden).strip() for f in spec.fields}
+    # Verdeckte Eingaben zweimal abfragen: ein Tippfehler im App-Passwort fiele sonst erst
+    # beim nächsten Kalenderzugriff als "Zugangsdaten abgelehnt" auf.
+    values = {
+        f.key: typer.prompt(f.label, hide_input=f.hidden, confirmation_prompt=f.hidden).strip()
+        for f in spec.fields
+    }
     try:
         store_secret(name, **values)
     except SecretsError as exc:
@@ -225,11 +352,22 @@ def secrets_set(name: str = typer.Argument(..., help="z. B. apple_caldav")) -> N
     typer.echo("gespeichert")
 
 
+@secrets_app.command("delete")
+def secrets_delete(name: str = typer.Argument(..., help="z. B. apple_caldav")) -> None:
+    """Entfernt die Zugangsdaten aus dem OS-Schlüsselbund."""
+    try:
+        removed = delete_secret(name)
+    except SecretsError as exc:
+        typer.echo(f"Fehler: {exc}", err=True)
+        raise typer.Exit(2 if name not in SECRETS else 1) from None
+    typer.echo("gelöscht" if removed else "war nicht gesetzt")
+
+
 @secrets_app.command("status")
 def secrets_status() -> None:
     """Zeigt nur, ob Secrets gesetzt sind (nie den Wert)."""
     for name in SECRETS:
-        typer.echo(f"{name}: {'gesetzt' if is_set(name) else 'nicht gesetzt'}")
+        typer.echo(f"{name}: {secret_state(name)}")
 
 
 def _eval_tasks(directory: Path | None) -> tuple[list[EvalTask], Path]:

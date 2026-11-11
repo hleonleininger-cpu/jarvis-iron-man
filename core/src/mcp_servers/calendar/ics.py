@@ -1,8 +1,9 @@
 """iCalendar (RFC 5545): nur die benötigten Felder lesen; VEVENT für neue Termine erzeugen."""
 
+import re
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from mcp_servers.calendar.timeutil import TZ
 
@@ -13,6 +14,9 @@ class Event:
     start: datetime | date
     end: datetime | date | None
     location: str | None = None
+    calendar: str | None = None
+    # True, wenn der Server eine Serie nicht in Einzeltermine aufgelöst hat (RRULE im Termin).
+    unexpanded: bool = False  # Anzeigename des Kalenders, aus dem der Termin stammt
 
     @property
     def all_day(self) -> bool:
@@ -63,12 +67,37 @@ def _to_value(value: str, params: dict[str, str]) -> datetime | date | None:
             )  # fmt: skip
             if value.endswith("Z"):
                 return naive.replace(tzinfo=UTC).astimezone(TZ)
-            tzid = params.get("TZID")
-            zone = ZoneInfo(tzid) if tzid else TZ
-            return naive.replace(tzinfo=zone).astimezone(TZ)
+            return naive.replace(tzinfo=_zone(params.get("TZID"))).astimezone(TZ)
     except (ValueError, KeyError, OSError):
         return None
     return None
+
+
+def _zone(tzid: str | None) -> ZoneInfo:
+    """Zeitzone eines TZID. Unbekannte Namen (z. B. Outlooks 'W. Europe Standard Time') gelten als
+    Europe/Berlin, statt den ganzen Termin zu verwerfen."""
+    if not tzid:
+        return TZ
+    try:
+        return ZoneInfo(tzid)
+    except (ZoneInfoNotFoundError, ValueError, OSError):
+        return TZ
+
+
+_DURATION = re.compile(
+    r"^(?P<sign>[+-])?P(?:(?P<weeks>\d+)W)?(?:(?P<days>\d+)D)?"
+    r"(?:T(?:(?P<hours>\d+)H)?(?:(?P<minutes>\d+)M)?(?:(?P<seconds>\d+)S)?)?$"
+)
+
+
+def _duration(value: str) -> timedelta | None:
+    """ICS-DURATION (RFC 5545 §3.3.6), z. B. PT1H30M oder P1D; Unlesbares -> None."""
+    match = _DURATION.match(value.strip().upper())
+    if match is None or value.strip().upper() in ("P", "PT", "+P", "-P"):
+        return None
+    parts = {k: int(v) for k, v in match.groupdict().items() if v and k != "sign"}
+    delta = timedelta(**parts)
+    return -delta if match.group("sign") == "-" else delta
 
 
 def _split_key(raw_key: str) -> tuple[str, dict[str, str]]:
@@ -85,22 +114,39 @@ def parse_events(ics_blocks: list[str]) -> list[Event]:
     events: list[Event] = []
     for ics in ics_blocks:
         current: dict[str, object] | None = None
+        nested = 0  # Tiefe innerhalb von VALARM & Co.: deren SUMMARY/DTSTART gehören nicht dazu
         for line in _unfold(ics):
             if line == "BEGIN:VEVENT":
-                current = {}
+                current, nested = {}, 0
+                continue
+            if current is not None and line.startswith("BEGIN:"):
+                nested += 1
+                continue
+            if current is not None and nested and line.startswith("END:"):
+                nested -= 1
+                continue
+            if nested:
                 continue
             if line == "END:VEVENT":
-                if current and isinstance(current.get("start"), datetime | date):
+                cancelled = (
+                    str(current.get("status", "")).upper() == "CANCELLED" if current else False
+                )
+                start = current.get("start") if current else None
+                if current and not cancelled and isinstance(start, datetime | date):
                     summary = str(current.get("summary") or "").strip() or "Ohne Titel"
-                    start = current["start"]
-                    end = current.get("end")
+                    raw_end = current.get("end")
+                    end = raw_end if isinstance(raw_end, datetime | date) else None
+                    duration = current.get("duration")
+                    if end is None and isinstance(duration, timedelta) and duration >= timedelta():
+                        end = start + duration
                     location = current.get("location")
                     events.append(
                         Event(
                             summary,
-                            start,  # pyright: ignore[reportArgumentType]
-                            end if isinstance(end, datetime | date) else None,
+                            start,
+                            end,
                             str(location) if location else None,
+                            unexpanded="rrule" in current,
                         )
                     )
                 current = None
@@ -113,10 +159,16 @@ def parse_events(ics_blocks: list[str]) -> list[Event]:
                 current["summary"] = _unescape(value)
             elif name == "LOCATION":
                 current["location"] = _unescape(value).strip()
+            elif name == "STATUS":
+                current["status"] = value.strip()
             elif name == "DTSTART":
                 current["start"] = _to_value(value, params)
             elif name == "DTEND":
                 current["end"] = _to_value(value, params)
+            elif name == "RRULE":
+                current["rrule"] = value
+            elif name == "DURATION":
+                current["duration"] = _duration(value)
     return events
 
 

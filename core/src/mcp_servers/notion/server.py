@@ -14,7 +14,7 @@ import keyring
 from keyring.errors import KeyringError
 from mcp.server.mcpserver import MCPServer
 
-from mcp_servers.notion.client import NotionClient, NotionError
+from mcp_servers.notion.client import MAX_QUERY_PAGES, NotionClient, NotionError, is_notion_id
 from mcp_servers.notion.normalize import (
     blocks_to_text,
     extract_page_id,
@@ -46,7 +46,7 @@ def load_token() -> str:
     try:
         raw = keyring.get_password(KEYRING_SERVICE, KEYRING_ENTRY)
     except KeyringError:
-        raise NotionError("not_configured") from None
+        raise NotionError("keyring_unavailable") from None
     if not raw:
         raise NotionError("not_configured")
     try:
@@ -86,11 +86,28 @@ def _resolve(name: str | None) -> dict[str, str] | dict[str, Any]:
     if not configured:
         return _fail(_no_database_message(None), "not_configured_database")
     if name is None or not name.strip():
-        return configured
+        # Ohne Namen: alle brauchbaren Datenbanken; nur wenn keine brauchbar ist, ein Fehler.
+        usable = {k: v for k, v in configured.items() if is_notion_id(v)}
+        return usable or _fail(_invalid_id_message(sorted(configured)), "invalid_database_id")
     key = name.strip().lower().replace(" ", "_").replace("-", "_")
     if key not in configured:
         return _fail(_no_database_message(name.strip()), "unknown_database")
+    if not is_notion_id(configured[key]):
+        return _fail(_invalid_id_message([key]), "invalid_database_id")
     return {key: configured[key]}
+
+
+def _invalid_id_message(names: list[str]) -> str:
+    variables = ", ".join(f"{ENV_PREFIX}{name.upper()}" for name in names)
+    return (
+        f"In jarvis.toml steht unter [mcp_servers.notion] env keine gültige Notion-ID für: "
+        f"{variables} (erwartet 32 Hex-Zeichen, mit oder ohne Bindestriche)."
+    )
+
+
+INCOMPLETE_HINT = (
+    f"Die Datenbank hat mehr als {MAX_QUERY_PAGES * 100} Einträge; nur die ersten wurden gelesen."
+)
 
 
 def _is_error(value: dict[str, str] | dict[str, Any]) -> bool:
@@ -105,7 +122,8 @@ def query_data(
         return chosen
     ((name, source_id),) = chosen.items()
     try:
-        pages = make_client().query_database(source_id, name.upper())
+        client = make_client()
+        pages = client.query_database(source_id, name.upper())
     except NotionError as exc:
         return _fail_error(exc)
     entries: list[dict[str, Any]] = []
@@ -120,8 +138,11 @@ def query_data(
     total = len(entries)
     shown, truncated = fit_budget(sort_entries(entries))
     result: dict[str, Any] = {"ok": True, "datenbank": name, "anzahl": total, "eintraege": shown}
-    if truncated:
-        result["hinweis"] = f"Nur die ersten {len(shown)} von {total} Einträgen gezeigt."
+    hints = [f"Nur die ersten {len(shown)} von {total} Einträgen gezeigt."] if truncated else []
+    if client.incomplete:
+        hints.append(INCOMPLETE_HINT)
+    if hints:
+        result["hinweis"] = " ".join(hints)
     return result
 
 
@@ -134,8 +155,11 @@ def search_data(begriff: str, datenbank: str | None = None) -> dict[str, Any]:
     try:
         client = make_client()
         hits: list[dict[str, Any]] = []
+        incomplete = False
         for name, source_id in chosen.items():
-            for page in client.query_database(source_id, name.upper()):
+            pages = client.query_database(source_id, name.upper())
+            incomplete = incomplete or client.incomplete
+            for page in pages:
                 entry = normalize_page(page)
                 _, values = flatten_page(page)
                 if matches(entry, values, begriff):
@@ -150,8 +174,15 @@ def search_data(begriff: str, datenbank: str | None = None) -> dict[str, Any]:
         "anzahl": total,
         "treffer": shown,
     }
-    if truncated or total > len(shown):
-        result["hinweis"] = f"Nur die ersten {len(shown)} von {total} Treffern gezeigt."
+    hints = (
+        [f"Nur die ersten {len(shown)} von {total} Treffern gezeigt."]
+        if truncated or total > len(shown)
+        else []
+    )
+    if incomplete:
+        hints.append(INCOMPLETE_HINT)
+    if hints:
+        result["hinweis"] = " ".join(hints)
     return result
 
 
@@ -165,7 +196,10 @@ def get_data(seite: str) -> dict[str, Any]:
         blocks = client.get_blocks(page_id)
     except NotionError as exc:
         return _fail_error(exc)
-    return {"ok": True, **normalize_page(page), "inhalt": blocks_to_text(blocks)}
+    result = {"ok": True, **normalize_page(page), "inhalt": blocks_to_text(blocks)}
+    if client.incomplete:
+        result["hinweis"] = "Die Seite ist länger; nur der Anfang wurde gelesen."
+    return result
 
 
 def _database_hint() -> str:

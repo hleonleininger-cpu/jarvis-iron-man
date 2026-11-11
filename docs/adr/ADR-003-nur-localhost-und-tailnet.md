@@ -11,7 +11,12 @@ können, der Core darf aber nie offen im Internet oder im Heimnetz stehen.
 - Zugriff von außen nur über ein privates Tailnet (Tailscale), indem der Server an die konkrete
   Tailnet-Adresse gebunden wird.
 - Die Konfigurationsprüfung lehnt Wildcard-Adressen (`0.0.0.0`, `::`, `*`, leer) ab.
-- Keine Cloud-Modelle, keine API-Schlüssel; Ollama läuft lokal.
+- Der Server beantwortet nur Anfragen, deren Host-Header die eigene Adresse nennt (127.0.0.1,
+  localhost oder die konfigurierte Tailnet-Adresse). Das verhindert, dass eine fremde Webseite
+  per DNS-Rebinding im Browser des Nutzers mit dem Core spricht.
+- Keine Cloud-Modelle, keine API-Schlüssel; Ollama läuft lokal. Die Konfiguration lehnt eine
+  `ollama_base_url` ab, die nicht auf diesen Rechner, das Heimnetz (private Adressen, `.local`,
+  Rechnernamen ohne Domain) oder das Tailnet (`100.64.0.0/10`, `.ts.net`) zeigt.
 
 ## Konsequenzen
 - Kein Port-Forwarding, keine öffentliche Angriffsfläche.

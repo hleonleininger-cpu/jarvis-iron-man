@@ -33,6 +33,9 @@ ALLOWED_REQUESTS: tuple[tuple[str, re.Pattern[str]], ...] = (
 
 ERROR_TEXTS: dict[str, str] = {
     "not_configured": "Kein Notion-Token gesetzt. Bitte 'jarvis secrets set notion' ausführen.",
+    "keyring_unavailable": (
+        "Der OS-Schlüsselbund ist nicht verfügbar; der Notion-Token ist nicht lesbar."
+    ),
     "unauthorized": (
         "Notion hat den Token abgelehnt (ungültig oder widerrufen). "
         "Bitte 'jarvis secrets set notion' erneut ausführen."
@@ -79,6 +82,11 @@ def urllib_transport(
         return Response(err.code, err.read().decode("utf-8", "replace"))
 
 
+def is_notion_id(value: str) -> bool:
+    """32 Hex-Zeichen, mit oder ohne Bindestriche (Form der Notion-IDs)."""
+    return re.fullmatch(_UUID, value) is not None
+
+
 def normalize_token(raw: str) -> str:
     """Entfernt Whitespace, ein mitkopiertes 'Bearer ' und umschließende Anführungszeichen."""
     value = raw.strip()
@@ -106,6 +114,8 @@ class NotionClient:
         if not self._token:
             raise NotionError("not_configured")
         self._transport = transport
+        # True, wenn die letzte Abfrage (Datenbank oder Blöcke) nicht alles geliefert hat.
+        self.incomplete = False
 
     def _request(
         self, step: str, method: str, path: str, body: dict[str, Any] | None = None
@@ -151,7 +161,8 @@ class NotionClient:
         """Alle Einträge einer Datenbank (bis zu MAX_QUERY_PAGES Seiten). Nur Lesen."""
         results: list[dict[str, Any]] = []
         cursor: str | None = None
-        for _ in range(MAX_QUERY_PAGES):
+        self.incomplete = False
+        for page_number in range(1, MAX_QUERY_PAGES + 1):
             body: dict[str, Any] = {"page_size": 100}
             if cursor:
                 body["start_cursor"] = cursor
@@ -164,13 +175,16 @@ class NotionClient:
             if not data.get("has_more") or not isinstance(next_cursor, str):
                 break
             cursor = next_cursor
+            self.incomplete = page_number == MAX_QUERY_PAGES
         return results
 
     def get_page(self, page_id: str) -> dict[str, Any]:
         return self._request("PAGE", "GET", f"/pages/{page_id}")
 
     def get_blocks(self, page_id: str) -> list[dict[str, Any]]:
+        """Die ersten Blöcke der Seite; `incomplete` sagt, ob es weitere gibt."""
         data = self._request("BLOCKS", "GET", f"/blocks/{page_id}/children")
         if not isinstance(data.get("results"), list):
             raise NotionError("invalid_response")
+        self.incomplete = bool(data.get("has_more"))
         return [d for d in map(as_dict, as_list(data["results"])) if d]

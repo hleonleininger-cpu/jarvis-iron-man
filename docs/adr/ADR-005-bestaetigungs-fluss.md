@@ -13,17 +13,18 @@ Ein einziger, werkzeugunabhängiger Fluss im Core:
    `jarvis.toml` je Werkzeug ein Vorschau-Werkzeug (`previews`), das nichts schreibt und dem
    Modell nie angeboten wird; sonst zeigt der Hub Werkzeugname und Argumente.
    Meldet die Vorschau einen Fehler (ungültige Eingabe), geht der Fehler ans Modell, ohne Rückfrage.
-2. Die Anfrage geht als Ereignis an den Kanal; der `ConfirmationBroker` wartet auf Ja/Nein
-   (Timeout 120 s = Nein).
-   - **CLI:** interaktive Rückfrage `Anlegen? [j/N]`; nur j/ja gilt als Ja.
+2. Die Anfrage geht als Ereignis an den Kanal; der `ConfirmationBroker` wartet auf Ja/Nein.
+   - **CLI:** interaktive Rückfrage `Anlegen? [j/N]`; nur j/ja gilt als Ja. Kein Timeout: der
+     Nutzer sitzt vor der Frage, eine späte Antwort darf nicht verworfen werden.
    - **API:** SSE-Event `confirm` mit ID, Vorschau und Frage; Antwort per
-     `POST /v1/confirm/{id}` mit `{"approve": true|false}`.
+     `POST /v1/confirm/{id}` mit `{"approve": true|false}`. Timeout 120 s = Nein, mit eigenem
+     Hinweis ("Keine Antwort innerhalb von 120 s").
 3. Nur nach Ja wird mit **denselben** Argumenten ausgeführt. Nein, Timeout, Abbruch oder fehlender
    Kanal: nichts passiert.
 
 **Audit (nur Metadaten):** zwei Zeilen: `CONFIRM/pending`, dann `CONFIRMED/ok|error` oder
 `DENIED/denied|aborted`. Ohne Bestätigungskanal `CONFIRM/blocked`, bei ungültiger Eingabe
-`CONFIRM/invalid`.
+`CONFIRM/invalid`, bei hängender Vorschau `CONFIRM/timeout`.
 
 ## Konsequenzen
 - Der Agent läuft in einem eigenen Task, damit die Anfrage ausgeliefert wird, während der

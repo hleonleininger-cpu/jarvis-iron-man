@@ -1,4 +1,4 @@
-"""Policy-Gerüst: Risikoklasse -> ALLOW | CONFIRM | DENY. Noch keine Werkzeuge."""
+"""Policy: Risikoklasse -> ALLOW | CONFIRM | DENY. Der MCP-Hub fragt sie vor jedem Aufruf."""
 
 from dataclasses import dataclass
 from enum import StrEnum

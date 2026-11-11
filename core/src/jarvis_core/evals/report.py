@@ -132,8 +132,14 @@ def result_filename(report: Report) -> str:
 
 def save_report(report: Report, results_dir: Path) -> Path:
     results_dir.mkdir(parents=True, exist_ok=True)
-    path = results_dir / result_filename(report)
-    path.write_text(
-        json.dumps(report.to_dict(), ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-    )
-    return path
+    text = json.dumps(report.to_dict(), ensure_ascii=False, indent=2) + "\n"
+    base = results_dir / result_filename(report)
+    for counter in range(1, 1000):
+        path = base if counter == 1 else base.with_stem(f"{base.stem}-{counter}")
+        try:
+            with path.open("x", encoding="utf-8") as fh:  # nie ein älteres Ergebnis überschreiben
+                fh.write(text)
+        except FileExistsError:
+            continue
+        return path
+    raise FileExistsError(f"Zu viele Ergebnisdateien mit dem Namen {base.name}")

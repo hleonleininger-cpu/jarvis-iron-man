@@ -18,9 +18,9 @@ class HardwareInfo:
 def _run(cmd: list[str], timeout: float = 5.0) -> str | None:
     try:
         result = subprocess.run(  # noqa: S603
-            cmd, capture_output=True, text=True, timeout=timeout, check=False
+            cmd, capture_output=True, text=True, errors="replace", timeout=timeout, check=False
         )
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, ValueError, subprocess.SubprocessError):
         return None
     if result.returncode != 0:
         return None

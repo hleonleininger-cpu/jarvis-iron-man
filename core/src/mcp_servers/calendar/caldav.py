@@ -6,6 +6,7 @@ Schrittname, HTTP-Status und Grund, nie Zugangsdaten, Header oder vollständige 
 """
 
 import base64
+import dataclasses
 import sys
 import urllib.error
 import urllib.request
@@ -13,7 +14,7 @@ import xml.etree.ElementTree as ET
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit
 
 from mcp_servers.calendar.ics import Event, build_vevent, parse_events
 from mcp_servers.calendar.timeutil import TZ, start_of_day
@@ -21,11 +22,13 @@ from mcp_servers.calendar.timeutil import TZ, start_of_day
 CALDAV_ENTRY_URL = "https://caldav.icloud.com/"
 TIMEOUT_SECONDS = 15.0
 MAX_REDIRECTS = 5
-MAX_EVENTS = 25
 
 ERROR_TEXTS: dict[str, str] = {
     "not_configured": (
         "Keine Kalender-Zugangsdaten gesetzt. Bitte 'jarvis secrets set apple_caldav' ausführen."
+    ),
+    "keyring_unavailable": (
+        "Der OS-Schlüsselbund ist nicht verfügbar; die Kalender-Zugangsdaten sind nicht lesbar."
     ),
     "unauthorized": (
         "iCloud hat die Zugangsdaten abgelehnt (Apple-ID oder App-Passwort falsch). "
@@ -66,6 +69,20 @@ class Response:
 Transport = Callable[[str, str, dict[str, str], bytes | None], Response]
 
 
+def same_site(origin: str, target: str) -> bool:
+    """True, wenn `target` per https auf derselben Domain wie `origin` liegt (z. B. icloud.com).
+
+    Nur dorthin gehen Zugangsdaten: iCloud verteilt auf pNN-caldav.icloud.com, aber eine
+    Weiterleitung oder ein href auf eine fremde Domain bekäme sonst das App-Passwort.
+    """
+    source, dest = urlsplit(origin), urlsplit(target)
+    if dest.scheme != "https" or not source.hostname or not dest.hostname:
+        return False
+    domain = ".".join(source.hostname.lower().split(".")[-2:])
+    host = dest.hostname.lower()
+    return host == domain or host.endswith("." + domain)
+
+
 def urllib_transport(
     method: str, url: str, headers: dict[str, str], body: bytes | None
 ) -> Response:
@@ -78,8 +95,9 @@ def urllib_transport(
                 return Response(resp.status, resp.read().decode("utf-8", "replace"), current)
         except urllib.error.HTTPError as err:
             location = err.headers.get("Location")
-            if err.code in (301, 302, 307, 308) and location:
-                current = urljoin(current, location)
+            target = urljoin(current, location) if location else None
+            if err.code in (301, 302, 307, 308) and target and same_site(url, target):
+                current = target
                 continue
             return Response(err.code, err.read().decode("utf-8", "replace"), current)
     return Response(310, "", current)
@@ -128,7 +146,7 @@ def select_calendar(calendars: list[Calendar], wanted: str | None) -> Calendar:
     if not wanted:
         return calendars[0]
     for cal in calendars:
-        if cal.display_name == wanted:
+        if (cal.display_name or "").strip().casefold() == wanted.strip().casefold():
             return cal
     log_error("SELECT_CALENDAR", 200, f"calendar_not_found:name_mismatch(count={len(calendars)})")
     raise CalDavError("calendar_not_found")
@@ -151,6 +169,8 @@ class CalDavClient:
         self._transport = transport
         self._calendar_name = calendar_name
         self._entry_url = entry_url
+        # Kalender, die beim letzten list_events nicht lesbar waren (z. B. abonnierte).
+        self.unreadable: list[str] = []
 
     def _request(
         self,
@@ -168,6 +188,9 @@ class CalDavClient:
         if depth is not None:
             headers["Depth"] = str(depth)
         headers.update(extra or {})
+        if not same_site(self._entry_url, url):
+            log_error(step, None, "invalid_response:foreign_host")
+            raise CalDavError("invalid_response")
         try:
             response = self._transport(method, url, headers, body.encode() if body else None)
         except (OSError, TimeoutError) as exc:
@@ -238,13 +261,41 @@ class CalDavClient:
             calendars.append(Calendar(urljoin(resp.url, href), name))
         return calendars
 
+    def _all_calendars(self) -> list[Calendar]:
+        return self._calendars(self._home_set(self._principal()))
+
     def _calendar(self) -> Calendar:
-        principal = self._principal()
-        home = self._home_set(principal)
-        return select_calendar(self._calendars(home), self._calendar_name)
+        """Der Kalender für neue Termine: der benannte, sonst der erste."""
+        return select_calendar(self._all_calendars(), self._calendar_name)
+
+    def target_calendar_name(self) -> str:
+        """Anzeigename des Kalenders, in den create_event schreiben würde (nur Lesen)."""
+        return self._calendar().display_name or "ohne Namen"
 
     def list_events(self, time_min: datetime, time_max: datetime) -> list[Event]:
-        calendar = self._calendar()
+        """Alle Termine im Fenster, nach Start sortiert (Kürzen ist Sache des Aufrufers).
+
+        Ohne benannten Kalender werden ALLE Terminkalender gelesen. Ist ein einzelner nicht
+        lesbar, steht sein Name in `unreadable`; scheitern alle, gilt der erste Fehler.
+        """
+        calendars = self._all_calendars()
+        if self._calendar_name or not calendars:
+            calendars = [select_calendar(calendars, self._calendar_name)]
+        self.unreadable = []
+        events: list[Event] = []
+        first_error: CalDavError | None = None
+        for calendar in calendars:
+            try:
+                events += self._events_of(calendar, time_min, time_max)
+            except CalDavError as exc:
+                first_error = first_error or exc
+                self.unreadable.append(calendar.display_name or "ohne Namen")
+        if first_error is not None and len(self.unreadable) == len(calendars):
+            raise first_error
+        events.sort(key=lambda e: _sort_key(e))
+        return events
+
+    def _events_of(self, calendar: Calendar, time_min: datetime, time_max: datetime) -> list[Event]:
         start, end = _caldav_utc(time_min), _caldav_utc(time_max)
         body = (
             '<?xml version="1.0" encoding="UTF-8"?>'
@@ -258,9 +309,11 @@ class CalDavClient:
         resp = self._request("EVENTS", "REPORT", calendar.url, body=body, depth=1)
         root = _parse_xml(resp.body, "EVENTS", resp.status)
         blocks = [el.text for el in _find_all(root, "calendar-data") if el.text]
-        events = [e for e in parse_events(blocks) if _overlaps(e, time_min, time_max)]
-        events.sort(key=lambda e: _sort_key(e))
-        return events[:MAX_EVENTS]
+        return [
+            dataclasses.replace(event, calendar=calendar.display_name)
+            for event in parse_events(blocks)
+            if _overlaps(event, time_min, time_max)
+        ]
 
     def create_event(
         self,
@@ -296,6 +349,10 @@ def _sort_key(event: Event) -> datetime:
 
 
 def _overlaps(event: Event, time_min: datetime, time_max: datetime) -> bool:
+    if event.unexpanded:
+        # Serie nicht aufgelöst: ob eine Wiederholung ins Fenster fällt, ist unbekannt. Behalten
+        # (der Aufrufer weist darauf hin), statt den Termin still zu verlieren.
+        return _instant(event.start) < time_max
     start = _instant(event.start)
     end = _instant(event.end) if event.end is not None else start
     return start < time_max and (end > time_min or start >= time_min)

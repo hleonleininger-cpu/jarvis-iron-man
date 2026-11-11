@@ -3,25 +3,39 @@
 import asyncio
 import os
 from collections.abc import AsyncGenerator, AsyncIterable
-from contextlib import suppress
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
 import structlog
 from pydantic_ai import Agent
-from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError
-from pydantic_ai.messages import AgentStreamEvent, FunctionToolCallEvent
+from pydantic_ai.exceptions import (
+    ModelAPIError,
+    ModelHTTPError,
+    UnexpectedModelBehavior,
+    UsageLimitExceeded,
+)
+from pydantic_ai.messages import (
+    AgentStreamEvent,
+    FunctionToolCallEvent,
+    PartDeltaEvent,
+    PartStartEvent,
+    TextPart,
+    TextPartDelta,
+)
 from pydantic_ai.models import Model
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.tools import RunContext
+from pydantic_ai.usage import UsageLimits
 
 from jarvis_core.agent.confirmation import ConfirmationBroker, ConfirmRequest
+from jarvis_core.agent.sessions import SessionStore
 from jarvis_core.audit import AuditLog
 from jarvis_core.config import Settings
 from jarvis_core.hardware import detect_hardware, recommend
-from jarvis_core.mcp_hub import McpHub, current_channel, current_confirmer
+from jarvis_core.mcp_hub import McpHub, current_channel, current_confirmer, safe_tool_name
 
 # Kein Werbebanner von Pydantic AI auf stdout/stderr.
 os.environ.setdefault("PYDANTIC_AI_NO_BANNER", "1")
@@ -31,11 +45,20 @@ SYSTEM_PROMPT = (
     "Antworte immer auf Deutsch, knapp und sachlich. "
     "Nutze ein Werkzeug nur, wenn die Frage es wirklich braucht, und gib ausschließlich Werte "
     "wieder, die ein Werkzeug geliefert hat. Meldet ein Werkzeug einen Fehler, sage das ehrlich "
-    "und erfinde nichts. Bei Datumsangaben für Werkzeuge nenne immer das konkrete Datum "
-    "(JJJJ-MM-TT), auch wenn der Nutzer nur einen Wochentag sagt. Für Werkzeuge, die etwas "
-    "verändern, holt das System die Bestätigung selbst beim Nutzer ein: rufe sie direkt auf und "
-    "frage vorher nicht nach."
+    "und erfinde nichts. Enthält ein Ergebnis einen 'hinweis' (z. B. dass nicht alles gezeigt "
+    "wurde), gib ihn dem Nutzer weiter. Bei Datumsangaben für Werkzeuge nenne immer das "
+    "konkrete Datum (JJJJ-MM-TT), auch wenn der Nutzer nur einen Wochentag sagt. "
+    "Für Werkzeuge, die etwas verändern, holt das System die Bestätigung selbst beim Nutzer "
+    "ein: rufe sie direkt auf und frage vorher nicht nach."
 )
+# Modellaufrufe je Anfrage (jeder Werkzeugaufruf kostet einen weiteren). Kleine lokale Modelle
+# drehen sich sonst gelegentlich endlos im Kreis und blockieren alle folgenden Anfragen.
+MAX_MODEL_REQUESTS = 8
+# Höchstens so viele Anfragen warten hinter der laufenden; weitere werden sofort abgewiesen,
+# statt sich unbegrenzt anzustauen.
+MAX_WAITING = 3
+OVERLOADED_MESSAGE = "JARVIS ist gerade ausgelastet. Bitte gleich noch einmal versuchen."
+BUSY_MESSAGE = "Eine andere Anfrage läuft noch; diese wartet, bis sie fertig ist."
 WEEKDAYS_DE = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"]
 
 
@@ -93,6 +116,8 @@ def resolve_model_name(settings: Settings) -> str:
 
 
 def _translate(exc: Exception, model_name: str, base_url: str) -> ChatError:
+    if isinstance(exc, ChatError):  # schon nutzerlesbar (z. B. ausgelastet)
+        return exc
     if isinstance(exc, ModelHTTPError) and exc.status_code == 404:
         return ChatError(
             f"Das Modell '{model_name}' ist nicht installiert. "
@@ -100,12 +125,31 @@ def _translate(exc: Exception, model_name: str, base_url: str) -> ChatError:
         )
     if isinstance(exc, ModelHTTPError):
         return ChatError(f"Ollama meldete einen Fehler (HTTP {exc.status_code}).")
+    if isinstance(exc, UsageLimitExceeded):
+        return ChatError(
+            f"Das Modell hat nach {MAX_MODEL_REQUESTS} Schritten keine Antwort gefunden. "
+            "Bitte die Frage einfacher oder genauer stellen."
+        )
+    if isinstance(exc, UnexpectedModelBehavior):
+        return ChatError(
+            "Das Modell hat keine brauchbare Antwort geliefert (z. B. ein Werkzeug mehrfach "
+            "falsch aufgerufen). Bitte erneut versuchen oder ein größeres Modell wählen."
+        )
     if isinstance(exc, ModelAPIError | OSError):
         return ChatError(
             f"Ollama ist unter {base_url} nicht erreichbar. "
             "Starte Ollama (z. B. 'ollama serve') und versuche es erneut."
         )
     return ChatError("Unerwarteter Fehler bei der Modellabfrage.")
+
+
+def _text_of(event: AgentStreamEvent) -> str | None:
+    """Neuer Antworttext eines Stream-Ereignisses (Denk-Abschnitte des Modells zählen nicht)."""
+    if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
+        return event.part.content
+    if isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta):
+        return event.delta.content_delta
+    return None
 
 
 class ChatService:
@@ -117,16 +161,27 @@ class ChatService:
         audit: AuditLog,
         hub: McpHub,
         broker: ConfirmationBroker | None = None,
+        sessions: SessionStore | None = None,
     ) -> None:
         self.model_name = model_name
         self.hub = hub
         self.broker = broker or ConfirmationBroker()
+        self.sessions = sessions or SessionStore()
         self._model = model
         self._base_url = base_url
         self._audit = audit
+        # Der Hub trägt genau eine Anfrage (eigene Server-Prozesse je Anfrage, ADR-004), und ein
+        # lokales Modell rechnet ohnehin nur eine Antwort zugleich: Anfragen laufen nacheinander.
+        self._run_lock = asyncio.Lock()
+        self._waiting = 0
 
-    async def stream(self, message: str, *, channel: str) -> AsyncGenerator[StreamEvent]:
+    async def stream(
+        self, message: str, *, channel: str, session_id: str | None = None
+    ) -> AsyncGenerator[StreamEvent]:
         """Liefert Ereignisse. Schreibt genau einen Chat-Audit-Eintrag (ohne Inhalte).
+
+        Mit `session_id` bekommt das Modell den bisherigen Verlauf der Sitzung; eine vollständig
+        beantwortete Runde wird angehängt. Ohne `session_id` steht die Anfrage für sich.
 
         Der Agent läuft in einem eigenen Task, damit Ereignisse (z. B. eine Bestätigungsanfrage)
         auch dann ausgeliefert werden, während ein Werkzeugaufruf auf die Antwort wartet.
@@ -140,15 +195,23 @@ class ChatService:
             )
 
         async def confirmer(tool: str, preview: str, question: str) -> bool:
-            approved = await self.broker.ask(tool, preview, question, emit)
-            if not approved:  # feste Meldung, unabhängig davon, was das Modell danach sagt
+            answer = await self.broker.ask(tool, preview, question, emit)
+            # Feste Meldung, unabhängig davon, was das Modell danach sagt.
+            if answer is None:
+                queue.put_nowait(
+                    Notice(
+                        f"Keine Antwort innerhalb von {self.broker.timeout:.0f} s: "
+                        f"'{tool}' wurde nicht ausgeführt."
+                    )
+                )
+            elif not answer:
                 queue.put_nowait(Notice(f"Abgelehnt: '{tool}' wurde nicht ausgeführt."))
-            return approved
+            return bool(answer)
 
         channel_token = current_channel.set(channel)
         confirmer_token = current_confirmer.set(confirmer)
         try:
-            task = asyncio.create_task(self._run(message, queue, usage))
+            task = asyncio.create_task(self._run(message, session_id, queue, usage))
         finally:
             current_channel.reset(channel_token)
             current_confirmer.reset(confirmer_token)
@@ -178,9 +241,29 @@ class ChatService:
             )
             log.info("chat_done", channel=channel, model=self.model_name, status=status)
 
+    @asynccontextmanager
+    async def _turn(
+        self, queue: asyncio.Queue[StreamEvent | BaseException | None]
+    ) -> AsyncGenerator[None]:
+        """Reiht die Anfrage ein (eine zugleich, höchstens MAX_WAITING wartend)."""
+        if self._run_lock.locked():
+            if self._waiting >= MAX_WAITING:
+                raise ChatError(OVERLOADED_MESSAGE)
+            queue.put_nowait(Notice(BUSY_MESSAGE))
+        self._waiting += 1
+        try:
+            await self._run_lock.acquire()
+        finally:
+            self._waiting -= 1
+        try:
+            yield
+        finally:
+            self._run_lock.release()
+
     async def _run(
         self,
         message: str,
+        session_id: str | None,
         queue: asyncio.Queue[StreamEvent | BaseException | None],
         usage: list[int | None],
     ) -> None:
@@ -188,6 +271,9 @@ class ChatService:
             _ctx: RunContext[object], events: AsyncIterable[AgentStreamEvent]
         ) -> None:
             async for event in events:
+                text = _text_of(event)
+                if text:
+                    queue.put_nowait(TextDelta(text))
                 if not isinstance(event, FunctionToolCallEvent):
                     continue
                 name = event.part.tool_name
@@ -195,19 +281,32 @@ class ChatService:
                     queue.put_nowait(ToolUsed(name))
                 else:
                     self.hub.record_unknown_tool(name)
-                    queue.put_nowait(Notice(f"Unbekanntes Werkzeug '{name[:60]}' wurde abgelehnt."))
+                    queue.put_nowait(
+                        Notice(f"Unbekanntes Werkzeug '{safe_tool_name(name)}' wurde abgelehnt.")
+                    )
 
         try:
-            async with self.hub:
+            async with self._turn(queue), self.hub:
                 for failure in self.hub.failures:
                     queue.put_nowait(Notice(failure))
+                # `instructions` statt `system_prompt`: gilt je Anfrage neu (aktuelles Datum) und
+                # landet nicht im gespeicherten Verlauf.
                 agent: Agent[None, str] = Agent(
-                    self._model, system_prompt=system_prompt(), toolsets=self.hub.toolsets
+                    self._model, instructions=system_prompt(), toolsets=self.hub.toolsets
                 )
-                async with agent.run_stream(message, event_stream_handler=on_events) as result:
-                    async for delta in result.stream_text(delta=True):
-                        queue.put_nowait(TextDelta(delta))
-                    usage[0] = result.usage.total_tokens or None
+                history = self.sessions.history(session_id) if session_id else None
+                # `run` statt `run_stream`: nur so geht es nach einem Werkzeugaufruf weiter, wenn
+                # das Modell vorher schon Text geschrieben hat ("Ich schaue nach ..."). Der Text
+                # aller Modellantworten der Runde kommt über die Ereignisse.
+                result = await agent.run(
+                    message,
+                    message_history=history,
+                    event_stream_handler=on_events,
+                    usage_limits=UsageLimits(request_limit=MAX_MODEL_REQUESTS),
+                )
+                usage[0] = result.usage.total_tokens or None
+                if session_id:
+                    self.sessions.append(session_id, result.new_messages())
             queue.put_nowait(None)
         except asyncio.CancelledError:
             raise
@@ -227,4 +326,5 @@ def build_service(
         provider = OpenAIProvider(base_url=settings.ollama_base_url, api_key="ollama")
         model = OpenAIChatModel(name, provider=provider)
     hub = hub or McpHub(settings.mcp_servers, audit, name)
-    return ChatService(model, name, settings.ollama_base_url, audit, hub)
+    sessions = SessionStore(settings.history_max_turns, settings.history_max_chars)
+    return ChatService(model, name, settings.ollama_base_url, audit, hub, sessions=sessions)

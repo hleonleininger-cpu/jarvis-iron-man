@@ -21,10 +21,12 @@ from mcp_servers.notion.client import (
     normalize_token,
 )
 from mcp_servers.notion.normalize import (
+    blocks_to_text,
     extract_page_id,
     fit_budget,
     is_done,
     normalize_page,
+    property_value,
     sort_entries,
 )
 from tests.test_calendar_server import MemoryKeyring
@@ -271,10 +273,7 @@ def test_server_source_contains_no_write_code() -> None:
     source = "\n".join(p.read_text(encoding="utf-8") for p in package.glob("*.py"))
     assert not re.search(r'["\'](PATCH|DELETE|PUT)["\']', source)
     assert set(re.findall(r'["\'](GET|POST)["\']', source)) == {"GET", "POST"}
-    assert (
-        not re.search(r"/comments|/search|/users|append|archiv|trash", source, re.IGNORECASE)
-        or True
-    )
+    assert not re.search(r"/comments|/search|/users|archive|trash", source, re.IGNORECASE)
     names = {n.lower() for module in (server, notion_client) for n in dir(module)}
     forbidden = re.compile(r"create|update|delete|archive|append|patch|write|put_|insert")
     assert [n for n in names if forbidden.search(n) and not n.startswith("__")] == []
@@ -370,3 +369,116 @@ def test_notion_errors_become_clean_results_without_invented_data(
         "nicht gefunden oder ist nicht mit der Integration geteilt"
         in server.search_data("x")["fehler"]
     )
+
+
+# --------------------------------------------------------------------------- Runde 2
+@pytest.mark.parametrize("bad", ["<ID>", "keine-id", "1234"])
+def test_malformed_database_id_gets_a_clear_message(
+    fake_notion: None, monkeypatch: pytest.MonkeyPatch, bad: str
+) -> None:
+    """Früher: 'Dieser Notion-Zugriff ist nicht erlaubt (nur Lesen)', obwohl nur die ID falsch war."""
+    monkeypatch.setenv("NOTION_DB_MISSION_CONTROL", bad)
+    result = server.query_data("mission_control")
+    assert result["grund"] == "invalid_database_id"
+    assert "NOTION_DB_MISSION_CONTROL" in result["fehler"] and "jarvis.toml" in result["fehler"]
+
+
+def test_search_skips_databases_with_malformed_id(
+    fake_notion: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("NOTION_DB_MISSION_CONTROL", "<ID>")
+    assert server.search_data("Atomic")["treffer"][0]["titel"] == "Atomic Habits"
+    monkeypatch.setenv("NOTION_DB_ACADEMY", "<ID>")
+    assert server.search_data("Atomic")["grund"] == "invalid_database_id"
+
+
+def test_query_says_when_the_database_was_not_read_completely(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def endless(method: str, url: str, headers: dict[str, str], body: bytes | None) -> Response:
+        page = {
+            "id": "a",
+            "properties": {"Name": {"type": "title", "title": [{"plain_text": "x"}]}},
+        }
+        return Response(200, json.dumps({"results": [page], "has_more": True, "next_cursor": "c"}))
+
+    monkeypatch.setattr(server, "make_client", lambda: NotionClient(TOKEN, transport=endless))
+    assert "mehr als 300 Einträge" in server.query_data("mission_control")["hinweis"]
+    assert "mehr als 300 Einträge" in server.search_data("x")["hinweis"]
+
+
+def test_complete_query_has_no_incomplete_hint(fake_notion: None) -> None:
+    assert "hinweis" not in server.query_data("mission_control")
+
+
+# --------------------------------------------------------------------------- Runde 4
+def test_long_page_says_that_only_the_beginning_was_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def transport(method: str, url: str, headers: dict[str, str], body: bytes | None) -> Response:
+        if url.endswith("/children"):
+            block = {"type": "paragraph", "paragraph": {"rich_text": [{"plain_text": "Anfang"}]}}
+            return Response(200, json.dumps({"results": [block], "has_more": True}))
+        return Response(200, json.dumps({"id": MISSION_ID, "properties": {}}))
+
+    monkeypatch.setattr(server, "make_client", lambda: NotionClient(TOKEN, transport=transport))
+    result = server.get_data(MISSION_ID)
+    assert result["inhalt"] == "Anfang" and "nur der Anfang" in result["hinweis"]
+
+
+def test_short_page_has_no_hint(fake_notion: None) -> None:
+    assert "hinweis" not in server.get_data("11111111111111111111111111111101")
+
+
+# --------------------------------------------------------------------------- Runde 5
+def test_peek_link_from_a_database_view_names_the_page() -> None:
+    link = (
+        "https://www.notion.so/ws/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        "?v=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb&p=11111111111111111111111111111101&pm=s"
+    )
+    assert extract_page_id(link) == "11111111-1111-1111-1111-111111111101"
+    plain = extract_page_id("https://notion.so/Titel-11111111111111111111111111111102")
+    assert plain == "11111111-1111-1111-1111-111111111102"
+
+
+# --------------------------------------------------------------------------- Runde 6
+def test_search_does_not_match_property_names(fake_notion: None) -> None:
+    """Früher traf 'Priorität' jede Mission, weil der Feldname mitdurchsucht wurde."""
+    assert server.search_data("Priorität")["anzahl"] == 0
+    assert server.search_data("Schule")["anzahl"] == 1  # Werte werden weiter gefunden
+
+
+@pytest.mark.parametrize("status", ["✅ Erledigt", "Done!", "abgeschlossen", "ERLEDIGT"])
+def test_done_status_with_symbols_is_recognized(status: str) -> None:
+    assert is_done({"status": status})
+
+
+@pytest.mark.parametrize("status", ["Offen", "In Arbeit", "Nicht erledigt", "not done", ""])
+def test_open_status_is_not_done(status: str) -> None:
+    assert not is_done({"status": status})
+
+
+def test_priority_sorting_ignores_case_of_the_field_name() -> None:
+    entries = [
+        {"titel": "b", "felder": {"priorität": "Niedrig"}},
+        {"titel": "a", "felder": {"PRIORITÄT": "hoch"}},
+    ]
+    assert [e["titel"] for e in sort_entries(entries)] == ["a", "b"]
+
+
+# --------------------------------------------------------------------------- Runde 7
+def test_more_property_types_are_read() -> None:
+    assert property_value(_prop("unique_id", {"prefix": "MIS", "number": 42})) == "MIS-42"
+    assert property_value(_prop("unique_id", {"prefix": None, "number": 7})) == "7"
+    created = "2026-11-01T10:00:00.000Z"
+    assert property_value(_prop("created_time", created)) == created
+    assert property_value(_prop("relation", [{"id": "a"}, {"id": "b"}])) == "2 verknüpft"
+    assert property_value(_prop("relation", [])) is None
+
+
+def test_code_blocks_and_subpages_are_kept() -> None:
+    blocks = [
+        {"type": "code", "code": {"rich_text": [{"plain_text": "print(1)"}]}},
+        {"type": "child_page", "child_page": {"title": "Notizen"}},
+    ]
+    assert blocks_to_text(blocks) == "```\nprint(1)\n```\n[Unterseite: Notizen]"

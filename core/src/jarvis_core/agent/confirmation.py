@@ -2,6 +2,8 @@
 
 Nicht kalenderspezifisch: jedes Werkzeug, für das die Policy CONFIRM liefert, nutzt diesen Fluss.
 CLI und API beantworten Anfragen über `resolve()`; ohne Antwort gilt nach dem Timeout "Nein".
+Die CLI wartet ohne Timeout: dort sitzt der Nutzer vor der Rückfrage und `input()` blockiert
+ohnehin, eine späte Antwort darf nicht stillschweigend verworfen werden.
 """
 
 import asyncio
@@ -21,21 +23,22 @@ class ConfirmRequest:
 
 
 class ConfirmationBroker:
-    def __init__(self, timeout: float = DEFAULT_TIMEOUT_SECONDS) -> None:
-        self._timeout = timeout
+    def __init__(self, timeout: float | None = DEFAULT_TIMEOUT_SECONDS) -> None:
+        self.timeout = timeout
         self._pending: dict[str, asyncio.Future[bool]] = {}
 
     async def ask(
         self, tool: str, preview: str, question: str, emit: Callable[[ConfirmRequest], None]
-    ) -> bool:
+    ) -> bool | None:
+        """Ja/Nein des Nutzers; None, wenn bis zum Timeout keine Antwort kam."""
         request = ConfirmRequest(uuid.uuid4().hex, tool, preview, question)
         future: asyncio.Future[bool] = asyncio.get_running_loop().create_future()
         self._pending[request.id] = future
         try:
             emit(request)
-            return await asyncio.wait_for(future, self._timeout)
+            return await asyncio.wait_for(future, self.timeout)
         except TimeoutError:
-            return False
+            return None
         finally:
             self._pending.pop(request.id, None)
 

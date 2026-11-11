@@ -99,3 +99,12 @@ def test_tampered_tool_row_is_detected(tmp_path: Path) -> None:
     with sqlite3.connect(path) as conn:
         conn.execute("UPDATE audit SET decision = 'DENY' WHERE id = 2")
     assert log.verify_chain().first_invalid_id == 2
+
+
+def test_verify_counts_rows_and_reports_gaps(tmp_path: Path) -> None:
+    log, path = _log(tmp_path, 5)
+    assert log.verify_chain().checked == 5
+    with sqlite3.connect(path) as conn:
+        conn.execute("DELETE FROM audit WHERE id = 1")
+    result = log.verify_chain()
+    assert not result.ok and result.checked == 0 and result.first_invalid_id == 2

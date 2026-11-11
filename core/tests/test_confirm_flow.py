@@ -12,6 +12,7 @@ from jarvis_core.agent import (
     ChatService,
     ConfirmationBroker,
     ConfirmRequested,
+    Notice,
     StreamEvent,
     TextDelta,
     ToolUsed,
@@ -64,13 +65,8 @@ async def _run(service: ChatService, approve: bool) -> list[StreamEvent]:
     async for event in service.stream("Trag am Montag 15 Uhr Zahnarzt ein", channel="cli"):
         events.append(event)
         if isinstance(event, ConfirmRequested):
-            assert nothing_written_yet(service)
             service.broker.resolve(event.id, approve)
     return events
-
-
-def nothing_written_yet(service: ChatService) -> bool:
-    return True
 
 
 async def test_yes_writes_after_preview(tmp_path: Path) -> None:
@@ -79,6 +75,7 @@ async def test_yes_writes_after_preview(tmp_path: Path) -> None:
 
     confirms = [e for e in events if isinstance(e, ConfirmRequested)]
     assert len(confirms) == 1
+    assert _tool_rows(settings)[0] == ("create_event", "CONFIRM", "pending")  # erst fragen
     assert confirms[0].preview.startswith("Neuer Termin:") and confirms[0].question == "Anlegen?"
     assert ToolUsed("create_event") in events
     assert events.index(ToolUsed("create_event")) < events.index(confirms[0])
@@ -135,7 +132,9 @@ def test_broker_resolve_unknown_or_twice() -> None:
 
 # ------------------------------------------------------------------------------------- API
 def test_api_confirm_endpoint_unknown_id(tmp_path: Path) -> None:
-    client = TestClient(create_app(_settings(tmp_path), TestModel(), "test"))
+    client = TestClient(
+        create_app(_settings(tmp_path), TestModel(), "test"), base_url="http://127.0.0.1"
+    )
     response = client.post("/v1/confirm/gibt-es-nicht", json={"approve": True})
     assert response.status_code == 404
 
@@ -147,7 +146,7 @@ def test_api_confirm_event_then_second_call_decides(tmp_path: Path, approve: boo
 
     settings = _settings(tmp_path)
     model = TestModel(call_tools=["create_event"])
-    client = TestClient(create_app(settings, model, "test"))
+    client = TestClient(create_app(settings, model, "test"), base_url="http://127.0.0.1")
     seen: list[tuple[str, dict[str, str]]] = []
     done = threading.Event()
 
@@ -209,3 +208,55 @@ def test_cli_asks_and_respects_answer(
     assert "[Werkzeug: create_event]" in out and "Neuer Termin:" in out
     assert prompts == ["Anlegen? [j/N] "]
     assert len(_writes(tmp_path)) == writes
+
+
+# ------------------------------------------------------------------------------------- Runde 2
+async def test_timeout_notice_differs_from_a_refusal(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    timed_out = [
+        e
+        async for e in _service(settings, ConfirmationBroker(timeout=0.3)).stream(
+            "Trag etwas ein", channel="api"
+        )
+    ]
+    refused = await _run(_service(settings), approve=False)
+    assert any(isinstance(e, Notice) and "Keine Antwort innerhalb" in e.message for e in timed_out)
+    assert any(isinstance(e, Notice) and e.message.startswith("Abgelehnt") for e in refused)
+    assert _writes(tmp_path) == []
+
+
+def test_cli_accepts_a_late_yes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """Früher: Antwort nach dem Timeout wurde angenommen, der Termin aber nicht angelegt."""
+    import time
+
+    settings = _settings(tmp_path)
+
+    def slow_input(prompt: str = "") -> str:
+        time.sleep(0.6)
+        return "j"
+
+    monkeypatch.setattr(cli_main, "load_settings", lambda: settings)
+
+    def fake_build(s: Settings, audit: AuditLog) -> ChatService:
+        service = build_service(s, audit, TestModel(call_tools=["create_event"]), "test")
+        service.broker = ConfirmationBroker(timeout=0.2)  # die CLI muss das ersetzen
+        return service
+
+    monkeypatch.setattr(cli_main, "build_service", fake_build)
+    monkeypatch.setattr("builtins.input", slow_input)
+    cli_main.chat("Trag am Montag 15 Uhr Zahnarzt ein")
+    capfd.readouterr()
+    assert len(_writes(tmp_path)) == 1
+
+
+def test_cli_rejects_blank_message(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
+) -> None:
+    import typer
+
+    monkeypatch.setattr(cli_main, "load_settings", lambda: _settings(tmp_path))
+    with pytest.raises(typer.Exit) as err:
+        cli_main.chat("   ")
+    assert err.value.exit_code == 2 and "leer" in capfd.readouterr().err

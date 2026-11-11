@@ -6,6 +6,9 @@ ollama_base_url = "http://127.0.0.1:11434/v1"
 # model = "qwen3.5:4b"       # ohne Eintrag gilt die Empfehlung von `jarvis doctor`
 data_dir = "data"
 log_level = "INFO"
+# Gesprächsverlauf je Sitzung (nur im Arbeitsspeicher). 0 Runden schaltet ihn ab.
+history_max_turns = 10
+history_max_chars = 16000
 
 # MCP-Server: nur hier deklarierte werden gestartet. `tools` ist die einzige Stelle für
 # Werkzeug-Metadaten; nicht aufgeführte Werkzeuge werden dem Modell nie angeboten.
@@ -21,7 +24,8 @@ get_weather = "READ"
 # Apple-Kalender (iCloud/CalDAV). Zugangsdaten: `jarvis secrets set apple_caldav` (OS-Schlüsselbund).
 # create_event ist WRITE_REVERSIBLE -> Policy: CONFIRM (Vorschau + Rückfrage vor dem Anlegen).
 # `previews` nennt das Vorschau-Werkzeug (schreibt nichts, wird dem Modell nicht angeboten).
-# Optional: einen bestimmten Kalender wählen mit args = [..., "--kalender", "Privat"].
+# Gelesen werden alle Kalender, neue Termine landen im ersten. Mit
+# args = [..., "--kalender", "Privat"] wird nur dieser eine gelesen und beschrieben.
 [mcp_servers.calendar]
 command = "python"
 args = ["-m", "mcp_servers.calendar"]

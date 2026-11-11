@@ -110,3 +110,60 @@ async def test_unknown_tool_call_is_rejected_and_audited(tmp_path: Path) -> None
     assert not any(isinstance(e, ToolUsed) for e in events)
     assert _tool_rows(settings) == [("rm_rf", "UNKNOWN", "DENY", "blocked")]
     assert sys.platform  # Attrappe hat nichts ausgeführt; Tool existiert nicht
+
+
+async def test_text_before_a_tool_call_does_not_end_the_answer(tmp_path: Path) -> None:
+    """Früher endete die Antwort nach 'Ich schaue kurz nach.'; das Ergebnis kam nie an."""
+    from pydantic_ai.messages import ModelRequest, ModelResponse, ToolReturnPart
+
+    settings = _settings(tmp_path)
+
+    async def stream_fn(
+        messages: list[ModelMessage], info: AgentInfo
+    ) -> AsyncIterator[str | dict[int, DeltaToolCall]]:
+        answered = any(
+            isinstance(part, ToolReturnPart)
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+        )
+        if answered:
+            yield "In Dortmund sind es "
+            yield "12.5 Grad."
+        else:
+            yield "Ich schaue kurz nach. "
+            yield {1: DeltaToolCall(name="get_weather", json_args='{"ort": "Dortmund"}')}
+
+    service = build_service(
+        settings, AuditLog(settings.audit_db_path), FunctionModel(stream_function=stream_fn), "test"
+    )
+    events = [e async for e in service.stream("Wetter in Dortmund?", channel="cli", session_id="s")]
+    text = [e.text for e in events if isinstance(e, TextDelta)]
+    assert text == ["Ich schaue kurz nach. ", "In Dortmund sind es ", "12.5 Grad."]
+    assert events.index(ToolUsed("get_weather")) == 1  # zwischen Vorrede und Antwort
+    assert _tool_rows(settings) == [("get_weather", "READ", "ALLOW", "ok")]
+    history = service.sessions.history("s")
+    assert isinstance(history[-1], ModelResponse)  # der Verlauf endet mit der Antwort
+
+
+async def test_model_that_keeps_calling_tools_is_stopped(tmp_path: Path) -> None:
+    from jarvis_core.agent import ChatError
+    from jarvis_core.agent.service import MAX_MODEL_REQUESTS
+
+    settings = _settings(tmp_path)
+    calls = {"n": 0}
+
+    async def stream_fn(
+        messages: list[ModelMessage], info: AgentInfo
+    ) -> AsyncIterator[str | dict[int, DeltaToolCall]]:
+        calls["n"] += 1
+        yield {0: DeltaToolCall(name="get_weather", json_args='{"ort": "Dortmund"}')}
+
+    service = build_service(
+        settings, AuditLog(settings.audit_db_path), FunctionModel(stream_function=stream_fn), "test"
+    )
+    with pytest.raises(ChatError, match=f"nach {MAX_MODEL_REQUESTS} Schritten"):
+        await _collect(service)
+    assert calls["n"] == MAX_MODEL_REQUESTS
+    with sqlite3.connect(settings.audit_db_path) as conn:
+        assert conn.execute("SELECT status FROM audit WHERE tool IS NULL").fetchone() == ("error",)

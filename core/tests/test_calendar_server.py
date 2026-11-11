@@ -15,9 +15,10 @@ from mcp_servers.calendar.caldav import (
     Calendar,
     Credentials,
     Response,
+    same_site,
     select_calendar,
 )
-from mcp_servers.calendar.ics import build_vevent, parse_events
+from mcp_servers.calendar.ics import Event, build_vevent, parse_events
 from mcp_servers.calendar.timeutil import TZ, resolve_window
 
 PASSWORD = "app-pass-wort-geheim"
@@ -147,6 +148,12 @@ def _report(ics: str) -> str:
     )
 
 
+WORK_ICS = (
+    "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nSUMMARY:Teammeeting\r\n"
+    "DTSTART:20261110T100000Z\r\nDTEND:20261110T110000Z\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+)
+
+
 class FakeICloud:
     def __init__(self, statuses: dict[str, int] | None = None) -> None:
         self.requests: list[tuple[str, str, dict[str, str], str]] = []
@@ -160,6 +167,9 @@ class FakeICloud:
         self.requests.append((method, url, headers, text))
         if method == "PUT":
             return Response(self.put_status, "", url)
+        if "calendar-query" in text and "/arbeit/" in url:
+            status = self.statuses.get("arbeit", 207)
+            return Response(status, _report(WORK_ICS) if status == 207 else "", url)
         for marker, content in (
             ("current-user-principal", PRINCIPAL),
             ("calendar-home-set", HOME),
@@ -185,19 +195,43 @@ def test_list_events_follows_discovery_and_skips_reminder_lists() -> None:
     assert methods[1][1] == "https://caldav.icloud.com/123/principal/"
     assert methods[2][1] == "https://p01-caldav.icloud.com/123/calendars/"
     assert methods[3] == ("REPORT", "https://p01-caldav.icloud.com/123/calendars/privat/")
+    assert methods[4] == ("REPORT", "https://p01-caldav.icloud.com/123/calendars/arbeit/")
+    assert len(methods) == 5  # die Erinnerungsliste (nur VTODO) wird nicht abgefragt
     assert "<C:expand" in fake.requests[3][3] and "time-range" in fake.requests[3][3]
     assert fake.requests[0][2]["Authorization"].startswith("Basic ")
-    assert [e.summary for e in events] == [
-        "UTC-Termin",
-        "Langer Titel",
-        "Handball, Training",
-    ]  # nach Start sortiert
+    assert [(e.summary, e.calendar) for e in events] == [
+        ("UTC-Termin", "Privat"),
+        ("Langer Titel", "Privat"),
+        ("Teammeeting", "Arbeit"),
+        ("Handball, Training", "Privat"),
+    ]  # alle Kalender, nach Start sortiert
 
 
-def test_named_calendar_is_selected() -> None:
+def test_one_unreadable_calendar_does_not_hide_the_others(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = FakeICloud({"arbeit": 500})
+    monkeypatch.setattr(server, "make_client", lambda: _client(fake))
+    result = server.list_events_data("2026-11-10", now=NOW)
+    assert result["ok"] and result["anzahl"] == 3
+    assert result["hinweis"] == "Nicht lesbare Kalender: Arbeit."
+
+
+def test_all_calendars_unreadable_is_an_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake = FakeICloud({"arbeit": 500, "calendar-query": 500})
+    monkeypatch.setattr(server, "make_client", lambda: _client(fake))
+    assert server.list_events_data("2026-11-10", now=NOW)["grund"] == "unavailable"
+
+
+@pytest.mark.parametrize("name", ["Arbeit", "arbeit", " ARBEIT "])
+def test_named_calendar_is_the_only_one_read(name: str) -> None:
     fake = FakeICloud()
-    _client(fake, "Arbeit").list_events(NOW, NOW + timedelta(days=1))
+    events = _client(fake, name).list_events(
+        datetime(2026, 11, 10, tzinfo=TZ), datetime(2026, 11, 11, tzinfo=TZ)
+    )
+    assert [m for m, _, _, _ in fake.requests].count("REPORT") == 1
     assert fake.requests[3][1].endswith("/arbeit/")
+    assert [e.summary for e in events] == ["Teammeeting"]
 
 
 def test_named_calendar_missing(capsys: pytest.CaptureFixture[str]) -> None:
@@ -286,11 +320,11 @@ def fake_icloud(monkeypatch: pytest.MonkeyPatch) -> FakeICloud:
 
 def test_list_events_tool(fake_icloud: FakeICloud) -> None:
     result = server.list_events_data("2026-11-10", now=NOW)
-    assert result["ok"] and result["anzahl"] == 3
+    assert result["ok"] and result["anzahl"] == 4
     handball = next(t for t in result["termine"] if t["titel"] == "Handball, Training")
     assert handball == {
         "titel": "Handball, Training", "start": "2026-11-10T18:00", "ende": "2026-11-10T20:00",
-        "ganztaegig": False, "ort": "Sporthalle",
+        "ganztaegig": False, "ort": "Sporthalle", "kalender": "Privat",
     }  # fmt: skip
 
 
@@ -302,10 +336,106 @@ def test_list_events_tool_errors(monkeypatch: pytest.MonkeyPatch) -> None:
     assert result["ok"] is False and "jarvis secrets set apple_caldav" in result["fehler"]
 
 
-def test_preview_names_concrete_date() -> None:
-    result = server.preview_event_data("Zahnarzt", "2026-11-09T15:00", None, None, None)
-    assert result["vorschau"] == "Neuer Termin: Zahnarzt, Mo 09.11. 15:00-16:00"
+def test_preview_names_concrete_date_with_year(fake_icloud: FakeICloud) -> None:
+    result = server.preview_event_data("Zahnarzt", "2026-11-09T15:00", None, None, None, now=NOW)
+    assert (
+        result["vorschau"] == "Neuer Termin: Zahnarzt, Mo 09.11.2026 15:00-16:00, Kalender: Privat"
+    )
+    assert all(method != "PUT" for method, _, _, _ in fake_icloud.requests)  # Vorschau schreibt nie
     assert result["frage"] == "Anlegen?"
+
+
+@pytest.mark.parametrize(
+    ("start", "past"),
+    [
+        ("2025-11-10T15:00", True),  # falsches Jahr geraten
+        ("2026-11-09T08:00", True),  # heute, aber schon vorbei
+        ("2026-11-08", True),  # ganztägig gestern
+        ("2026-11-09", False),  # ganztägig heute läuft noch
+        ("2026-11-09T09:30", False),  # läuft gerade (endet 10:30)
+        ("2027-01-05T15:00", False),
+    ],
+)
+def test_preview_warns_about_events_in_the_past(
+    fake_icloud: FakeICloud, start: str, past: bool
+) -> None:
+    preview = server.preview_event_data("Zahnarzt", start, None, None, None, now=NOW)["vorschau"]
+    assert (server.PAST_WARNING in preview) is past
+
+
+def test_list_events_tool_says_when_it_truncates(monkeypatch: pytest.MonkeyPatch) -> None:
+    class Many:
+        unreadable: list[str] = []
+
+        def list_events(self, time_min: datetime, time_max: datetime) -> list[Event]:
+            return [Event(f"Termin {i}", time_min + timedelta(minutes=i), None) for i in range(40)]
+
+    monkeypatch.setattr(server, "make_client", lambda: Many())
+    result = server.list_events_data("heute", now=NOW)
+    assert result["anzahl"] == 40 and len(result["termine"]) == server.MAX_EVENTS
+    assert result["hinweis"] == "Nur die ersten 25 von 40 Terminen gezeigt."
+    assert "hinweis" not in server.list_events_data("irgendwann")
+
+
+# --------------------------------------------------------------------------- Zugangsdaten-Grenze
+@pytest.mark.parametrize(
+    ("target", "allowed"),
+    [
+        ("https://p42-caldav.icloud.com/1/", True),
+        ("https://icloud.com/", True),
+        ("http://p42-caldav.icloud.com/1/", False),  # kein Klartext
+        ("https://icloud.com.evil.example/1/", False),
+        ("https://evilicloud.com/1/", False),
+        ("https://example.org/", False),
+        ("/nur/pfad", False),
+    ],
+)
+def test_same_site(target: str, allowed: bool) -> None:
+    assert same_site("https://caldav.icloud.com/", target) is allowed
+
+
+def test_credentials_are_never_sent_to_a_foreign_host(capsys: pytest.CaptureFixture[str]) -> None:
+    """Ein href auf eine fremde Domain darf das App-Passwort nicht bekommen."""
+    evil_home = HOME.replace("https://p01-caldav.icloud.com", "https://angreifer.example")
+
+    class Evil(FakeICloud):
+        def __call__(
+            self, method: str, url: str, headers: dict[str, str], body: bytes | None
+        ) -> Response:
+            response = super().__call__(method, url, headers, body)
+            if body and b"calendar-home-set" in body:
+                return Response(207, evil_home, url)
+            return response
+
+    fake = Evil()
+    with pytest.raises(CalDavError) as err:
+        _client(fake).list_events(NOW, NOW + timedelta(days=1))
+    assert err.value.reason == "invalid_response"
+    assert all("angreifer.example" not in url for _, url, _, _ in fake.requests)
+    assert "foreign_host" in capsys.readouterr().err
+
+
+def test_redirect_to_foreign_host_is_not_followed(monkeypatch: pytest.MonkeyPatch) -> None:
+    import email.message
+    import urllib.error
+    import urllib.request
+
+    from mcp_servers.calendar import caldav
+
+    opened: list[tuple[str, str | None]] = []
+
+    def fake_urlopen(request: urllib.request.Request, timeout: float) -> object:
+        opened.append((request.full_url, request.get_header("Authorization")))
+        headers = email.message.Message()
+        headers["Location"] = "https://angreifer.example/abgriff"
+        raise urllib.error.HTTPError(request.full_url, 302, "Found", headers, None)
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    response = caldav.urllib_transport(
+        "PROPFIND", "https://caldav.icloud.com/", {"Authorization": "Basic geheim"}, b"<x/>"
+    )
+    assert response.status == 302
+    assert opened == [("https://caldav.icloud.com/", "Basic geheim")]
 
 
 @pytest.mark.parametrize(
@@ -370,3 +500,147 @@ def test_not_configured_message_points_to_secrets_command() -> None:
     result: dict[str, Any] = server.list_events_data("heute")
     assert result["grund"] == "not_configured"
     assert "jarvis secrets set apple_caldav" in result["fehler"]
+
+
+# --------------------------------------------------------------------------- Runde 2
+def test_cancelled_events_are_not_listed() -> None:
+    ics = (
+        "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nSUMMARY:Abgesagt\r\nSTATUS:CANCELLED\r\n"
+        "DTSTART:20261110T080000Z\r\nEND:VEVENT\r\n"
+        "BEGIN:VEVENT\r\nSUMMARY:Findet statt\r\nSTATUS:CONFIRMED\r\n"
+        "DTSTART:20261110T090000Z\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+    )
+    assert [e.summary for e in parse_events([ics])] == ["Findet statt"]
+
+
+def test_window_is_limited_to_a_quarter() -> None:
+    assert resolve_window("2026-01-01/2026-04-02", NOW)[2] == "2026-01-01/2026-04-02"
+    with pytest.raises(ValueError, match="höchstens 92 Tage"):
+        resolve_window("2026-01-01/2026-04-03", NOW)
+
+
+# --------------------------------------------------------------------------- Runde 4
+def test_overlong_title_is_rejected_before_asking() -> None:
+    result = server.preview_event_data("x" * 201, "2026-11-10T15:00", None, None, None, now=NOW)
+    assert result["ok"] is False and "höchstens 200 Zeichen" in result["fehler"]
+
+
+def test_blank_location_and_note_are_not_written(fake_icloud: FakeICloud) -> None:
+    server.create_event_data("Zahnarzt", "2026-11-10T15:00", None, "   ", " \n ")
+    body = fake_icloud.requests[-1][3]
+    assert "LOCATION" not in body and "DESCRIPTION" not in body
+
+
+def test_overlong_note_is_shortened(fake_icloud: FakeICloud) -> None:
+    server.create_event_data("Zahnarzt", "2026-11-10T15:00", None, None, "n" * 5000)
+    body = fake_icloud.requests[-1][3].replace("\r\n ", "")
+    assert body.count("n" * 2000) == 1 and "n" * 2001 not in body
+
+
+# --------------------------------------------------------------------------- Runde 5
+def test_unknown_tzid_keeps_the_event_in_berlin_time() -> None:
+    ics = (
+        "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nSUMMARY:Outlook-Einladung\r\n"
+        'DTSTART;TZID="W. Europe Standard Time":20261110T150000\r\n'
+        'DTEND;TZID="W. Europe Standard Time":20261110T160000\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n'
+    )
+    (event,) = parse_events([ics])
+    assert event.start == datetime(2026, 11, 10, 15, 0, tzinfo=TZ)
+
+
+@pytest.mark.parametrize(
+    ("duration", "end"),
+    [
+        ("PT1H30M", datetime(2026, 11, 10, 16, 30, tzinfo=TZ)),
+        ("P1DT2H", datetime(2026, 11, 11, 17, 0, tzinfo=TZ)),
+        ("PT45M", datetime(2026, 11, 10, 15, 45, tzinfo=TZ)),
+        ("unsinn", None),
+    ],
+)
+def test_duration_gives_the_end(duration: str, end: datetime | None) -> None:
+    ics = (
+        "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nSUMMARY:Mit Dauer\r\n"
+        f"DTSTART;TZID=Europe/Berlin:20261110T150000\r\nDURATION:{duration}\r\n"
+        "END:VEVENT\r\nEND:VCALENDAR\r\n"
+    )
+    assert parse_events([ics])[0].end == end
+
+
+def test_all_day_end_is_the_last_day(fake_icloud: FakeICloud) -> None:
+    """ICS-DTEND ist exklusiv; dem Modell wird der letzte Tag genannt."""
+    birthday = next(
+        t
+        for t in server.list_events_data("2026-11-11", now=NOW)["termine"]
+        if t["titel"] == "Geburtstag"
+    )
+    assert (birthday["start"], birthday["ende"]) == ("2026-11-11", "2026-11-11")
+
+
+@pytest.mark.parametrize(
+    ("zeitraum", "first", "last_exclusive"),
+    [
+        ("übermorgen", datetime(2026, 11, 11, tzinfo=TZ), datetime(2026, 11, 12, tzinfo=TZ)),
+        ("Nächste Woche", datetime(2026, 11, 16, tzinfo=TZ), datetime(2026, 11, 23, tzinfo=TZ)),
+    ],
+)
+def test_more_named_windows(zeitraum: str, first: datetime, last_exclusive: datetime) -> None:
+    lo, hi, _ = resolve_window(zeitraum, NOW)
+    assert (lo, hi) == (first, last_exclusive)
+
+
+def test_unavailable_keyring_is_not_reported_as_missing_credentials() -> None:
+    from keyring.errors import KeyringError
+
+    class Broken(MemoryKeyring):
+        def get_password(self, service: str, username: str) -> str | None:
+            raise KeyringError("kein Backend")
+
+    keyring.set_keyring(Broken())
+    result = server.list_events_data("heute", now=NOW)
+    assert result["grund"] == "keyring_unavailable" and "Schlüsselbund" in result["fehler"]
+
+
+# --------------------------------------------------------------------------- Runde 6
+def test_preview_without_credentials_fails_before_asking() -> None:
+    keyring.set_keyring(MemoryKeyring())
+    result = server.preview_event_data("Zahnarzt", "2026-11-10T15:00", None, None, None, now=NOW)
+    assert result["ok"] is False and result["grund"] == "not_configured"
+
+
+def test_preview_names_the_chosen_calendar(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake = FakeICloud()
+    monkeypatch.setattr(server, "make_client", lambda: _client(fake, "arbeit"))
+    result = server.preview_event_data("Zahnarzt", "2026-11-10T15:00", None, None, None, now=NOW)
+    assert result["vorschau"].endswith("Kalender: Arbeit")
+
+
+# --------------------------------------------------------------------------- Runde 7
+def test_alarm_inside_an_event_does_not_overwrite_its_title() -> None:
+    ics = (
+        "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nSUMMARY:Zahnarzt\r\n"
+        "DTSTART:20261110T140000Z\r\nBEGIN:VALARM\r\nACTION:EMAIL\r\n"
+        "SUMMARY:Erinnerung per Mail\r\nTRIGGER:-PT15M\r\nEND:VALARM\r\n"
+        "LOCATION:Praxis\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+    )
+    (event,) = parse_events([ics])
+    assert (event.summary, event.location) == ("Zahnarzt", "Praxis")
+
+
+def test_unexpanded_series_is_kept_and_flagged(monkeypatch: pytest.MonkeyPatch) -> None:
+    series = (
+        "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nSUMMARY:Handball\r\nRRULE:FREQ=WEEKLY\r\n"
+        "DTSTART:20260105T170000Z\r\nDTEND:20260105T190000Z\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+    )
+
+    class NoExpand(FakeICloud):
+        def __call__(
+            self, method: str, url: str, headers: dict[str, str], body: bytes | None
+        ) -> Response:
+            if body and b"calendar-query" in body:
+                return Response(207, _report(series), url)
+            return super().__call__(method, url, headers, body)
+
+    monkeypatch.setattr(server, "make_client", lambda: _client(NoExpand()))
+    result = server.list_events_data("2026-11-10", now=NOW)
+    assert [t["titel"] for t in result["termine"]] == ["Handball", "Handball"]  # je Kalender
+    assert "Wiederkehrende Termine" in result["hinweis"] and "Handball" in result["hinweis"]

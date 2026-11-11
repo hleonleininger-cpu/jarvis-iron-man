@@ -49,4 +49,4 @@ reportMissingTypeStubs = false
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-markers = ["live: Test gegen echtes Ollama (übersprungen, wenn nicht erreichbar)"]
+markers = ["live: Test gegen echte Dienste (Ollama, Open-Meteo, iCloud, Notion); übersprungen, wenn nicht erreichbar"]

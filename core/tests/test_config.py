@@ -67,3 +67,224 @@ def test_unknown_risk_class_rejected(tmp_path: Path) -> None:
     )
     with pytest.raises(ValidationError):
         Settings()
+
+
+def test_logging_survives_a_closed_stderr(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ein Logeintrag darf nicht scheitern, wenn das beim Konfigurieren aktive stderr zu ist."""
+    import io
+    import sys
+
+    import structlog
+
+    from jarvis_core.config import configure_logging
+
+    stale = io.StringIO()
+    monkeypatch.setattr(sys, "stderr", stale)
+    configure_logging("INFO")
+    stale.close()
+    structlog.get_logger("test").warning("nach_dem_schliessen")  # darf nicht werfen
+
+    fresh = io.StringIO()
+    monkeypatch.setattr(sys, "stderr", fresh)
+    structlog.get_logger("test").warning("auf_neuem_stderr")
+    assert "auf_neuem_stderr" in fresh.getvalue()
+
+
+def test_log_level_is_validated_and_normalized() -> None:
+    assert Settings(log_level=" debug ").log_level == "DEBUG"
+    with pytest.raises(ValidationError, match="log_level"):
+        Settings(log_level="laut")
+
+
+# --------------------------------------------------------------------------- Runde 4
+def test_config_file_can_be_named_by_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jarvis_core.config import load_settings
+
+    elsewhere = tmp_path / "anderswo" / "meine.toml"
+    elsewhere.parent.mkdir()
+    elsewhere.write_text('port = 9999\nmodel = "aus-der-datei"\n', encoding="utf-8")
+    monkeypatch.setenv("JARVIS_CONFIG", str(elsewhere))
+    settings = load_settings()
+    assert settings.port == 9999 and settings.model == "aus-der-datei"
+
+
+def test_named_config_file_that_is_missing_is_an_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jarvis_core.config import ConfigFileMissing, load_settings
+
+    monkeypatch.setenv("JARVIS_CONFIG", str(tmp_path / "gibt-es-nicht.toml"))
+    with pytest.raises(ConfigFileMissing, match="gibt-es-nicht.toml"):
+        load_settings()
+
+
+def test_doctor_shows_config_servers_and_secrets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import keyring
+    from typer.testing import CliRunner
+
+    from jarvis_core.cli.main import app
+    from jarvis_core.secrets import store_secret
+    from tests.test_calendar_server import MemoryKeyring
+
+    keyring.set_keyring(MemoryKeyring())
+    store_secret("notion", token="ntn_geheim")
+    (tmp_path / "jarvis.toml").write_text(
+        'ollama_base_url = "http://127.0.0.1:1/v1"\n'
+        '[mcp_servers.weather]\ncommand = "python"\n[mcp_servers.weather.tools]\n'
+        'get_weather = "READ"\n',
+        encoding="utf-8",
+    )
+    out = CliRunner().invoke(app, ["doctor"]).stdout
+    assert "jarvis.toml (gefunden)" in out
+    assert "MCP-Server" in out and "weather" in out
+    assert "notion: gesetzt" in out and "apple_caldav: nicht gesetzt" in out
+    assert "ntn_geheim" not in out
+
+    (tmp_path / "jarvis.toml").unlink()
+    out = CliRunner().invoke(app, ["doctor"]).stdout
+    assert "nicht gefunden, es gelten Standardwerte" in out and "keine (ohne Werkzeuge)" in out
+
+
+def test_missing_named_config_is_reported_by_the_cli(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from typer.testing import CliRunner
+
+    from jarvis_core.cli.main import app
+
+    monkeypatch.setenv("JARVIS_CONFIG", str(tmp_path / "fehlt.toml"))
+    result = CliRunner().invoke(app, ["doctor"])
+    assert result.exit_code == 2 and "fehlt.toml" in result.output
+
+
+def test_serve_announces_its_address(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import uvicorn
+
+    from jarvis_core.cli import main as cli_main
+
+    started: list[tuple[str, int]] = []
+
+    def fake_run(app: object, host: str, port: int, log_config: object) -> None:
+        started.append((host, port))
+
+    monkeypatch.setattr(uvicorn, "run", fake_run)
+    monkeypatch.setattr(
+        cli_main, "load_settings", lambda: Settings(data_dir=tmp_path, model="testmodell")
+    )
+    cli_main.serve()
+    assert started == [("127.0.0.1", 8765)]
+    assert "http://127.0.0.1:8765 (Modell testmodell)" in capsys.readouterr().err
+
+
+def test_relative_data_dir_lives_next_to_the_config_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jarvis_core.config import load_settings
+
+    home = tmp_path / "jarvis"
+    home.mkdir()
+    (home / "jarvis.toml").write_text('data_dir = "daten"\n', encoding="utf-8")
+    monkeypatch.setenv("JARVIS_CONFIG", str(home / "jarvis.toml"))
+    monkeypatch.chdir(tmp_path)  # anderer Startordner
+    assert load_settings().data_dir == home.resolve() / "daten"
+
+
+def test_secrets_status_says_when_keyring_is_missing() -> None:
+    import keyring
+    from keyring.errors import KeyringError
+    from typer.testing import CliRunner
+
+    from jarvis_core.cli.main import app
+    from tests.test_calendar_server import MemoryKeyring
+
+    class Broken(MemoryKeyring):
+        def get_password(self, service: str, username: str) -> str | None:
+            raise KeyringError("kein Backend")
+
+    keyring.set_keyring(Broken())
+    out = CliRunner().invoke(app, ["secrets", "status"]).stdout
+    assert "notion: Schlüsselbund nicht verfügbar" in out
+
+
+# --------------------------------------------------------------------------- Runde 7
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://127.0.0.1:11434/v1",
+        "http://localhost:11434/v1",
+        "http://[::1]:11434/v1",
+        "http://192.168.1.20:11434/v1",
+        "http://100.101.102.103:11434/v1",
+        "http://gaming-pc:11434/v1",
+        "http://gaming-pc.tail1234.ts.net:11434/v1",
+        "http://ollama.local:11434/v1",
+    ],
+)
+def test_local_model_endpoints_are_allowed(url: str) -> None:
+    assert Settings(ollama_base_url=url).ollama_base_url == url.rstrip("/")
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://api.openai.com/v1",
+        "https://openrouter.ai/api/v1",
+        "http://8.8.8.8:11434/v1",
+        "http://127.0.0.1.nip.io/v1",
+    ],
+)
+def test_cloud_model_endpoints_are_rejected(url: str) -> None:
+    with pytest.raises(ValidationError, match="keine Cloud-Modelle"):
+        Settings(ollama_base_url=url)
+
+
+def test_serve_reports_a_busy_port(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import socket
+
+    import typer
+    import uvicorn
+
+    from jarvis_core.cli import main as cli_main
+
+    with socket.socket() as busy:
+        busy.bind(("127.0.0.1", 0))
+        busy.listen()
+        port = busy.getsockname()[1]
+        monkeypatch.setattr(
+            cli_main, "load_settings", lambda: Settings(data_dir=tmp_path, port=port, model="m")
+        )
+
+        def must_not_start(*args: object, **kwargs: object) -> None:
+            pytest.fail("darf nicht starten")
+
+        monkeypatch.setattr(uvicorn, "run", must_not_start)
+        with pytest.raises(typer.Exit) as err:
+            cli_main.serve()
+    assert err.value.exit_code == 1
+    assert "Läuft JARVIS schon?" in capsys.readouterr().err
+
+
+def test_audit_verify_does_not_create_a_log_and_names_the_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from typer.testing import CliRunner
+
+    from jarvis_core.audit import AuditLog
+    from jarvis_core.cli.main import app
+
+    result = CliRunner().invoke(app, ["audit", "verify"])
+    assert result.exit_code == 1 and "Kein Audit-Log" in result.output
+    assert not (tmp_path / "data").exists()
+    AuditLog(tmp_path / "data" / "audit.sqlite3").record(
+        channel="cli", model="m", tokens=1, status="ok"
+    )
+    result = CliRunner().invoke(app, ["audit", "verify"])
+    assert result.exit_code == 0 and "audit.sqlite3" in result.output

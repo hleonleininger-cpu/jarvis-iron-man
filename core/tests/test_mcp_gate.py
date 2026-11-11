@@ -233,3 +233,57 @@ async def test_arguments_and_previews_never_reach_the_audit_log(
     assert SECRET_ARG.encode() not in data
     assert b"Zahnarzt" not in data
     assert audit.verify_chain().ok
+
+
+# ------------------------------------------------------------------------------------- Runde 3
+async def test_hanging_tool_times_out_and_is_audited(hub: McpHub, audit: AuditLog) -> None:
+    async def hang(name: str, args: dict[str, Any]) -> Any:
+        await asyncio.sleep(30)
+
+    hub.tool_timeout = 0.2
+    result = await hub.gated_call("fake", hang, "lesen", {})
+    assert "nicht rechtzeitig" in result
+    assert _rows(audit) == [("lesen", "READ", "ALLOW", "timeout")]
+
+
+async def test_hanging_preview_never_asks_and_never_writes(hub: McpHub, audit: AuditLog) -> None:
+    calls: list[str] = []
+
+    async def hang(name: str, args: dict[str, Any]) -> Any:
+        calls.append(name)
+        await asyncio.sleep(30)
+
+    answer = Answer(True)
+    token = current_confirmer.set(answer)
+    try:
+        hub.tool_timeout = 0.2
+        result = await hub.gated_call("fake", hang, "schreiben", {})
+    finally:
+        current_confirmer.reset(token)
+    assert "nicht rechtzeitig" in result
+    assert calls == ["vorschau_schreiben"] and answer.asked == []
+    assert _rows(audit) == [("schreiben", "WRITE_REVERSIBLE", "CONFIRM", "timeout")]
+
+
+async def test_generic_preview_marks_truncation(hub: McpHub) -> None:
+    answer = Answer(False)
+    token = current_confirmer.set(answer)
+    try:
+        await hub.gated_call("fake", FakeTool("ok"), "senden", {"text": "x" * 1000})
+    finally:
+        current_confirmer.reset(token)
+    preview = answer.asked[0][1]
+    assert len(preview) <= 300 and preview.endswith("… (gekürzt)")
+
+
+@pytest.mark.parametrize(
+    "name", ["Mein Passwort ist hunter2", "x" * 200, "rm -rf /", "zeile\numbruch", ""]
+)
+def test_invented_tool_names_never_reach_the_audit(hub: McpHub, audit: AuditLog, name: str) -> None:
+    hub.record_unknown_tool(name)
+    assert _rows(audit) == [("<ungültiger Name>", "UNKNOWN", "DENY", "blocked")]
+
+
+def test_plain_unknown_tool_name_is_kept(hub: McpHub, audit: AuditLog) -> None:
+    hub.record_unknown_tool("rm_rf")
+    assert _rows(audit)[0][0] == "rm_rf"

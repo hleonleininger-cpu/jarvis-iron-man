@@ -29,6 +29,8 @@ async def test_live_weather_dortmund() -> None:
     if not _online():
         pytest.skip("Kein Netz zu Open-Meteo")
     result = get_weather_data("Dortmund")
+    if result["ok"] is False and "nicht erreichbar" in result["fehler"]:
+        pytest.skip("Open-Meteo von hier aus nicht erreichbar (z. B. Proxy)")
     assert result["ok"] is True
     assert result["ort"] == "Dortmund"
     assert -40 < result["temperatur_c"] < 50

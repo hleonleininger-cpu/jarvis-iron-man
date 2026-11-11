@@ -24,6 +24,7 @@ IMPORTANT_FIELDS = (
     "fortschritt", "buch", "autor", "tags",
 )  # fmt: skip
 DONE_STATUS = {"erledigt", "archiv", "archiviert", "abgeschlossen", "fertig", "done", "complete"}
+NEGATIONS = {"nicht", "noch", "not", "kein", "keine", "un"}
 PRIORITY_RANK = {"hoch": 0, "mittel": 1, "niedrig": 2}
 
 Value = str | float | bool | list[str]
@@ -72,6 +73,16 @@ def property_value(prop: object) -> Value | None:
         value = inner if isinstance(inner, bool) else None
     elif kind in ("url", "email", "phone_number"):
         value = inner if isinstance(inner, str) and inner else None
+    elif kind in ("created_time", "last_edited_time"):
+        value = inner if isinstance(inner, str) else None
+    elif kind == "unique_id":
+        unique = as_dict(inner)
+        number = unique.get("number")
+        if isinstance(number, int) and not isinstance(number, bool):
+            prefix = unique.get("prefix")
+            value = f"{prefix}-{number}" if isinstance(prefix, str) and prefix else str(number)
+    elif kind == "relation":
+        value = f"{len(as_list(inner))} verknüpft" if as_list(inner) else None
     elif kind == "formula":
         formula = as_dict(inner)
         result = formula.get(str(formula.get("type")))
@@ -144,7 +155,11 @@ def normalize_page(page: dict[str, Any]) -> dict[str, Any]:
 
 
 def is_done(entry: dict[str, Any]) -> bool:
-    return str(entry.get("status", "")).strip().lower() in DONE_STATUS
+    """Erledigt-Status, auch mit Symbolen oder Zusätzen wie "✅ Erledigt" oder "Done!"."""
+    words = re.findall(r"\w+", str(entry.get("status", "")).casefold())
+    if any(word in NEGATIONS for word in words):  # "Nicht erledigt", "not done"
+        return False
+    return any(word in DONE_STATUS for word in words)
 
 
 def sort_entries(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -152,7 +167,10 @@ def sort_entries(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
     def key(entry: dict[str, Any]) -> tuple[int, int, str]:
         felder: dict[str, Any] = entry.get("felder", {})
-        priority = str(felder.get("Priorität", "")).strip().lower()
+        priority = next(
+            (str(v).strip().casefold() for k, v in felder.items() if k.casefold() == "priorität"),
+            "",
+        )
         date = str(entry.get("datum", ""))
         return (PRIORITY_RANK.get(priority, len(PRIORITY_RANK)), 0 if date else 1, date)
 
@@ -160,9 +178,13 @@ def sort_entries(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def matches(entry: dict[str, Any], values: dict[str, Value], needle: str) -> bool:
-    """Volltextsuche über Titel, Status und ALLE lesbaren Properties (nicht nur die Auswahl)."""
-    haystack = json.dumps([entry.get("titel"), entry.get("status"), values], ensure_ascii=False)
-    return needle.strip().lower() in haystack.lower()
+    """Volltextsuche über Titel, Status und die WERTE aller lesbaren Properties.
+
+    Property-Namen zählen nicht: sonst träfe die Suche nach "Fach" jede Schulmission.
+    """
+    texts = [entry.get("titel"), entry.get("status"), *(_as_text(v) for v in values.values())]
+    haystack = "\n".join(str(t) for t in texts if t)
+    return needle.strip().casefold() in haystack.casefold()
 
 
 def fit_budget(
@@ -191,6 +213,10 @@ def blocks_to_text(blocks: list[dict[str, Any]], limit: int = 3000) -> str:
         text = _plain(inner.get("rich_text"))
         if kind == "to_do":
             lines.append(f"[{'x' if inner.get('checked') else ' '}] {text}")
+        elif kind == "code" and text:
+            lines.append(f"```\n{text}\n```")
+        elif kind == "child_page" and isinstance(inner.get("title"), str):
+            lines.append(f"[Unterseite: {inner['title']}]")
         elif kind in _BLOCK_PREFIX and text:
             lines.append(_BLOCK_PREFIX[kind] + text)
     joined = "\n".join(lines)
@@ -201,9 +227,14 @@ _ID_RE = re.compile(r"([0-9a-fA-F]{32})(?![0-9a-fA-F])")
 
 
 def extract_page_id(reference: str) -> str | None:
-    """Seiten-ID (mit oder ohne Bindestriche) oder Notion-URL -> ID mit Bindestrichen."""
+    """Seiten-ID (mit oder ohne Bindestriche) oder Notion-URL -> ID mit Bindestrichen.
+
+    In Links aus der Datenbankansicht (`.../<Datenbank-ID>?v=<Ansicht>&p=<Seiten-ID>`) zählt die
+    Seiten-ID hinter `p=`, nicht die erste ID im Link.
+    """
     compact = reference.strip().replace("-", "")
-    match = _ID_RE.search(compact)
+    peek = re.search(r"[?&]p=([0-9a-fA-F]{32})(?![0-9a-fA-F])", compact)
+    match = peek or _ID_RE.search(compact)
     if match is None:
         return None
     h = match.group(1).lower()

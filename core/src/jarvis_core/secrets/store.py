@@ -8,7 +8,7 @@ import json
 from dataclasses import dataclass
 
 import keyring
-from keyring.errors import KeyringError
+from keyring.errors import KeyringError, PasswordDeleteError
 
 KEYRING_SERVICE = "jarvis"
 
@@ -59,9 +59,32 @@ def store_secret(name: str, **values: str) -> None:
         ) from None
 
 
+def delete_secret(name: str) -> bool:
+    """Entfernt den Eintrag. False, wenn keiner gesetzt war."""
+    if name not in SECRETS:
+        raise SecretsError(f"Unbekanntes Secret '{name}'. Bekannt: {', '.join(SECRETS)}.")
+    try:
+        if keyring.get_password(KEYRING_SERVICE, name) is None:
+            return False
+        keyring.delete_password(KEYRING_SERVICE, name)
+    except PasswordDeleteError:
+        return False
+    except KeyringError as exc:
+        raise SecretsError(
+            f"Der OS-Schlüsselbund ist nicht verfügbar ({type(exc).__name__})."
+        ) from None
+    return True
+
+
 def is_set(name: str) -> bool:
     """Nur ob ein Wert gesetzt ist, nie der Wert selbst."""
+    return secret_state(name) == "gesetzt"
+
+
+def secret_state(name: str) -> str:
+    """'gesetzt', 'nicht gesetzt' oder, wenn der OS-Schlüsselbund fehlt, ein klarer Hinweis."""
     try:
-        return keyring.get_password(KEYRING_SERVICE, name) is not None
+        present = keyring.get_password(KEYRING_SERVICE, name) is not None
     except KeyringError:
-        return False
+        return "Schlüsselbund nicht verfügbar"
+    return "gesetzt" if present else "nicht gesetzt"
