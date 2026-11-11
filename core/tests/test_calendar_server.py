@@ -672,3 +672,9 @@ def test_long_note_is_marked_in_the_preview(fake_icloud: FakeICloud) -> None:
     assert "… (gekürzt, 500 Zeichen)" in preview["vorschau"]
     short = server.preview_event_data("X", "2026-11-10T15:00", None, None, "kurz", now=NOW)
     assert "Notiz: kurz," in short["vorschau"] and "gekürzt" not in short["vorschau"]
+
+
+# --------------------------------------------------------------------------- Runde 10
+def test_created_event_names_the_calendar(fake_icloud: FakeICloud) -> None:
+    result = server.create_event_data("Zahnarzt", "2026-11-10T15:00", None, None, None)
+    assert result["angelegt"].endswith("Kalender: Privat")

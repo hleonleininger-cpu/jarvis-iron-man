@@ -224,13 +224,14 @@ def create_event_data(
 ) -> dict[str, Any]:
     try:
         title, begin, finish = _parse_new_event(titel, start, ende)
-        make_client().create_event(
+        target = make_client().create_event(
             f"{uuid.uuid4()}@jarvis", title, begin, finish, _clean(ort, MAX_TITLE_LENGTH),
             _clean(notiz, MAX_NOTE_LENGTH),
         )  # fmt: skip
     except (CalDavError, ValueError) as exc:
         return _fail(exc)
-    return {"ok": True, "angelegt": describe_event(title, begin, finish, ort, notiz)}
+    created = describe_event(title, begin, finish, ort, notiz)
+    return {"ok": True, "angelegt": f"{created}, Kalender: {target}"}
 
 
 @mcp.tool()

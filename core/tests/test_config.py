@@ -300,3 +300,37 @@ def test_doctor_does_not_call_the_model_missing_when_ollama_is_down(tmp_path: Pa
     )
     out = CliRunner().invoke(app, ["doctor"]).stdout
     assert "qwen3.5:4b (unbekannt, Ollama nicht erreichbar)" in out and "FEHLT" not in out
+
+
+def test_serve_explains_an_unavailable_address(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import typer
+
+    from jarvis_core.cli import main as cli_main
+
+    monkeypatch.setattr(
+        cli_main, "load_settings",
+        lambda: Settings(data_dir=tmp_path, host="100.64.255.254", model="m"),
+    )  # fmt: skip
+    with pytest.raises(typer.Exit):
+        cli_main.serve()
+    err = capsys.readouterr().err
+    assert "Tailscale verbunden" in err and "Läuft JARVIS schon" not in err
+
+
+def test_cli_chat_error_shows_no_json_log_line(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
+) -> None:
+    import typer
+
+    from jarvis_core.cli import main as cli_main
+
+    monkeypatch.setattr(
+        cli_main, "load_settings",
+        lambda: Settings(data_dir=tmp_path, ollama_base_url="http://127.0.0.1:1/v1", model="m"),
+    )  # fmt: skip
+    with pytest.raises(typer.Exit):
+        cli_main.chat("Hallo")
+    err = capfd.readouterr().err
+    assert "nicht erreichbar" in err and '"event": "chat_failed"' not in err

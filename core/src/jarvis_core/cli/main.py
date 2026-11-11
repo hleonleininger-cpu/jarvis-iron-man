@@ -1,6 +1,7 @@
 """CLI: jarvis serve | chat | doctor | tools | secrets | evals | audit."""
 
 import asyncio
+import errno
 import re
 import socket
 import sys
@@ -74,6 +75,10 @@ app.add_typer(secrets_app, name="secrets")
 app.add_typer(tools_app, name="tools")
 
 
+# Interaktive Befehle melden Fehler selbst in Klartext; Warnungen als JSON-Zeile wären doppelt.
+INTERACTIVE_LOG_LEVEL = "ERROR"
+
+
 def _settings(log_level: str | None = None) -> Settings:
     try:
         settings = load_settings()
@@ -114,9 +119,14 @@ def _ensure_port_free(host: str, port: int) -> None:
         try:
             probe.bind((host.strip("[]"), port))
         except OSError as exc:
+            if exc.errno == errno.EADDRINUSE:
+                hint = "Läuft JARVIS schon? Sonst einen anderen port in jarvis.toml wählen."
+            else:  # z. B. Tailnet-Adresse, solange Tailscale nicht verbunden ist
+                hint = (
+                    "Gibt es diese Adresse auf dem Rechner? Bei Tailnet: ist Tailscale verbunden?"
+                )
             typer.echo(
-                f"Kann nicht auf {_url_host(host)}:{port} starten ({exc.strerror or exc}). "
-                "Läuft JARVIS schon? Sonst einen anderen port in jarvis.toml wählen.",
+                f"Kann nicht auf {_url_host(host)}:{port} starten ({exc.strerror or exc}). {hint}",
                 err=True,
             )
             raise typer.Exit(1) from None
@@ -210,7 +220,7 @@ def chat(
     ),
 ) -> None:
     """Beantwortet eine Nachricht (gestreamt) oder führt ohne Argument einen Dialog."""
-    settings = _settings("WARNING")  # Terminal bleibt frei von JSON-Logs
+    settings = _settings(INTERACTIVE_LOG_LEVEL)  # Terminal bleibt frei von JSON-Logs
     service = build_service(settings, AuditLog(settings.audit_db_path))
     service.broker = ConfirmationBroker(timeout=None)  # der Nutzer sitzt vor der Rückfrage
     if text is None:
@@ -322,8 +332,10 @@ async def _list_tools(settings: Settings) -> None:
             typer.echo("Keine Werkzeuge verfügbar (siehe mcp_servers in jarvis.toml).")
         else:
             width = max(len(t.name) for t in tools)
+            server_width = max(len(t.server) for t in tools) + 2
             for tool in tools:
-                line = f"{tool.name:<{width}}  {tool.risk:<24}  [{tool.server}]"
+                server = f"[{tool.server}]"
+                line = f"{tool.name:<{width}}  {tool.risk:<16}  {server:<{server_width}}"
                 typer.echo(f"{line}  {_one_line(tool.description)}")
         if hub.failures:  # Skripte sollen merken, dass etwas fehlt
             raise typer.Exit(1)
@@ -332,7 +344,7 @@ async def _list_tools(settings: Settings) -> None:
 @tools_app.command("list")
 def tools_list() -> None:
     """Listet verfügbare Werkzeuge mit Risikoklasse."""
-    settings = _settings("WARNING")
+    settings = _settings(INTERACTIVE_LOG_LEVEL)
     asyncio.run(_list_tools(settings))
 
 
@@ -412,7 +424,7 @@ def evals_run(
     directory: Path | None = typer.Option(None, "--dir", help="Ordner mit tasks.toml"),
 ) -> None:
     """Lässt die Aufgaben gegen Agent + Ollama laufen (Attrappen, kein Netz außer Ollama)."""
-    settings = _settings("WARNING")
+    settings = _settings(INTERACTIVE_LOG_LEVEL)
     model_name = model or resolve_model_name(settings)
     tasks, base = _eval_tasks(directory)
     if only:

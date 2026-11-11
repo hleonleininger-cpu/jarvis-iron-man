@@ -323,7 +323,8 @@ class CalDavClient:
         end: datetime | date,
         location: str | None,
         note: str | None,
-    ) -> None:
+    ) -> str:
+        """Legt den Termin an und gibt den Anzeigenamen des Kalenders zurück."""
         calendar = self._calendar()
         ics = build_vevent(uid, title, start, end, location, note, datetime.now(UTC))
         url = urljoin(
@@ -338,6 +339,7 @@ class CalDavClient:
             extra={"If-None-Match": "*"},
             ok_statuses=(200, 201, 204),
         )
+        return calendar.display_name or "ohne Namen"
 
 
 def _instant(value: datetime | date) -> datetime:

@@ -8,7 +8,7 @@ from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
-from jarvis_core.agent import ChatError, build_service
+from jarvis_core.agent import ChatError, TextDelta, build_service
 from jarvis_core.api import create_app
 from jarvis_core.audit import AuditLog
 from jarvis_core.config import Settings
@@ -231,3 +231,55 @@ def test_model_requests_ignore_system_proxy_and_time_out(
     with pytest.raises(ChatError, match="nicht geantwortet"):
         asyncio.run(ask())
     assert hits == ["/v1/chat/completions"]  # direkt beim lokalen Server, genau ein Versuch
+
+
+# ------------------------------------------------------------------------------------- Runde 10
+def test_dialog_turns_survive_keep_alive_connections(settings: Settings) -> None:
+    """Früher scheiterte jede zweite Dialogrunde: die offene Verbindung gehörte zur Event-Loop
+    der Vorrunde ("Event loop is closed"). Echtes Ollama hält Verbindungen offen (HTTP/1.1)."""
+    import asyncio
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    def chunk(delta: dict[str, object], finish: str | None = None) -> str:
+        choice = {"index": 0, "delta": delta, "finish_reason": finish}
+        payload = {"id": "x", "object": "chat.completion.chunk", "created": 1, "model": "m",
+                   "choices": [choice]}  # fmt: skip
+        return f"data: {json.dumps(payload)}\n\n"
+
+    class KeepAlive(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def do_POST(self) -> None:  # noqa: N802
+            self.rfile.read(int(self.headers["Content-Length"]))
+            body = (
+                chunk({"role": "assistant", "content": "Hallo"}) + chunk({}, "stop")
+                + "data: [DONE]\n\n"
+            ).encode()  # fmt: skip
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, format: str, *args: object) -> None:
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), KeepAlive)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        local = settings.model_copy(
+            update={"ollama_base_url": f"http://127.0.0.1:{server.server_port}/v1"}
+        )
+        service = build_service(local, AuditLog(local.audit_db_path), model_name="m")
+
+        async def turn() -> str:
+            return "".join(
+                [e.text async for e in service.stream("Hi", channel="cli", session_id="s")
+                 if isinstance(e, TextDelta)]
+            )  # fmt: skip
+
+        assert [asyncio.run(turn()) for _ in range(3)] == ["Hallo"] * 3  # je Runde neue Loop
+    finally:
+        server.shutdown()
+        server.server_close()

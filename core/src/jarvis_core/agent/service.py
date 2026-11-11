@@ -339,7 +339,12 @@ def _ollama_client(settings: Settings) -> AsyncOpenAI:
     nicht antwortet, antwortet beim zweiten Versuch auch nicht, und der Nutzer wartete doppelt.
     """
     http = httpx2.AsyncClient(
-        trust_env=False, timeout=httpx2.Timeout(MODEL_TIMEOUT_SECONDS, connect=5.0)
+        trust_env=False,
+        timeout=httpx2.Timeout(MODEL_TIMEOUT_SECONDS, connect=5.0),
+        # Keine offenen Verbindungen aufheben: Der CLI-Dialog startet je Runde eine neue
+        # Event-Loop, und eine Verbindung aus der vorigen Runde ist dort unbrauchbar
+        # ("Event loop is closed"). Zu einem lokalen Ollama kostet eine neue Verbindung nichts.
+        limits=httpx2.Limits(max_keepalive_connections=0),
     )
     return AsyncOpenAI(
         base_url=settings.ollama_base_url, api_key="ollama", http_client=http, max_retries=0
