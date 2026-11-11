@@ -334,3 +334,26 @@ def test_cli_chat_error_shows_no_json_log_line(
         cli_main.chat("Hallo")
     err = capfd.readouterr().err
     assert "nicht erreichbar" in err and '"event": "chat_failed"' not in err
+
+
+def test_port_check_accepts_a_port_in_time_wait(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Nach einem Neustart hängen alte Verbindungen in TIME_WAIT; das ist kein belegter Port."""
+    import socket
+    import threading
+
+    from jarvis_core.cli.main import _ensure_port_free  # pyright: ignore[reportPrivateUsage]
+
+    server = socket.socket()
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server.bind(("127.0.0.1", 0))
+    port = server.getsockname()[1]
+    server.listen()
+    client = socket.create_connection(("127.0.0.1", port))
+    accepted, _ = server.accept()
+    accepted.close()  # Server schließt zuerst -> seine Seite geht in TIME_WAIT
+    threading.Event().wait(0.1)
+    client.close()
+    server.close()
+    _ensure_port_free("127.0.0.1", port)  # darf nicht mit "belegt" abbrechen

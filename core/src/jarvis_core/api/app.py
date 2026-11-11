@@ -1,13 +1,16 @@
-"""FastAPI-Server: GET /health, POST /v1/chat (Server-Sent Events), Sitzungen, Bestätigungen."""
+"""FastAPI-Server: Web-Client (/), GET /health, POST /v1/chat (Server-Sent Events), Sitzungen,
+Bestätigungen. /v1/* verlangt ein Token, sobald der Server nicht nur lokal lauscht (ADR-011)."""
 
 import asyncio
+import hmac
 import ipaddress
 import json
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import suppress
+from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 from pydantic_ai.models import Model
 from starlette.middleware.trustedhost import TrustedHostMiddleware
@@ -51,6 +54,32 @@ KEEPALIVE_SECONDS = 15.0
 KEEPALIVE = ": ping\n\n"
 
 LOCAL_HOSTS = ("127.0.0.1", "localhost", "::1")
+
+
+WEB_DIR = Path(__file__).parent / "web"
+# Pfad -> (Datei, Medientyp). Der Client lädt nichts von außen (kein CDN, keine Schriften).
+WEB_FILES = {
+    "/": ("index.html", "text/html; charset=utf-8"),
+    "/app.js": ("app.js", "text/javascript; charset=utf-8"),
+    "/app.css": ("app.css", "text/css; charset=utf-8"),
+}
+WEB_HEADERS = {
+    "Content-Security-Policy": (
+        "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; "
+        "img-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+    ),
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+    "Cache-Control": "no-cache",
+}
+
+
+def token_required(settings: Settings) -> bool:
+    """Ein Token ist Pflicht, sobald der Server nicht nur lokal lauscht (Tailnet) oder es so
+    konfiguriert ist."""
+    if settings.require_api_token is not None:
+        return settings.require_api_token
+    return not is_loopback(settings.host)
 
 
 def allowed_hosts(host: str) -> list[str]:
@@ -110,19 +139,45 @@ def create_app(
     model: Model | None = None,
     model_name: str | None = None,
     keepalive_seconds: float = KEEPALIVE_SECONDS,
+    api_token: str | None = None,
 ) -> FastAPI:
+    """`api_token`: erwartetes Token für /v1/*; None = ohne Token (nur lokal zulässig)."""
+    if token_required(settings) and not api_token:
+        raise ValueError("Für diesen Server ist ein Zugangstoken nötig (ADR-011).")
     audit = AuditLog(settings.audit_db_path)
     service: ChatService = build_service(settings, audit, model=model, model_name=model_name)
     app = FastAPI(title="JARVIS Core", version=__version__)
     # Nur Anfragen an die eigene Adresse annehmen: sonst könnte eine fremde Webseite per
     # DNS-Rebinding im Browser des Nutzers mit dem Core sprechen (ADR-003).
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts(settings.host))
+    expected = api_token.encode() if api_token else None
+
+    async def authorized(authorization: str | None = Header(default=None)) -> None:
+        if expected is None:
+            return
+        given = (authorization or "").removeprefix("Bearer ").strip().encode()
+        if not hmac.compare_digest(given, expected):
+            raise HTTPException(
+                status_code=401,
+                detail="Zugangstoken fehlt oder ist falsch.",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+    guarded = [Depends(authorized)]
+
+    for route, (name, media_type) in WEB_FILES.items():
+        content = (WEB_DIR / name).read_bytes()
+
+        async def web_file(content: bytes = content, media_type: str = media_type) -> Response:
+            return Response(content, media_type=media_type, headers=WEB_HEADERS)
+
+        app.add_api_route(route, web_file, methods=["GET"], include_in_schema=False)
 
     @app.get("/health")
     async def health() -> dict[str, str]:  # pyright: ignore[reportUnusedFunction]
         return {"status": "ok", "version": __version__, "model": service.model_name}
 
-    @app.post("/v1/chat")
+    @app.post("/v1/chat", dependencies=guarded)
     async def chat(request: ChatRequest) -> StreamingResponse:  # pyright: ignore[reportUnusedFunction]
         session_id = request.session_id or service.sessions.new_id()
 
@@ -152,13 +207,13 @@ def create_app(
 
         return StreamingResponse(events(), media_type="text/event-stream", headers=SSE_HEADERS)
 
-    @app.post("/v1/confirm/{request_id}")
+    @app.post("/v1/confirm/{request_id}", dependencies=guarded)
     async def confirm(request_id: str, answer: ConfirmAnswer) -> dict[str, str]:  # pyright: ignore[reportUnusedFunction]
         if not service.broker.resolve(request_id, answer.approve):
             raise HTTPException(status_code=404, detail="Unbekannte oder bereits beantwortete ID.")
         return {"status": "ok"}
 
-    @app.delete("/v1/sessions/{session_id}")
+    @app.delete("/v1/sessions/{session_id}", dependencies=guarded)
     async def forget_session(session_id: str) -> dict[str, str]:  # pyright: ignore[reportUnusedFunction]
         if not is_valid_session_id(session_id) or not service.sessions.clear(session_id):
             raise HTTPException(status_code=404, detail="Unbekannte Sitzung.")

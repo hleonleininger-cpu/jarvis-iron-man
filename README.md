@@ -10,7 +10,7 @@ uv run jarvis doctor            # Hardware, Ollama, empfohlenes Modell
 ollama pull qwen3.5:4b          # Beispiel: Befehl aus jarvis doctor übernehmen
 uv run jarvis chat "Wer bist du?"   # Einzelanfrage
 uv run jarvis chat              # Dialog mit Gesprächsverlauf (/neu, /ende)
-uv run jarvis serve             # nur 127.0.0.1
+uv run jarvis serve             # nur 127.0.0.1; Web-Oberfläche: http://127.0.0.1:8765/
 uv run jarvis tools list        # MCP-Werkzeuge mit Risikoklasse
 uv run jarvis secrets set apple_caldav   # Apple-ID + App-Passwort -> Schlüsselbund
 uv run jarvis secrets set notion          # Notion-Integration-Token (nur Lesen)
@@ -50,8 +50,15 @@ Schreib-Endpunkt im Code. Siehe ADR-008.
 `/ende`. Der Verlauf liegt nur im Arbeitsspeicher und ist begrenzt (`history_max_turns`,
 `history_max_chars`); im Audit-Log stehen weiterhin keine Inhalte. Siehe ADR-009.
 
+## Web-Oberfläche und iPhone
+`jarvis serve` liefert unter `/` einen Chat im Browser aus (Verlauf, Werkzeuge, Rückfragen mit
+Ja/Nein). Fürs iPhone den Server an die Tailnet-Adresse binden (`host = "100.x.y.z"` in
+`jarvis.toml`), einmal `uv run jarvis secrets generate api_token` ausführen und im iPhone-Browser
+`http://<tailnet-name>:8765/` öffnen; beim ersten Senden fragt die Seite nach dem Token.
+Ohne Token startet ein nicht-lokaler Server nicht. Siehe ADR-010/011.
+
 ## Server
-- `GET /health`
+- `GET /` Web-Client, `GET /health`
 - `POST /v1/chat` mit `{"message": "...", "session_id": "..."}` → Server-Sent Events (`delta`,
   `tool`, `notice`, `confirm`, `done`, `error`). `session_id` ist optional; `done` nennt die ID,
   mit der das Gespräch fortgesetzt wird. Während Funkstille (z. B. offene Rückfrage) kommt alle

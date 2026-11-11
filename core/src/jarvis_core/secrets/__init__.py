@@ -4,7 +4,9 @@ from jarvis_core.secrets.store import (
     SecretsError,
     SecretSpec,
     delete_secret,
+    generate_secret,
     is_set,
+    read_secret_field,
     secret_state,
     store_secret,
 )
@@ -15,7 +17,9 @@ __all__ = [
     "SecretSpec",
     "SecretsError",
     "delete_secret",
+    "generate_secret",
     "is_set",
+    "read_secret_field",
     "secret_state",
     "store_secret",
 ]

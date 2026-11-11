@@ -2,6 +2,7 @@
 
 import asyncio
 import errno
+import os
 import re
 import socket
 import sys
@@ -48,7 +49,15 @@ from jarvis_core.hardware import (
     is_installed,
     recommend,
 )
-from jarvis_core.secrets import SECRETS, SecretsError, delete_secret, secret_state, store_secret
+from jarvis_core.secrets import (
+    SECRETS,
+    SecretsError,
+    delete_secret,
+    generate_secret,
+    read_secret_field,
+    secret_state,
+    store_secret,
+)
 
 app = typer.Typer(help="JARVIS Core", no_args_is_help=True, add_completion=False)
 
@@ -100,13 +109,30 @@ def serve() -> None:
     """Startet den Core-Server (Standard: nur 127.0.0.1)."""
     settings = _settings()
     from jarvis_core.api import create_app
+    from jarvis_core.api.app import token_required
 
     _ensure_port_free(settings.host, settings.port)
-    app_ = create_app(settings)
+    token: str | None = None
+    if token_required(settings):
+        try:
+            token = read_secret_field("api_token", "token")
+        except SecretsError as exc:
+            typer.echo(f"Fehler: {exc}", err=True)
+            raise typer.Exit(1) from None
+        if token is None:
+            typer.echo(
+                "Dieser Server ist nicht nur lokal erreichbar und braucht ein Zugangstoken. "
+                "Erzeugen mit: jarvis secrets generate api_token",
+                err=True,
+            )
+            raise typer.Exit(1)
+    app_ = create_app(settings, api_token=token)
     # uvicorn bleibt still (log_config=None): ohne diese Zeile sähe man nach dem Start nichts.
     typer.echo(
         f"JARVIS Core läuft auf http://{_url_host(settings.host)}:{settings.port} "
-        f"(Modell {resolve_model_name(settings)}). Beenden mit Strg+C.",
+        f"(Modell {resolve_model_name(settings)}"
+        f"{', Zugang nur mit Token' if token else ''}). Web-Oberfläche: dieselbe Adresse im "
+        "Browser. Beenden mit Strg+C.",
         err=True,
     )
     uvicorn.run(app_, host=settings.host, port=settings.port, log_config=None)
@@ -116,6 +142,10 @@ def _ensure_port_free(host: str, port: int) -> None:
     """Belegter Port: klare Meldung statt eines stillen Abbruchs (uvicorn loggt hier nicht)."""
     family = socket.AF_INET6 if ":" in host else socket.AF_INET
     with socket.socket(family, socket.SOCK_STREAM) as probe:
+        if os.name != "nt":
+            # Wie uvicorn: Verbindungen eines eben beendeten Servers (TIME_WAIT) blockieren den
+            # Port nicht. Unter Windows hieße SO_REUSEADDR "fremden Port mitbenutzen", also nicht.
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
             probe.bind((host.strip("[]"), port))
         except OSError as exc:
@@ -367,6 +397,22 @@ def secrets_set(name: str = typer.Argument(..., help="z. B. apple_caldav")) -> N
         typer.echo(f"Fehler: {exc}", err=True)
         raise typer.Exit(1) from None
     typer.echo("gespeichert")
+
+
+@secrets_app.command("generate")
+def secrets_generate(name: str = typer.Argument(..., help="api_token")) -> None:
+    """Erzeugt ein zufälliges Token, legt es im Schlüsselbund ab und zeigt es EINMAL an."""
+    try:
+        token = generate_secret(name)
+    except SecretsError as exc:
+        typer.echo(f"Fehler: {exc}", err=True)
+        raise typer.Exit(2 if name not in SECRETS else 1) from None
+    typer.echo(token)
+    typer.echo(
+        "Gespeichert. Im Web-Client bzw. auf dem iPhone einmal eingeben; es wird nicht wieder "
+        "angezeigt (neu erzeugen ersetzt es).",
+        err=True,
+    )
 
 
 @secrets_app.command("delete")

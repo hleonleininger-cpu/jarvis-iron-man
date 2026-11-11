@@ -138,7 +138,10 @@ def test_own_host_header_is_accepted(settings: Settings, host: str) -> None:
 
 def test_configured_tailnet_address_is_accepted(settings: Settings) -> None:
     tailnet = settings.model_copy(update={"host": "100.101.102.103"})
-    client = TestClient(create_app(tailnet, TestModel(), "test"), base_url="http://100.101.102.103")
+    client = TestClient(
+        create_app(tailnet, TestModel(), "test", api_token="t0ken"),
+        base_url="http://100.101.102.103",
+    )
     assert client.get("/health").status_code == 200
 
 
@@ -194,7 +197,10 @@ def test_tailnet_name_is_accepted_only_when_bound_to_the_tailnet(settings: Setti
     assert "*.ts.net" in allowed_hosts("100.101.102.103")
     assert "*.ts.net" not in allowed_hosts("127.0.0.1")
     tailnet = settings.model_copy(update={"host": "100.101.102.103"})
-    client = TestClient(create_app(tailnet, TestModel(), "test"), base_url="http://100.101.102.103")
+    client = TestClient(
+        create_app(tailnet, TestModel(), "test", api_token="t0ken"),
+        base_url="http://100.101.102.103",
+    )
     assert client.get("/health", headers={"Host": "pc.tail1234.ts.net"}).status_code == 200
     assert client.get("/health", headers={"Host": "evil.example"}).status_code == 400
 

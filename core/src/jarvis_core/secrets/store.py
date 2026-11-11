@@ -5,6 +5,7 @@ ist JSON mit den Feldern des Secrets, z. B. {"username", "password"} oder {"toke
 """
 
 import json
+import secrets
 from dataclasses import dataclass
 
 import keyring
@@ -37,7 +38,10 @@ SECRETS: dict[str, SecretSpec] = {
     "notion": SecretSpec(
         "notion", (SecretField("token", "Notion-Integration-Token", hidden=True),)
     ),
+    # Zugangstoken für die API (ADR-011); am besten mit `jarvis secrets generate api_token`.
+    "api_token": SecretSpec("api_token", (SecretField("token", "API-Zugangstoken", hidden=True),)),
 }
+GENERATABLE = ("api_token",)
 
 
 class SecretsError(Exception):
@@ -57,6 +61,34 @@ def store_secret(name: str, **values: str) -> None:
         raise SecretsError(
             f"Der OS-Schlüsselbund ist nicht verfügbar ({type(exc).__name__})."
         ) from None
+
+
+def read_secret_field(name: str, field: str) -> str | None:
+    """Ein Feld eines Secrets (z. B. das API-Token für den Server); None, wenn nicht gesetzt."""
+    try:
+        raw = keyring.get_password(KEYRING_SERVICE, name)
+    except KeyringError as exc:
+        raise SecretsError(
+            f"Der OS-Schlüsselbund ist nicht verfügbar ({type(exc).__name__})."
+        ) from None
+    if not raw:
+        return None
+    try:
+        value = json.loads(raw).get(field)
+    except (ValueError, AttributeError):
+        return None
+    return value if isinstance(value, str) and value else None
+
+
+def generate_secret(name: str) -> str:
+    """Erzeugt ein zufälliges Token (256 Bit), legt es ab und gibt es zurück."""
+    if name not in GENERATABLE:
+        raise SecretsError(
+            f"'{name}' kann nicht erzeugt werden. Möglich: {', '.join(GENERATABLE)}."
+        )
+    token = secrets.token_urlsafe(32)
+    store_secret(name, token=token)
+    return token
 
 
 def delete_secret(name: str) -> bool:
