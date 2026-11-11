@@ -16,6 +16,7 @@ uv run jarvis tools list        # MCP-Werkzeuge mit Risikoklasse
 uv run jarvis secrets set apple_caldav   # Apple-ID + App-Passwort -> Schlüsselbund
 uv run jarvis secrets set notion          # Notion-Integration-Token (nur Lesen)
 uv run jarvis secrets status
+uv run jarvis secrets generate api_token  # Token für Zugriff übers Tailnet (iPhone)
 uv run jarvis secrets delete notion       # Zugangsdaten wieder entfernen
 uv run jarvis evals list        # Eval-Aufgaben
 uv run jarvis evals run --model qwen3.5:4b --runs 3   # Werkzeugwahl messen
@@ -42,7 +43,8 @@ Gespeichert in `~/.jarvis/notizen.sqlite3`, kein Netz. Siehe ADR-012.
 
 **Notion (nur Lesen):** `notion_search`, `notion_query`, `notion_get` (alle READ). Token im
 Schlüsselbund, Datenbank-IDs in `jarvis.toml` (`[mcp_servers.notion] env`). Es gibt keinen
-Schreib-Endpunkt im Code. Siehe ADR-008.
+Schreib-Endpunkt im Code. In der Vorlage auskommentiert: nach `jarvis secrets set notion` und dem
+Eintragen der IDs einschalten. Siehe ADR-008.
 
 **Diagnose:** Was die Werkzeug-Server auf stderr schreiben (z. B. `[caldav:EVENTS] status=401`),
 steht in `data/logs/<server>.log`, jeweils nur vom letzten Lauf.
@@ -88,15 +90,18 @@ Entfernen mit `schtasks /Delete /TN "JARVIS"`.
 Die Datei wird im aktuellen Ordner gesucht; `JARVIS_CONFIG=/pfad/zur/jarvis.toml` nennt einen
 anderen Ort. `jarvis doctor` zeigt, welche Datei gilt, welche MCP-Server deklariert und welche
 Zugangsdaten gesetzt sind. Ein relativer `data_dir` gilt relativ zur Konfigurationsdatei.
+
 **Kontextfenster:** Ollama nutzt über seine OpenAI-Schnittstelle nur seinen Server-Standard
 (4096 Tokens) und kürzt längere Prompts still von vorn, also zuerst die Systemanweisung. JARVIS
 schickt deshalb nur so viel Verlauf mit, wie neben Systemanweisung, Werkzeugen und einer Reserve
 für die Antwort in `context_tokens` passt. Für längere Gespräche: Ollama mit
 `OLLAMA_CONTEXT_LENGTH=16384` starten und `context_tokens = 16384` setzen; `jarvis doctor` zeigt
 beides an.
-`home_location = "Dortmund"` nennt den Wohnort: Fragen ohne Ort (z. B. "Wie ist das Wetter?")
+
+**Wohnort:** `home_location = "Dortmund"` nennt den Wohnort: Fragen ohne Ort (z. B. "Wie ist das Wetter?")
 beziehen sich dann darauf.
-`ollama_base_url` muss auf diesen Rechner, das Heimnetz oder das Tailnet zeigen (keine
+
+**Modell-Endpunkt:** `ollama_base_url` muss auf diesen Rechner, das Heimnetz oder das Tailnet zeigen (keine
 Cloud-Modelle); Anfragen an Ollama gehen nie über einen System-Proxy und brechen nach 300 s
 Funkstille ab.
 
@@ -108,5 +113,6 @@ uv run pytest -m "not live"   # wie in der CI: ohne echtes Netz, Ollama, iCloud,
 uv run ruff check && uv run ruff format --check
 uv run pyright
 ```
+Die CI führt die Tests unter Linux und Windows aus.
 
 Entscheidungen: `docs/adr/`. Arbeitsregeln: `CLAUDE.md`.

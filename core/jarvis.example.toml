@@ -56,12 +56,14 @@ complete_note = "WRITE_REVERSIBLE"
 # env ordnet Namen den Datenbank-IDs (Data-Source-IDs) zu: NOTION_DB_<NAME> = "<ID>".
 # Bekannte Namen: MISSION_CONTROL, ACADEMY, FORGE, OLYMPUS, VAULT (frei erweiterbar). Die Datenbank
 # muss in Notion mit der Integration geteilt sein (Seite > Verbindungen).
-[mcp_servers.notion]
-command = "python"
-args = ["-m", "mcp_servers.notion"]
-env = { NOTION_DB_MISSION_CONTROL = "<ID>", NOTION_DB_ACADEMY = "<ID>" }
-
-[mcp_servers.notion.tools]
-notion_search = "READ"
-notion_query = "READ"
-notion_get = "READ"
+# Erst einschalten (Zeilen ohne "# "), wenn Token und IDs da sind: sonst startet bei jeder Anfrage
+# ein Server, der nur Fehler liefert, und seine Werkzeuge belegen Platz im Kontextfenster.
+# [mcp_servers.notion]
+# command = "python"
+# args = ["-m", "mcp_servers.notion"]
+# env = { NOTION_DB_MISSION_CONTROL = "<ID>", NOTION_DB_ACADEMY = "<ID>" }
+#
+# [mcp_servers.notion.tools]
+# notion_search = "READ"
+# notion_query = "READ"
+# notion_get = "READ"

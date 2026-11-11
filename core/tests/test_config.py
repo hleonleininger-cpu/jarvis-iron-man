@@ -372,7 +372,11 @@ def test_init_creates_a_valid_config_and_never_overwrites(
     assert result.exit_code == 0 and "ollama pull" in result.stdout
     created = tmp_path / "jarvis.toml"
     settings = load_settings()  # die Vorlage muss gültig sein
-    assert {"weather", "calendar", "notes", "notion"} <= set(settings.mcp_servers)
+    assert set(settings.mcp_servers) == {
+        "weather",
+        "calendar",
+        "notes",
+    }  # Notion erst nach Einrichtung
     assert settings.host == "127.0.0.1"
 
     created.write_text("# eigene Änderung\n", encoding="utf-8")
@@ -477,3 +481,19 @@ def test_doctor_explains_the_context_window(
     )
     out = CliRunner().invoke(app, ["doctor"]).stdout
     assert "Kontextfenster" in out and expected in " ".join(out.split())
+
+
+def test_example_notion_section_is_valid_once_uncommented(tmp_path: Path) -> None:
+    """Die auskommentierte Notion-Vorlage muss gültig sein, sobald man sie einschaltet."""
+    import re
+
+    from jarvis_core.cli.main import EXAMPLE_CONFIG
+    from jarvis_core.config import load_settings
+
+    text = EXAMPLE_CONFIG.read_text(encoding="utf-8")
+    block = text[text.index("# [mcp_servers.notion]") :]
+    enabled = re.sub(r"(?m)^# ?", "", block)
+    (tmp_path / "jarvis.toml").write_text(enabled, encoding="utf-8")
+    assert set(load_settings().mcp_servers["notion"].tools) == {
+        "notion_search", "notion_query", "notion_get",
+    }  # fmt: skip
