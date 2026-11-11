@@ -60,6 +60,16 @@ MAX_MODEL_REQUESTS = 8
 # Längste Funkstille des Modells (auch das erstmalige Laden großer Modelle). Ohne Grenze hielte
 # ein hängendes Ollama die Anfrage (und alle wartenden) bis zu 30 Minuten fest.
 MODEL_TIMEOUT_SECONDS = 300.0
+# Grobe Umrechnung für deutschen Text (eher vorsichtig) und Platz, der für die Antwort frei
+# bleiben muss: auch die erzeugten Tokens zählen zum Kontextfenster.
+CHARS_PER_TOKEN = 3
+ANSWER_RESERVE_TOKENS = 1024
+CONTEXT_WARNING = (
+    "Die Anfrage ist vermutlich größer als das Kontextfenster des Modells ({tokens} Tokens); "
+    "Ollama kürzt dann still den Anfang. Abhilfe: Ollama mit OLLAMA_CONTEXT_LENGTH=16384 starten "
+    "und context_tokens = 16384 in jarvis.toml setzen."
+)
+
 # Höchstens so viele Anfragen warten hinter der laufenden; weitere werden sofort abgewiesen,
 # statt sich unbegrenzt anzustauen.
 MAX_WAITING = 3
@@ -184,9 +194,11 @@ class ChatService:
         broker: ConfirmationBroker | None = None,
         sessions: SessionStore | None = None,
         home: str | None = None,
+        context_tokens: int = 4096,
     ) -> None:
         self.model_name = model_name
         self.home = home
+        self.context_tokens = context_tokens
         self.hub = hub
         self.broker = broker or ConfirmationBroker()
         self.sessions = sessions or SessionStore()
@@ -320,12 +332,22 @@ class ChatService:
                     queue.put_nowait(Notice(failure))
                 # `instructions` statt `system_prompt`: gilt je Anfrage neu (aktuelles Datum) und
                 # landet nicht im gespeicherten Verlauf.
+                instructions = system_prompt(home=self.home)
                 agent: Agent[None, str] = Agent(
-                    self._model,
-                    instructions=system_prompt(home=self.home),
-                    toolsets=self.hub.toolsets,
+                    self._model, instructions=instructions, toolsets=self.hub.toolsets
                 )
-                history = self.sessions.history(session_id) if session_id else None
+                # Was neben Systemanweisung, Werkzeugen, Frage und Antwort-Reserve noch frei ist,
+                # bekommt der Verlauf (jüngste Runden zuerst).
+                free = (self.context_tokens - ANSWER_RESERVE_TOKENS) * CHARS_PER_TOKEN - (
+                    len(instructions) + self.hub.prompt_chars + len(message)
+                )
+                if free < 0:
+                    queue.put_nowait(Notice(CONTEXT_WARNING.format(tokens=self.context_tokens)))
+                history = (
+                    self.sessions.history(session_id, max_chars=max(free, 0))
+                    if session_id
+                    else None
+                )
                 # `run` statt `run_stream`: nur so geht es nach einem Werkzeugaufruf weiter, wenn
                 # das Modell vorher schon Text geschrieben hat ("Ich schaue nach ..."). Der Text
                 # aller Modellantworten der Runde kommt über die Ereignisse.
@@ -381,5 +403,5 @@ def build_service(
     sessions = SessionStore(settings.history_max_turns, settings.history_max_chars)
     return ChatService(
         model, name, settings.ollama_base_url, audit, hub, sessions=sessions,
-        home=settings.home_location,
+        home=settings.home_location, context_tokens=settings.context_tokens,
     )  # fmt: skip

@@ -78,14 +78,28 @@ class SessionStore:
         self._expire()
         return len(self._sessions)
 
-    def history(self, session_id: str) -> list[ModelMessage]:
-        """Bisherige Nachrichten der Sitzung (leer, wenn unbekannt oder abgelaufen)."""
+    def history(self, session_id: str, max_chars: int | None = None) -> list[ModelMessage]:
+        """Bisherige Nachrichten der Sitzung (leer, wenn unbekannt oder abgelaufen).
+
+        Mit `max_chars` nur die jüngsten ganzen Runden, die zusammen hineinpassen (das
+        Kontextfenster des Modells ist knapp; ältere Runden bleiben gespeichert).
+        """
         self._expire()
         session = self._sessions.get(session_id)
         if session is None:
             return []
         self._touch(session_id, session)
-        return [message for turn in session.turns for message in turn.messages]
+        turns = session.turns
+        if max_chars is not None:
+            kept: list[_Turn] = []
+            used = 0
+            for turn in reversed(turns):
+                if used + turn.chars > max_chars:
+                    break
+                kept.append(turn)
+                used += turn.chars
+            turns = kept[::-1]
+        return [message for turn in turns for message in turn.messages]
 
     def append(self, session_id: str, messages: Sequence[ModelMessage]) -> None:
         """Hängt eine abgeschlossene Runde an und kürzt den Verlauf von vorn."""

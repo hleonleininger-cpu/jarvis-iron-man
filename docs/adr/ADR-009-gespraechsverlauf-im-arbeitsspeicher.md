@@ -16,6 +16,11 @@ Der Agent führt je **Sitzung** einen Verlauf (`jarvis_core/agent/sessions.py`, 
   vollständig beantwortet ist. Fehlgeschlagene oder abgebrochene Runden hinterlassen nichts.
 - **Begrenzt.** Höchstens `history_max_turns` Runden und `history_max_chars` Zeichen je Sitzung
   (älteste Runden fallen zuerst weg), höchstens 32 Sitzungen, 6 Stunden ohne Nutzung = vergessen.
+- **Kontextfenster.** Je Anfrage wird nur so viel Verlauf mitgeschickt (jüngste ganze Runden),
+  wie neben Systemanweisung, Werkzeugdefinitionen, Frage und 1024 Tokens Antwort-Reserve in
+  `context_tokens` passt (Schätzung 3 Zeichen je Token). Grund: Ollama kürzt über `/v1` still
+  auf seinen Server-Standard (4096), und zwar von vorn. Ist schon die Anfrage allein zu groß,
+  kommt ein Hinweis.
 - **Systemprompt je Anfrage.** Er wird als `instructions` übergeben, gilt also jedes Mal neu
   (aktuelles Datum) und liegt nicht im Verlauf.
 - **Kanäle.**

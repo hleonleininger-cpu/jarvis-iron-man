@@ -88,6 +88,12 @@ Entfernen mit `schtasks /Delete /TN "JARVIS"`.
 Die Datei wird im aktuellen Ordner gesucht; `JARVIS_CONFIG=/pfad/zur/jarvis.toml` nennt einen
 anderen Ort. `jarvis doctor` zeigt, welche Datei gilt, welche MCP-Server deklariert und welche
 Zugangsdaten gesetzt sind. Ein relativer `data_dir` gilt relativ zur Konfigurationsdatei.
+**Kontextfenster:** Ollama nutzt über seine OpenAI-Schnittstelle nur seinen Server-Standard
+(4096 Tokens) und kürzt längere Prompts still von vorn, also zuerst die Systemanweisung. JARVIS
+schickt deshalb nur so viel Verlauf mit, wie neben Systemanweisung, Werkzeugen und einer Reserve
+für die Antwort in `context_tokens` passt. Für längere Gespräche: Ollama mit
+`OLLAMA_CONTEXT_LENGTH=16384` starten und `context_tokens = 16384` setzen; `jarvis doctor` zeigt
+beides an.
 `home_location = "Dortmund"` nennt den Wohnort: Fragen ohne Ort (z. B. "Wie ist das Wetter?")
 beziehen sich dann darauf.
 `ollama_base_url` muss auf diesen Rechner, das Heimnetz oder das Tailnet zeigen (keine

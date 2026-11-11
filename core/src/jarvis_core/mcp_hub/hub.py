@@ -3,6 +3,7 @@ Werkzeuge an den Agent und erzwingt vor JEDEM Aufruf die Policy. Jeder Aufruf ge
 (nur Werkzeugname, Risikoklasse, Entscheidung, Ergebnis; nie Argumente)."""
 
 import asyncio
+import json
 import os
 import re
 import sys
@@ -84,6 +85,8 @@ class ToolInfo:
     name: str
     description: str
     risk: RiskClass
+    # Ungefähre Größe der Werkzeugdefinition im Prompt (Name, Beschreibung, Parameter-Schema).
+    prompt_chars: int = 0
 
 
 def _is_failure(result: Any) -> bool:
@@ -255,6 +258,11 @@ class McpHub:
             init_timeout=INIT_TIMEOUT_SECONDS,
         )
 
+    @property
+    def prompt_chars(self) -> int:
+        """Platz, den die angebotenen Werkzeugdefinitionen im Prompt belegen (Zeichen)."""
+        return sum(info.prompt_chars for info in self._infos)
+
     def list_tools(self) -> list[ToolInfo]:
         """Verfügbare Werkzeuge (nur nach `async with hub`)."""
         return list(self._infos)
@@ -272,7 +280,9 @@ class McpHub:
             for tool in tools:
                 risk = self._risk(server, tool.name)
                 if risk is not None:
-                    infos.append(ToolInfo(server, tool.name, tool.description or "", risk))
+                    size = len(tool.name) + len(tool.description or "")
+                    size += len(json.dumps(tool.input_schema, ensure_ascii=False))
+                    infos.append(ToolInfo(server, tool.name, tool.description or "", risk, size))
             cfg = self._servers[server]
             missing = sorted((set(cfg.tools) | set(cfg.previews.values())) - provided)
             if missing:

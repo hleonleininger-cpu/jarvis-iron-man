@@ -451,3 +451,29 @@ def test_broken_audit_log_stops_with_a_clear_message(tmp_path: Path) -> None:
         result = CliRunner().invoke(app, command)
         assert result.exit_code == 1, command
         assert "Audit-Log" in result.output and "nicht nutzbar" in result.output
+
+
+@pytest.mark.parametrize(
+    ("env", "expected"),
+    [
+        (None, "OLLAMA_CONTEXT_LENGTH nicht gesetzt (Ollama-Standard 4096)"),
+        ("2048", "WARNUNG: OLLAMA_CONTEXT_LENGTH=2048 ist kleiner"),
+        ("16384", "OLLAMA_CONTEXT_LENGTH=16384"),
+    ],
+)
+def test_doctor_explains_the_context_window(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, env: str | None, expected: str
+) -> None:
+    from typer.testing import CliRunner
+
+    from jarvis_core.cli.main import app
+
+    if env is None:
+        monkeypatch.delenv("OLLAMA_CONTEXT_LENGTH", raising=False)
+    else:
+        monkeypatch.setenv("OLLAMA_CONTEXT_LENGTH", env)
+    (tmp_path / "jarvis.toml").write_text(
+        'ollama_base_url = "http://127.0.0.1:1/v1"\ncontext_tokens = 4096\n', encoding="utf-8"
+    )
+    out = CliRunner().invoke(app, ["doctor"]).stdout
+    assert "Kontextfenster" in out and expected in " ".join(out.split())

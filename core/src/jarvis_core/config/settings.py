@@ -99,6 +99,10 @@ class Settings(BaseSettings):
     # Gesprächsverlauf je Sitzung (nur im Arbeitsspeicher, ADR-009). 0 Runden = kein Verlauf.
     history_max_turns: int = Field(default=10, ge=0, le=100)
     history_max_chars: int = Field(default=16_000, ge=1_000, le=200_000)
+    # Kontextfenster des Modells in Tokens. Ollama nutzt über die OpenAI-Schnittstelle seinen
+    # Server-Standard (4096, außer OLLAMA_CONTEXT_LENGTH ist gesetzt) und kürzt längere Prompts
+    # still von vorn, also zuerst die Systemanweisung. Der Verlauf wird daran angepasst.
+    context_tokens: int = Field(default=4096, ge=2048, le=1_048_576)
     mcp_servers: dict[str, McpServerConfig] = {}
     # Wohnort für Fragen ohne Ortsangabe (z. B. "Wie ist das Wetter?"), etwa "Dortmund".
     home_location: str | None = Field(default=None, max_length=80)

@@ -331,6 +331,17 @@ def chat(
         raise typer.Exit(130) from None
 
 
+def _context_row(context_tokens: int) -> str:
+    """Kontextfenster laut jarvis.toml und was Ollama (über die Umgebung) davon wissen kann."""
+    raw = os.environ.get("OLLAMA_CONTEXT_LENGTH", "").strip()
+    text = f"{context_tokens} Tokens (context_tokens)"
+    if not raw:
+        return text + "; OLLAMA_CONTEXT_LENGTH nicht gesetzt (Ollama-Standard 4096)"
+    if raw.isdigit() and int(raw) < context_tokens:
+        return text + f"; WARNUNG: OLLAMA_CONTEXT_LENGTH={raw} ist kleiner, Ollama kürzt still"
+    return text + f"; OLLAMA_CONTEXT_LENGTH={raw}"
+
+
 def _fmt(value: float | str | None, unit: str = "") -> str:
     if value is None:
         return "unbekannt"
@@ -365,6 +376,7 @@ def _rows(info: HardwareInfo, settings: Settings) -> list[tuple[str, str]]:
         else:
             installed = "installiert" if is_installed(settings.model, status.models) else "FEHLT"
         rows.append(("Konfiguriertes Modell", f"{settings.model} ({installed})"))
+    rows.append(("Kontextfenster", _context_row(settings.context_tokens)))
     path = config_path()
     found = "gefunden" if path.is_file() else "nicht gefunden, es gelten Standardwerte"
     rows.append(("Konfiguration", f"{path.resolve()} ({found})"))

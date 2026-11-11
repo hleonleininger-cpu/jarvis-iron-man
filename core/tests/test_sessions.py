@@ -3,6 +3,7 @@
 import json
 import sqlite3
 from collections.abc import AsyncIterator
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -365,3 +366,58 @@ def test_api_says_when_a_session_was_unknown(settings: Settings) -> None:
         base_url="http://127.0.0.1",
     )
     assert _post(restarted, {"message": "drei", "session_id": "s1"})[-1][1]["neu"] is True
+
+
+# ------------------------------------------------------------------- Kontextfenster (Ollama)
+def test_history_with_budget_keeps_the_newest_whole_turns() -> None:
+    store = SessionStore()
+    for name in ("eins", "zwei", "drei"):
+        store.append("a", _turn(name, "x" * 100))
+    assert _questions(store.history("a", max_chars=250)) == ["zwei", "drei"]
+    assert _questions(store.history("a", max_chars=50)) == []
+    assert _questions(store.history("a")) == ["eins", "zwei", "drei"]  # gespeichert bleibt alles
+
+
+@pytest.mark.anyio
+async def test_prompt_stays_inside_the_context_window(tmp_path: Path) -> None:
+    """Früher wuchs der Prompt nach ~10 Runden über Ollamas 4096 Tokens; Ollama kürzte dann
+    still von vorn, also zuerst die Systemanweisung."""
+    import json
+
+    from jarvis_core.agent.service import ANSWER_RESERVE_TOKENS, CHARS_PER_TOKEN
+    from jarvis_core.evals.runner import eval_servers
+
+    sizes: list[int] = []
+
+    async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        tools = sum(
+            len(t.name) + len(t.description or "") + len(json.dumps(t.parameters_json_schema))
+            for t in info.function_tools
+        )
+        content = sum(
+            len(str(getattr(part, "content", ""))) for message in messages for part in message.parts
+        )
+        sizes.append(len(info.instructions or "") + tools + content)
+        yield "Antwort " + "x" * 900
+
+    settings = Settings(
+        data_dir=tmp_path / "data",
+        mcp_servers=eval_servers(tmp_path / "w.jsonl", tmp_path / "n.sqlite3"),
+    )
+    service = build_service(
+        settings, AuditLog(settings.audit_db_path), FunctionModel(stream_function=stream_fn), "t"
+    )
+    for i in range(12):
+        await _ask(service, f"Frage {i}: " + "y" * 200, "s")
+    limit = (settings.context_tokens - ANSWER_RESERVE_TOKENS) * CHARS_PER_TOKEN
+    assert max(sizes) <= limit, (max(sizes), limit)
+    assert sizes[3] > sizes[0]  # Verlauf wird mitgeschickt, solange er passt
+
+
+@pytest.mark.anyio
+async def test_oversized_request_gets_a_warning(settings: Settings) -> None:
+    from jarvis_core.agent import Notice
+
+    service = _service(settings, _Recorder())
+    events = [e async for e in service.stream("z" * 19_000, channel="cli")]
+    assert any(isinstance(e, Notice) and "OLLAMA_CONTEXT_LENGTH" in e.message for e in events)
