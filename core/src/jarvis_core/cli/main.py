@@ -258,7 +258,10 @@ def _rows(info: HardwareInfo, settings: Settings) -> list[tuple[str, str]]:
         ("Installieren mit", rec.pull_command),
     ]
     if settings.model:
-        installed = "installiert" if is_installed(settings.model, status.models) else "FEHLT"
+        if not status.running:
+            installed = "unbekannt, Ollama nicht erreichbar"
+        else:
+            installed = "installiert" if is_installed(settings.model, status.models) else "FEHLT"
         rows.append(("Konfiguriertes Modell", f"{settings.model} ({installed})"))
     path = config_path()
     found = "gefunden" if path.is_file() else "nicht gefunden, es gelten Standardwerte"

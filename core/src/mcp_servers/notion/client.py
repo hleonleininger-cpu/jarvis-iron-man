@@ -44,6 +44,9 @@ ERROR_TEXTS: dict[str, str] = {
         "Die Datenbank bzw. Seite wurde nicht gefunden oder ist nicht mit der Integration "
         "geteilt (in Notion: Seite > Verbindungen > Integration hinzufügen)."
     ),
+    "invalid_request": (
+        "Notion hat die Anfrage abgelehnt (z. B. ist die ID eine Datenbank statt einer Seite)."
+    ),
     "rate_limited": "Notion begrenzt gerade die Anfragen. Bitte später erneut versuchen.",
     "unavailable": "Notion ist gerade nicht erreichbar.",
     "invalid_response": "Notion lieferte eine unerwartete Antwort.",
@@ -137,6 +140,9 @@ class NotionClient:
         if response.status == 401:
             log_error(step, 401, _error_code(response.body))
             raise NotionError("unauthorized")
+        if response.status == 400:
+            log_error(step, 400, _error_code(response.body))
+            raise NotionError("invalid_request")
         if response.status in (403, 404):
             log_error(step, response.status, _error_code(response.body))
             raise NotionError("not_found")

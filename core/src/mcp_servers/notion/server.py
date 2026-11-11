@@ -117,6 +117,9 @@ def _is_error(value: dict[str, str] | dict[str, Any]) -> bool:
 def query_data(
     datenbank: str, filter: str | None = None, erledigte_einbeziehen: bool = False
 ) -> dict[str, Any]:
+    if not datenbank.strip():
+        # Ohne Namen lieferte _resolve alle Datenbanken; hier ist genau eine gemeint.
+        return _fail(f"Bitte eine Datenbank nennen. {_database_hint()}", "invalid_input")
     chosen = _resolve(datenbank)
     if _is_error(chosen):
         return chosen
@@ -211,7 +214,7 @@ def _database_hint() -> str:
     )
 
 
-mcp = MCPServer("notion")
+mcp = MCPServer("notion", log_level="WARNING")
 
 
 @mcp.tool(

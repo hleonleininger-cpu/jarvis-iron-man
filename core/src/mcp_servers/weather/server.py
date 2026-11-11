@@ -208,7 +208,7 @@ def get_weather_data(ort: str) -> dict[str, Any]:
         return {"ok": False, "fehler": str(exc)}
 
 
-mcp = MCPServer("weather")
+mcp = MCPServer("weather", log_level="WARNING")
 
 
 @mcp.tool()

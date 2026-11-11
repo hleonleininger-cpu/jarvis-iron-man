@@ -644,3 +644,31 @@ def test_unexpanded_series_is_kept_and_flagged(monkeypatch: pytest.MonkeyPatch) 
     result = server.list_events_data("2026-11-10", now=NOW)
     assert [t["titel"] for t in result["termine"]] == ["Handball", "Handball"]  # je Kalender
     assert "Wiederkehrende Termine" in result["hinweis"] and "Handball" in result["hinweis"]
+
+
+# --------------------------------------------------------------------------- Runde 9
+def test_extreme_event_is_skipped_not_fatal() -> None:
+    ics = (
+        "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nSUMMARY:Kaputt\r\nDTSTART:99991231T235959Z\r\n"
+        "END:VEVENT\r\nBEGIN:VEVENT\r\nSUMMARY:Zu lang\r\nDTSTART:99991231T100000Z\r\n"
+        "DURATION:P2D\r\nEND:VEVENT\r\nBEGIN:VEVENT\r\nSUMMARY:Riesig\r\n"
+        "DTSTART:20261110T080000Z\r\nDURATION:PT99999999999H\r\nEND:VEVENT\r\n"
+        "BEGIN:VEVENT\r\nSUMMARY:Normal\r\nDTSTART:20261110T100000Z\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+    )
+    events = parse_events([ics])  # früher: OverflowError für die ganze Liste
+    assert [e.summary for e in events] == ["Zu lang", "Riesig", "Normal"]
+    assert events[0].end is None and events[1].end is None  # Ende unbekannt statt Absturz
+
+
+@pytest.mark.parametrize("start", ["9999-12-31T23:30", "9999-12-31", "1969-12-31", "0001-01-01"])
+def test_implausible_dates_are_rejected_with_a_message(start: str) -> None:
+    result = server.preview_event_data("X", start, None, None, None, now=NOW)
+    assert result["ok"] is False and "nicht plausibel" in result["fehler"]
+
+
+def test_long_note_is_marked_in_the_preview(fake_icloud: FakeICloud) -> None:
+    note = "n" * 500
+    preview = server.preview_event_data("X", "2026-11-10T15:00", None, None, note, now=NOW)
+    assert "… (gekürzt, 500 Zeichen)" in preview["vorschau"]
+    short = server.preview_event_data("X", "2026-11-10T15:00", None, None, "kurz", now=NOW)
+    assert "Notiz: kurz," in short["vorschau"] and "gekürzt" not in short["vorschau"]

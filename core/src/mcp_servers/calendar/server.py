@@ -30,9 +30,10 @@ KEYRING_ENTRY = "apple_caldav"
 MAX_EVENTS = 25
 MAX_TITLE_LENGTH = 200
 MAX_NOTE_LENGTH = 2000
+MAX_NOTE_PREVIEW = 300  # was der Nutzer vor dem Bestätigen sieht; längeres wird markiert
 PAST_WARNING = "ACHTUNG: liegt in der Vergangenheit"
 
-mcp = MCPServer("calendar")
+mcp = MCPServer("calendar", log_level="WARNING")
 _calendar_name: str | None = None
 
 
@@ -120,6 +121,18 @@ def list_events_data(zeitraum: str, now: datetime | None = None) -> dict[str, An
     return result
 
 
+FIRST_YEAR, LAST_YEAR = 1970, 2200
+
+
+def _plausible(value: datetime | date) -> datetime | date:
+    """Schützt vor Überläufen (Jahr 9999) und offensichtlich geratenen Jahren."""
+    if not FIRST_YEAR <= value.year <= LAST_YEAR:
+        raise ValueError(
+            f"Das Datum {value:%Y-%m-%d} ist nicht plausibel (erlaubt {FIRST_YEAR}–{LAST_YEAR})."
+        )
+    return value
+
+
 def _parse_new_event(
     titel: str, start: str, ende: str | None
 ) -> tuple[str, datetime | date, datetime | date]:
@@ -128,8 +141,8 @@ def _parse_new_event(
         raise ValueError("Der Termin braucht einen Titel.")
     if len(title) > MAX_TITLE_LENGTH:
         raise ValueError(f"Der Titel darf höchstens {MAX_TITLE_LENGTH} Zeichen lang sein.")
-    begin = parse_when(start)
-    finish = parse_when(ende) if ende and ende.strip() else default_end(begin)
+    begin = _plausible(parse_when(start))
+    finish = _plausible(parse_when(ende) if ende and ende.strip() else default_end(begin))
     if isinstance(begin, datetime) != isinstance(finish, datetime):
         raise ValueError("Start und Ende müssen beide ganztägig oder beide mit Uhrzeit sein.")
     if finish <= begin:
@@ -161,7 +174,13 @@ def describe_event(
     if ort and ort.strip():
         text += f", Ort: {ort.strip()}"
     if notiz and notiz.strip():
-        text += f", Notiz: {notiz.strip()[:80]}"
+        note = notiz.strip()
+        shown = (
+            note
+            if len(note) <= MAX_NOTE_PREVIEW
+            else f"{note[:MAX_NOTE_PREVIEW]}… (gekürzt, {len(note)} Zeichen)"
+        )
+        text += f", Notiz: {shown}"
     return text
 
 

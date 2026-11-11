@@ -288,3 +288,15 @@ def test_audit_verify_does_not_create_a_log_and_names_the_file(
     )
     result = CliRunner().invoke(app, ["audit", "verify"])
     assert result.exit_code == 0 and "audit.sqlite3" in result.output
+
+
+def test_doctor_does_not_call_the_model_missing_when_ollama_is_down(tmp_path: Path) -> None:
+    from typer.testing import CliRunner
+
+    from jarvis_core.cli.main import app
+
+    (tmp_path / "jarvis.toml").write_text(
+        'ollama_base_url = "http://127.0.0.1:1/v1"\nmodel = "qwen3.5:4b"\n', encoding="utf-8"
+    )
+    out = CliRunner().invoke(app, ["doctor"]).stdout
+    assert "qwen3.5:4b (unbekannt, Ollama nicht erreichbar)" in out and "FEHLT" not in out

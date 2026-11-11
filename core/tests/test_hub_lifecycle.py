@@ -268,3 +268,19 @@ async def test_too_many_waiting_requests_are_turned_away(tmp_path: Path) -> None
     assert results.count("ok") == MAX_WAITING + 1
     assert results.count("JARVIS ist gerade ausgelastet. Bitte gleich noch einmal versuchen.") == 1
     assert await ask() == "ok"  # danach wieder frei
+
+
+# ------------------------------------------------------------------------------------- Runde 9
+async def test_tool_servers_do_not_log_into_the_terminal(
+    tmp_path: Path, capfd: pytest.CaptureFixture[str]
+) -> None:
+    cfg = McpServerConfig(
+        command="python", args=["-m", "mcp_servers.doubles.weather"],
+        tools={"get_weather": RiskClass.READ},
+    )  # fmt: skip
+    async with McpHub({"w": cfg}, AuditLog(tmp_path / "audit.sqlite3"), "test") as hub:
+        toolset = hub._connected["w"]  # pyright: ignore[reportPrivateUsage]
+        with pytest.raises(Exception):  # noqa: B017 - falsche Argumente
+            await toolset.client.call_tool("get_weather", {"falsch": 1})
+    await asyncio.sleep(0.2)
+    assert "rejected" not in capfd.readouterr().err

@@ -482,3 +482,18 @@ def test_code_blocks_and_subpages_are_kept() -> None:
         {"type": "child_page", "child_page": {"title": "Notizen"}},
     ]
     assert blocks_to_text(blocks) == "```\nprint(1)\n```\n[Unterseite: Notizen]"
+
+
+# --------------------------------------------------------------------------- Runde 9
+@pytest.mark.parametrize("name", ["", "   "])
+def test_query_without_database_name_asks_for_one(fake_notion: None, name: str) -> None:
+    """Früher: ValueError (too many values to unpack), sobald mehrere Datenbanken konfiguriert sind."""
+    result = server.query_data(name)
+    assert result["grund"] == "invalid_input" and "mission_control" in result["fehler"]
+
+
+def test_bad_request_is_not_reported_as_unreachable(monkeypatch: pytest.MonkeyPatch) -> None:
+    body = json.dumps({"code": "validation_error"})
+    monkeypatch.setattr(server, "make_client", lambda: _failing(400, body))
+    result = server.get_data(MISSION_ID)
+    assert result["grund"] == "invalid_request" and "abgelehnt" in result["fehler"]

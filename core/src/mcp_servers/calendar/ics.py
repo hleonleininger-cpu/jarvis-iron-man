@@ -1,6 +1,7 @@
 """iCalendar (RFC 5545): nur die benötigten Felder lesen; VEVENT für neue Termine erzeugen."""
 
 import re
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -68,7 +69,7 @@ def _to_value(value: str, params: dict[str, str]) -> datetime | date | None:
             if value.endswith("Z"):
                 return naive.replace(tzinfo=UTC).astimezone(TZ)
             return naive.replace(tzinfo=_zone(params.get("TZID"))).astimezone(TZ)
-    except (ValueError, KeyError, OSError):
+    except (ValueError, KeyError, OSError, OverflowError):  # Overflow: z. B. Jahr 9999 + Zeitzone
         return None
     return None
 
@@ -96,7 +97,10 @@ def _duration(value: str) -> timedelta | None:
     if match is None or value.strip().upper() in ("P", "PT", "+P", "-P"):
         return None
     parts = {k: int(v) for k, v in match.groupdict().items() if v and k != "sign"}
-    delta = timedelta(**parts)
+    try:
+        delta = timedelta(**parts)
+    except OverflowError:
+        return None
     return -delta if match.group("sign") == "-" else delta
 
 
@@ -138,7 +142,8 @@ def parse_events(ics_blocks: list[str]) -> list[Event]:
                     end = raw_end if isinstance(raw_end, datetime | date) else None
                     duration = current.get("duration")
                     if end is None and isinstance(duration, timedelta) and duration >= timedelta():
-                        end = start + duration
+                        with suppress(OverflowError):  # Dauer über das Jahr 9999 hinaus
+                            end = start + duration
                     location = current.get("location")
                     events.append(
                         Event(
