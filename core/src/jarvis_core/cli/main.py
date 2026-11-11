@@ -104,6 +104,35 @@ def _settings(log_level: str | None = None) -> Settings:
     return settings
 
 
+# Vorlage im Repository (core/jarvis.example.toml); `jarvis init` kopiert sie.
+EXAMPLE_CONFIG = Path(__file__).resolve().parents[3] / "jarvis.example.toml"
+
+
+@app.command()
+def init() -> None:
+    """Legt jarvis.toml aus der Vorlage an (überschreibt nie) und nennt die nächsten Schritte."""
+    target = config_path()
+    if target.exists():
+        typer.echo(f"{target.resolve()} gibt es schon; es wurde nichts geändert.", err=True)
+        raise typer.Exit(1)
+    if not EXAMPLE_CONFIG.is_file():
+        typer.echo(f"Vorlage nicht gefunden: {EXAMPLE_CONFIG}", err=True)
+        raise typer.Exit(1)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(EXAMPLE_CONFIG.read_text(encoding="utf-8"), encoding="utf-8")
+    rec = recommend(detect_hardware())
+    typer.echo(f"Angelegt: {target.resolve()}")
+    typer.echo("Nächste Schritte:")
+    for step in (
+        f"{rec.pull_command}   (empfohlen für diesen Rechner: {rec.reason})",
+        "jarvis secrets set apple_caldav   (Kalender, optional)",
+        "jarvis secrets set notion   (und Datenbank-IDs in jarvis.toml eintragen, optional)",
+        "jarvis doctor   (prüft alles)",
+        "jarvis chat   oder   jarvis serve",
+    ):
+        typer.echo(f"  {step}")
+
+
 @app.command()
 def serve() -> None:
     """Startet den Core-Server (Standard: nur 127.0.0.1)."""

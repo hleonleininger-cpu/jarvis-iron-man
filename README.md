@@ -6,6 +6,7 @@ Lokaler KI-Assistent: Python-Core mit FastAPI-Server und CLI, Modelle über Olla
 ```bash
 cd core
 uv sync
+uv run jarvis init              # legt jarvis.toml aus der Vorlage an (überschreibt nie)
 uv run jarvis doctor            # Hardware, Ollama, empfohlenes Modell
 ollama pull qwen3.5:4b          # Beispiel: Befehl aus jarvis doctor übernehmen
 uv run jarvis chat "Wer bist du?"   # Einzelanfrage

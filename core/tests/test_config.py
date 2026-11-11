@@ -357,3 +357,36 @@ def test_port_check_accepts_a_port_in_time_wait(
     client.close()
     server.close()
     _ensure_port_free("127.0.0.1", port)  # darf nicht mit "belegt" abbrechen
+
+
+# --------------------------------------------------------------------------- jarvis init
+def test_init_creates_a_valid_config_and_never_overwrites(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from typer.testing import CliRunner
+
+    from jarvis_core.cli.main import app
+    from jarvis_core.config import load_settings
+
+    result = CliRunner().invoke(app, ["init"])
+    assert result.exit_code == 0 and "ollama pull" in result.stdout
+    created = tmp_path / "jarvis.toml"
+    settings = load_settings()  # die Vorlage muss gültig sein
+    assert {"weather", "calendar", "notes", "notion"} <= set(settings.mcp_servers)
+    assert settings.host == "127.0.0.1"
+
+    created.write_text("# eigene Änderung\n", encoding="utf-8")
+    again = CliRunner().invoke(app, ["init"])
+    assert again.exit_code == 1 and "nichts geändert" in again.output
+    assert created.read_text(encoding="utf-8") == "# eigene Änderung\n"
+
+
+def test_init_honours_jarvis_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from typer.testing import CliRunner
+
+    from jarvis_core.cli.main import app
+
+    target = tmp_path / "anderswo" / "jarvis.toml"
+    monkeypatch.setenv("JARVIS_CONFIG", str(target))
+    assert CliRunner().invoke(app, ["init"]).exit_code == 0
+    assert target.is_file()
