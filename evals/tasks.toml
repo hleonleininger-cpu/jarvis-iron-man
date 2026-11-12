@@ -208,6 +208,12 @@ expect_tools = ["add_note"]
 expect_writes = 1
 
 [[task]]
+id = "reminder-add"
+prompt = "Erinnere mich morgen um 18 Uhr daran, den Müll rauszubringen."
+expect_tools = ["add_note"]
+expect_writes = 1
+
+[[task]]
 id = "notes-list"
 prompt = "Was steht auf meiner Merkliste?"
 expect_tools = ["list_notes"]

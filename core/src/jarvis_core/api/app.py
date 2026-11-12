@@ -6,7 +6,7 @@ import hmac
 import ipaddress
 import json
 from collections.abc import AsyncGenerator, AsyncIterator
-from contextlib import suppress
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, Header, HTTPException
@@ -22,6 +22,8 @@ from jarvis_core.agent import (
     ChatService,
     ConfirmRequested,
     Notice,
+    Reminder,
+    ReminderWatcher,
     TextDelta,
     ToolUsed,
     build_service,
@@ -140,13 +142,30 @@ def create_app(
     model_name: str | None = None,
     keepalive_seconds: float = KEEPALIVE_SECONDS,
     api_token: str | None = None,
+    reminder_poll_seconds: float | None = None,
 ) -> FastAPI:
     """`api_token`: erwartetes Token für /v1/*; None = ohne Token (nur lokal zulässig)."""
     if token_required(settings) and not api_token:
         raise ValueError("Für diesen Server ist ein Zugangstoken nötig (ADR-011).")
     audit = AuditLog(settings.audit_db_path)
     service: ChatService = build_service(settings, audit, model=model, model_name=model_name)
-    app = FastAPI(title="JARVIS Core", version=__version__)
+    watcher = ReminderWatcher(
+        settings.mcp_servers, audit, log_dir=settings.data_dir / "logs",
+        **({"poll_seconds": reminder_poll_seconds} if reminder_poll_seconds else {}),
+    )  # fmt: skip
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
+        task = asyncio.create_task(watcher.run()) if watcher.enabled else None
+        try:
+            yield
+        finally:
+            if task is not None:
+                task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await task
+
+    app = FastAPI(title="JARVIS Core", version=__version__, lifespan=lifespan)
     # Nur Anfragen an die eigene Adresse annehmen: sonst könnte eine fremde Webseite per
     # DNS-Rebinding im Browser des Nutzers mit dem Core sprechen (ADR-003).
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts(settings.host))
@@ -218,6 +237,27 @@ def create_app(
         if not service.broker.resolve(request_id, answer.approve):
             raise HTTPException(status_code=404, detail="Unbekannte oder bereits beantwortete ID.")
         return {"status": "ok"}
+
+    @app.get("/v1/events", dependencies=guarded)
+    async def events_stream() -> StreamingResponse:  # pyright: ignore[reportUnusedFunction]
+        """Dauerhafter Stream für Meldungen ohne Anfrage (Erinnerungen, ADR-013)."""
+
+        async def reminders(queue: asyncio.Queue[Reminder]) -> AsyncGenerator[Reminder]:
+            while True:
+                yield await queue.get()
+
+        async def events() -> AsyncIterator[str]:
+            yield _sse("ready", {"erinnerungen": watcher.enabled})
+            with watcher.listen() as queue:
+                async for item in with_keepalive(reminders(queue), keepalive_seconds):
+                    if item is None:
+                        yield KEEPALIVE
+                    else:
+                        yield _sse(
+                            "reminder", {"id": item.id, "text": item.text, "zeitpunkt": item.when}
+                        )
+
+        return StreamingResponse(events(), media_type="text/event-stream", headers=SSE_HEADERS)
 
     @app.delete("/v1/sessions/{session_id}", dependencies=guarded)
     async def forget_session(session_id: str) -> dict[str, str]:  # pyright: ignore[reportUnusedFunction]

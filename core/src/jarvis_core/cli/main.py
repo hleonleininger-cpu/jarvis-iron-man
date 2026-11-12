@@ -9,6 +9,8 @@ import sys
 import threading
 import tomllib
 import webbrowser
+from collections.abc import Callable
+from contextlib import suppress
 from pathlib import Path
 from typing import Annotated
 
@@ -22,6 +24,7 @@ from jarvis_core.agent import (
     ConfirmationBroker,
     ConfirmRequested,
     Notice,
+    ReminderWatcher,
     TextDelta,
     ToolUsed,
     build_service,
@@ -272,8 +275,68 @@ DIALOG_EXIT = ("/ende", "/exit", "/quit")
 DIALOG_RESET = ("/neu", "/new")
 
 
-def _dialog(service: ChatService) -> None:
+# Wie oft der Dialog nach fälligen Erinnerungen fragt (ADR-013).
+REMINDER_POLL_SECONDS = 20.0
+
+
+def _start_reminders(settings: Settings, audit: AuditLog) -> Callable[[], None] | None:
+    """Erinnerungen während des Dialogs in einem Hintergrund-Thread empfangen und ausgeben.
+    Gibt eine Stopp-Funktion zurück (beendet auch den Notiz-Server-Prozess) oder None."""
+    watcher = ReminderWatcher(
+        settings.mcp_servers, audit, log_dir=settings.data_dir / "logs",
+        poll_seconds=REMINDER_POLL_SECONDS,
+    )  # fmt: skip
+    if not watcher.enabled:
+        return None
+    loop = asyncio.new_event_loop()
+
+    async def main() -> None:
+        task = asyncio.create_task(watcher.run())
+        try:
+            with watcher.listen() as queue:
+                while True:
+                    reminder = await queue.get()
+                    when = reminder.when[11:] if len(reminder.when) >= 16 else reminder.when
+                    sys.stdout.write(f"\n⏰ Erinnerung ({when}): {_printable(reminder.text)}\ndu> ")
+                    sys.stdout.flush()
+        finally:
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
+
+    def run() -> None:
+        with suppress(asyncio.CancelledError):
+            loop.run_until_complete(main())
+        loop.close()
+
+    thread = threading.Thread(target=run, name="jarvis-erinnerungen", daemon=True)
+    thread.start()
+
+    def stop() -> None:
+        def cancel_all() -> None:
+            for task in asyncio.all_tasks(loop):
+                task.cancel()
+
+        if not loop.is_closed():
+            loop.call_soon_threadsafe(cancel_all)
+        thread.join(timeout=5)
+
+    return stop
+
+
+def _dialog(
+    service: ChatService, settings: Settings | None = None, audit: AuditLog | None = None
+) -> None:
     """Gespräch über mehrere Nachrichten; der Verlauf lebt nur in diesem Prozess (ADR-009)."""
+    stop_reminders = _start_reminders(settings, audit) if settings and audit else None
+    try:
+        _dialog_loop(service)
+    finally:
+        if stop_reminders is not None:
+            stop_reminders()
+
+
+def _dialog_loop(service: ChatService) -> None:
     session_id = service.sessions.new_id()
     typer.echo(
         f"JARVIS-Dialog (Modell {service.model_name}). "
@@ -313,10 +376,11 @@ def chat(
 ) -> None:
     """Beantwortet eine Nachricht (gestreamt) oder führt ohne Argument einen Dialog."""
     settings = _settings(INTERACTIVE_LOG_LEVEL)  # Terminal bleibt frei von JSON-Logs
-    service = build_service(settings, _audit(settings.audit_db_path))
+    audit = _audit(settings.audit_db_path)
+    service = build_service(settings, audit)
     service.broker = ConfirmationBroker(timeout=None)  # der Nutzer sitzt vor der Rückfrage
     if text is None:
-        _dialog(service)
+        _dialog(service, settings, audit)
         return
     if not text.strip():
         typer.echo("Die Nachricht ist leer.", err=True)

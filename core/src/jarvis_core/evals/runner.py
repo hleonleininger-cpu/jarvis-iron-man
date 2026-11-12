@@ -78,6 +78,7 @@ def eval_servers(writes_log: Path, notes_file: Path | None = None) -> dict[str, 
                 "complete_note": RiskClass.WRITE_LOCAL,
             },
             previews={"add_note": "preview_add_note", "complete_note": "preview_complete_note"},
+            reminders="take_due_reminders",
         ),
     }
 

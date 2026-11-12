@@ -66,9 +66,21 @@ class McpServerConfig(BaseModel):
     # Optional: CONFIRM-Werkzeug -> Vorschau-Werkzeug desselben Servers (schreibt nichts). Das
     # Vorschau-Werkzeug steht nicht in `tools` und wird dem Modell nie angeboten.
     previews: dict[str, str] = {}
+    # Optional: internes Werkzeug, das fällige Erinnerungen abholt (ADR-013). Der Core ruft es
+    # selbst auf; dem Modell wird es nie angeboten.
+    reminders: str | None = None
+
+    @property
+    def internal_tools(self) -> list[str]:
+        """Werkzeuge, die nur der Core aufruft (Vorschau, Erinnerungen)."""
+        return [*self.previews.values(), *([self.reminders] if self.reminders else [])]
 
     @model_validator(mode="after")
     def _previews_belong_to_tools(self) -> "McpServerConfig":
+        if self.reminders and self.reminders in self.tools:
+            raise ValueError(
+                f"reminders: '{self.reminders}' darf nicht selbst als Werkzeug angeboten werden"
+            )
         for tool, preview in self.previews.items():
             if tool not in self.tools:
                 raise ValueError(f"previews: '{tool}' ist nicht in tools deklariert")
@@ -145,7 +157,7 @@ class Settings(BaseSettings):
         """Werkzeugnamen sind global: das Modell ruft sie ohne Servernamen auf."""
         owner: dict[str, str] = {}
         for server, cfg in self.mcp_servers.items():
-            for tool in (*cfg.tools, *cfg.previews.values()):
+            for tool in (*cfg.tools, *cfg.internal_tools):
                 if tool in owner:
                     raise ValueError(
                         f"Werkzeug '{tool}' ist doppelt deklariert "

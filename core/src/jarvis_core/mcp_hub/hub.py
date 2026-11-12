@@ -298,7 +298,7 @@ class McpHub:
                     size += len(json.dumps(tool.input_schema, ensure_ascii=False))
                     infos.append(ToolInfo(server, tool.name, tool.description or "", risk, size))
             cfg = self._servers[server]
-            missing = sorted((set(cfg.tools) | set(cfg.previews.values())) - provided)
+            missing = sorted((set(cfg.tools) | set(cfg.internal_tools)) - provided)
             if missing:
                 self.failures.append(
                     f"MCP-Server '{server}' bietet nicht an, was jarvis.toml nennt: "
@@ -398,6 +398,32 @@ class McpHub:
             self._record(channel, name, risk, "DENIED", "denied")
             return USER_DECLINED_MESSAGE
         return await self._execute(server, call_tool, name, args, risk, "CONFIRMED", channel)
+
+    async def call_internal(
+        self,
+        server: str,
+        tool: str,
+        risk: RiskClass,
+        worth_recording: Callable[[Any], bool] = lambda _data: True,
+    ) -> Any:
+        """Ruft ein internes Werkzeug (nicht fürs Modell) direkt auf, z. B. das Abholen fälliger
+        Erinnerungen. Audit nur mit Name, Klasse und Ergebnis, Kanal "system"; Fehler immer,
+        Erfolge nur, wenn `worth_recording` zustimmt (regelmäßiges Abfragen füllte sonst das
+        Log)."""
+        toolset = self._connected.get(server)
+        if toolset is None:
+            raise RuntimeError(f"MCP-Server '{server}' ist nicht verbunden.")
+        try:
+            result = await asyncio.wait_for(toolset.client.call_tool(tool, {}), self.tool_timeout)
+        except Exception:
+            self._record("system", tool, risk, Decision.ALLOW, "error")
+            raise
+        data: Any = result.data
+        if _is_failure(data):
+            self._record("system", tool, risk, Decision.ALLOW, "error")
+        elif worth_recording(data):
+            self._record("system", tool, risk, Decision.ALLOW, "ok")
+        return data
 
     def record_unknown_tool(self, name: str) -> None:
         """Modell wollte ein unbekanntes Werkzeug aufrufen: abgelehnt und protokolliert."""

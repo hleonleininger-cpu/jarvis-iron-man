@@ -49,6 +49,9 @@ create_event = "WRITE_REVERSIBLE"
 command = "python"
 args = ["-m", "mcp_servers.notes"]
 previews = { add_note = "preview_add_note", complete_note = "preview_complete_note" }
+# Erinnerungen ("Erinnere mich um 18 Uhr an ..."): der Core holt fällige ab und meldet sie in der
+# Web-Oberfläche bzw. im CLI-Dialog, solange JARVIS läuft (ADR-013).
+reminders = "take_due_reminders"
 
 [mcp_servers.notes.tools]
 add_note = "WRITE_LOCAL"

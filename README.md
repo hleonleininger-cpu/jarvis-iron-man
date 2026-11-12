@@ -42,6 +42,10 @@ OS-Schlüsselbund. Siehe ADR-005/006.
 aber im Audit-Log), `list_notes` (READ).
 Gespeichert in `~/.jarvis/notizen.sqlite3`, kein Netz. Siehe ADR-012.
 
+**Erinnerungen:** "Erinnere mich um 18 Uhr an …" speichert eine Notiz mit Zeitpunkt; JARVIS
+meldet sie zur Uhrzeit in der Web-Oberfläche (auf Wunsch als Systembenachrichtigung) oder im
+CLI-Dialog, solange er läuft. Siehe ADR-013.
+
 **Notion (nur Lesen):** `notion_search`, `notion_query`, `notion_get` (alle READ). Token im
 Schlüsselbund, Datenbank-IDs in `jarvis.toml` (`[mcp_servers.notion] env`). Es gibt keinen
 Schreib-Endpunkt im Code. In der Vorlage auskommentiert: nach `jarvis secrets set notion` und dem
@@ -81,6 +85,7 @@ Entfernen mit `schtasks /Delete /TN "JARVIS"`.
   15 s ein Kommentar `: ping`, damit Clients die Verbindung nicht trennen.
 - `POST /v1/confirm/{id}` mit `{"approve": true|false}` beantwortet eine Rückfrage.
 - `DELETE /v1/sessions/{id}` vergisst ein Gespräch.
+- `GET /v1/events` → Server-Sent Events für Meldungen ohne Anfrage (`ready`, `reminder`).
 - Es läuft immer nur eine Anfrage zugleich; bis zu 3 warten (mit Hinweis), weitere werden mit
   `error` abgewiesen. Der Server antwortet nur unter seiner eigenen Adresse (Host-Header-Prüfung),
   bei Tailnet-Bindung auch unter dem MagicDNS-Namen (`*.ts.net`).

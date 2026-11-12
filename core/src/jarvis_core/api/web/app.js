@@ -145,9 +145,14 @@ async function ask(message) {
     element("div", "info error", "Fehler: Anfrage abgelehnt (HTTP " + response.status + ").");
     return;
   }
+  const state = { answer: null, text: "", waiting: element("div", "info thinking", "JARVIS denkt nach …") };
+  await readEvents(response, (event, data) => handle(event, data, state));
+}
+
+// Liest Server-Sent Events aus einer fetch-Antwort und ruft onEvent(name, daten) je Ereignis.
+async function readEvents(response, onEvent) {
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
-  const state = { answer: null, text: "", waiting: element("div", "info thinking", "JARVIS denkt nach …") };
   let buffer = "";
   for (;;) {
     const { value, done } = await reader.read();
@@ -163,15 +168,59 @@ async function ask(message) {
         else if (line.startsWith("data: ")) data += line.slice(6);
         // Zeilen mit ":" am Anfang sind Lebenszeichen (Ping) und werden übergangen.
       }
-      if (data) handle(event, JSON.parse(data), state);
+      if (data) onEvent(event, JSON.parse(data));
     }
   }
 }
+
+// Erinnerungen (ADR-013): dauerhaft zuhören, bei Abbruch mit wachsendem Abstand neu verbinden.
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const TITLE = document.title;
+
+function showReminder(data) {
+  element("div", "reminder", "⏰ Erinnerung: " + data.text);
+  if (document.hidden) document.title = "⏰ " + TITLE;
+  try {
+    if ("Notification" in window && Notification.permission === "granted") {
+      new Notification("JARVIS – Erinnerung", { body: data.text });
+    }
+  } catch (_) { /* z. B. iOS ohne installierte Web-App */ }
+}
+
+async function listenReminders() {
+  let delay = 2000;
+  for (;;) {
+    try {
+      const response = await fetch("/v1/events", { headers: headers(false) });
+      if (response.status === 401) {
+        await sleep(10000);  // Token kommt mit der ersten Chat-Anfrage
+        continue;
+      }
+      if (!response.ok || !response.body) throw new Error("HTTP " + response.status);
+      delay = 2000;
+      let active = true;
+      await readEvents(response, (event, data) => {
+        if (event === "ready") active = data.erinnerungen;
+        else if (event === "reminder") showReminder(data);
+      });
+      if (!active) return;  // keine Erinnerungen konfiguriert
+    } catch (_) { /* Server weg oder neu gestartet */ }
+    await sleep(delay);
+    delay = Math.min(delay * 2, 60000);
+  }
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) document.title = TITLE;
+});
 
 form.addEventListener("submit", async (submitEvent) => {
   submitEvent.preventDefault();
   const message = input.value.trim();
   if (!message || send.disabled) return;
+  try {  // Erlaubnis für Systemmeldungen geht nur auf eine Nutzeraktion hin
+    if ("Notification" in window && Notification.permission === "default") Notification.requestPermission();
+  } catch (_) { /* nicht unterstützt */ }
   input.value = "";
   input.style.height = "auto";
   send.disabled = true;
@@ -222,3 +271,4 @@ fetch("/health").then((r) => r.json()).then((h) => {
   document.getElementById("model").textContent = "Modell " + h.model;
 }).catch(() => {});
 input.focus();
+listenReminders();

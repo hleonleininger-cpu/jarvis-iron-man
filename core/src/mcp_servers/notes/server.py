@@ -58,8 +58,38 @@ def _parse_due(faellig: str | None) -> date | None:
     return due
 
 
+def _parse_reminder(erinnern_um: str | None, now: datetime) -> datetime | None:
+    """'JJJJ-MM-TTTHH:MM' (Europe/Berlin) -> Zeitpunkt; muss in der Zukunft liegen."""
+    if erinnern_um is None or not erinnern_um.strip():
+        return None
+    text = erinnern_um.strip()
+    try:
+        if len(text) == 10:
+            raise ValueError
+        when = datetime.fromisoformat(text)
+    except ValueError:
+        raise ValueError(
+            f"Ungültiger Erinnerungszeitpunkt '{erinnern_um}'. Erwartet JJJJ-MM-TTTHH:MM "
+            "(mit Uhrzeit)."
+        ) from None
+    when = when.replace(tzinfo=TZ) if when.tzinfo is None else when.astimezone(TZ)
+    if not FIRST_YEAR <= when.year <= LAST_YEAR:
+        raise ValueError(f"Der Zeitpunkt {when:%Y-%m-%d} ist nicht plausibel.")
+    if when <= now:
+        raise ValueError(f"Der Zeitpunkt {when:%d.%m.%Y %H:%M} liegt in der Vergangenheit.")
+    return when
+
+
+def _local(value: datetime) -> str:
+    return f"{value.astimezone(TZ):%Y-%m-%dT%H:%M}"
+
+
 def _note_dict(note: Note, today: date) -> dict[str, Any]:
     entry: dict[str, Any] = {"id": note.id, "text": note.text}
+    if note.remind_at is not None:
+        entry["erinnern_um"] = _local(note.remind_at)
+        if note.reminded_at is not None:
+            entry["erinnert"] = True
     if note.due is not None:
         entry["faellig"] = note.due.isoformat()
         if not note.done and note.due < today:
@@ -69,33 +99,65 @@ def _note_dict(note: Note, today: date) -> dict[str, Any]:
     return entry
 
 
-def _describe(text: str, due: date | None) -> str:
+def _describe(text: str, due: date | None, remind_at: datetime | None = None) -> str:
     shown = text if len(text) <= 300 else f"{text[:300]}… (gekürzt, {len(text)} Zeichen)"
-    return f"Merken: {shown}" + (f" (fällig {due:%d.%m.%Y})" if due else "")
+    extras: list[str] = []
+    if due:
+        extras.append(f"fällig {due:%d.%m.%Y}")
+    if remind_at:
+        extras.append(f"Erinnerung {remind_at.astimezone(TZ):%d.%m.%Y %H:%M}")
+    return f"Merken: {shown}" + (f" ({', '.join(extras)})" if extras else "")
 
 
-def preview_add_data(text: str, faellig: str | None) -> dict[str, Any]:
+def _parse_all(
+    text: str, faellig: str | None, erinnern_um: str | None, now: datetime | None
+) -> tuple[str, date | None, datetime | None]:
+    current = now or datetime.now(TZ)
+    return _parse_text(text), _parse_due(faellig), _parse_reminder(erinnern_um, current)
+
+
+def preview_add_data(
+    text: str, faellig: str | None, erinnern_um: str | None = None, now: datetime | None = None
+) -> dict[str, Any]:
     try:
-        cleaned, due = _parse_text(text), _parse_due(faellig)
+        cleaned, due, remind = _parse_all(text, faellig, erinnern_um, now)
     except ValueError as exc:
         return _fail(str(exc))
-    return {"ok": True, "vorschau": _describe(cleaned, due), "frage": "Speichern?"}
+    return {"ok": True, "vorschau": _describe(cleaned, due, remind), "frage": "Speichern?"}
 
 
-def add_data(text: str, faellig: str | None) -> dict[str, Any]:
+def add_data(
+    text: str, faellig: str | None, erinnern_um: str | None = None, now: datetime | None = None
+) -> dict[str, Any]:
     try:
-        cleaned, due = _parse_text(text), _parse_due(faellig)
+        cleaned, due, remind = _parse_all(text, faellig, erinnern_um, now)
     except ValueError as exc:
         return _fail(str(exc))
-    note = store().add(cleaned, due)
-    return {"ok": True, "gespeichert": _describe(note.text, note.due), "id": note.id}
+    note = store().add(cleaned, due, remind_at=remind)
+    return {
+        "ok": True,
+        "gespeichert": _describe(note.text, note.due, note.remind_at),
+        "id": note.id,
+    }
+
+
+def take_due_data(now: datetime | None = None) -> dict[str, Any]:
+    due = store().take_due_reminders(now)
+    return {
+        "ok": True,
+        "erinnerungen": [
+            {"id": n.id, "text": n.text, "zeitpunkt": _local(n.remind_at)}
+            for n in due
+            if n.remind_at is not None
+        ],
+    }
 
 
 def list_data(
     filter: str | None = None, erledigte_einbeziehen: bool = False, now: datetime | None = None
 ) -> dict[str, Any]:
     today = (now or datetime.now(TZ)).astimezone(TZ).date()
-    notes = store().list(include_done=erledigte_einbeziehen)
+    notes = store().entries(include_done=erledigte_einbeziehen)
     if filter and filter.strip():
         needle = filter.strip().casefold()
         notes = [n for n in notes if needle in n.text.casefold()]
@@ -134,11 +196,14 @@ def complete_data(id: int) -> dict[str, Any]:
 
 
 @mcp.tool()
-def add_note(text: str, faellig: str | None = None) -> dict[str, Any]:
+def add_note(
+    text: str, faellig: str | None = None, erinnern_um: str | None = None
+) -> dict[str, Any]:
     """Merkt sich eine Notiz oder Aufgabe des Nutzers (lokal gespeichert). faellig optional als
-    Datum 'JJJJ-MM-TT' (relative Angaben vorher umrechnen). Direkt aufrufen: die Bestätigung holt
-    das System selbst beim Nutzer ein."""
-    return add_data(text, faellig)
+    Datum 'JJJJ-MM-TT'. erinnern_um optional als 'JJJJ-MM-TTTHH:MM' (Europe/Berlin): dann meldet
+    JARVIS sich zu diesem Zeitpunkt ("Erinnere mich um 18 Uhr an ..."). Relative Angaben vorher in
+    konkrete Daten umrechnen."""
+    return add_data(text, faellig, erinnern_um)
 
 
 @mcp.tool()
@@ -156,9 +221,18 @@ def complete_note(id: int) -> dict[str, Any]:
 
 
 @mcp.tool()
-def preview_add_note(text: str, faellig: str | None = None) -> dict[str, Any]:
+def preview_add_note(
+    text: str, faellig: str | None = None, erinnern_um: str | None = None
+) -> dict[str, Any]:
     """Interne Vorschau für add_note (schreibt nichts)."""
-    return preview_add_data(text, faellig)
+    return preview_add_data(text, faellig, erinnern_um)
+
+
+@mcp.tool()
+def take_due_reminders() -> dict[str, Any]:
+    """Intern für den Core: fällige Erinnerungen abholen (markiert sie als zugestellt). Wird dem
+    Modell nie angeboten."""
+    return take_due_data()
 
 
 @mcp.tool()

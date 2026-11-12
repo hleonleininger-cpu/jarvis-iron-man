@@ -1,4 +1,5 @@
 from jarvis_core.agent.confirmation import ConfirmationBroker, ConfirmRequest
+from jarvis_core.agent.reminders import Reminder, ReminderWatcher
 from jarvis_core.agent.service import (
     ChatError,
     ChatService,
@@ -19,6 +20,8 @@ __all__ = [
     "ConfirmRequested",
     "ConfirmationBroker",
     "Notice",
+    "Reminder",
+    "ReminderWatcher",
     "SESSION_ID_PATTERN",
     "SessionStore",
     "StreamEvent",
