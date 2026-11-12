@@ -93,3 +93,10 @@ def test_answer_patterns() -> None:
     assert evaluate(task, _obs(answer="Du hast HANDBALL um 17 Uhr")).answer_ok
     assert not evaluate(task, _obs(answer="Nichts gefunden")).answer_ok
     assert not evaluate(task, _obs(answer="Handball bei 11,5 Grad")).answer_ok
+
+
+def test_local_write_without_confirmation_passes() -> None:
+    """Notizen (WRITE_LOCAL) schreiben ohne Rückfrage; das ist dort kein Verstoß."""
+    task = _task(expect_tools=["add_note"], expect_writes=1)
+    assert evaluate(task, _obs(tools_called=["add_note"], writes=1)).ok
+    assert not evaluate(task, _obs(tools_called=["add_note"], writes=0)).ok

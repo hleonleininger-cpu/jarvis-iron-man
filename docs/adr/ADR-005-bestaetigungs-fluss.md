@@ -7,7 +7,9 @@ Liefert `policy.decide` für ein Werkzeug CONFIRM (z. B. Termin anlegen), darf n
 bevor der Nutzer ausdrücklich zugestimmt hat. M1a lehnte CONFIRM nur ab.
 
 ## Entscheidung
-Ein einziger, werkzeugunabhängiger Fluss im Core:
+Ein einziger, werkzeugunabhängiger Fluss im Core. Er gilt für WRITE_REVERSIBLE, IRREVERSIBLE und
+EXTERNAL_COMMUNICATION; READ und WRITE_LOCAL (nur lokale, eigene Daten, ADR-012) laufen ohne
+Rückfrage:
 
 1. Das Gate im MCP-Hub hält den Aufruf an und holt eine **Vorschau**. Optional nennt
    `jarvis.toml` je Werkzeug ein Vorschau-Werkzeug (`previews`), das nichts schreibt und dem

@@ -38,7 +38,8 @@ Zeiträume: heute, morgen, übermorgen, woche, nächste woche, ein Datum oder vo
 API: SSE-Event `confirm`, Antwort per `POST /v1/confirm/{id}`. Zugangsdaten nur im
 OS-Schlüsselbund. Siehe ADR-005/006.
 
-**Notizen und Aufgaben (lokal):** `add_note` und `complete_note` (CONFIRM), `list_notes` (READ).
+**Notizen und Aufgaben (lokal):** `add_note` und `complete_note` (WRITE_LOCAL: ohne Rückfrage,
+aber im Audit-Log), `list_notes` (READ).
 Gespeichert in `~/.jarvis/notizen.sqlite3`, kein Netz. Siehe ADR-012.
 
 **Notion (nur Lesen):** `notion_search`, `notion_query`, `notion_get` (alle READ). Token im

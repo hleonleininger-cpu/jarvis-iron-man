@@ -17,7 +17,9 @@ context_tokens = 4096
 
 # MCP-Server: nur hier deklarierte werden gestartet. `tools` ist die einzige Stelle für
 # Werkzeug-Metadaten; nicht aufgeführte Werkzeuge werden dem Modell nie angeboten.
-# Risikoklassen: READ, WRITE_REVERSIBLE, IRREVERSIBLE, EXTERNAL_COMMUNICATION, FINANCIAL.
+# Risikoklassen: READ, WRITE_LOCAL (nur lokale Datei, ohne Rückfrage), WRITE_REVERSIBLE,
+# IRREVERSIBLE, EXTERNAL_COMMUNICATION, FINANCIAL. READ und WRITE_LOCAL laufen direkt, die
+# übrigen Schreibklassen nur nach Rückfrage, FINANCIAL nie.
 # command = "python" steht für den Interpreter des Cores (venv).
 [mcp_servers.weather]
 command = "python"
@@ -41,16 +43,17 @@ list_events = "READ"
 create_event = "WRITE_REVERSIBLE"
 
 # Notizen und Aufgaben, lokal (SQLite, kein Netz). Standard-Datei: ~/.jarvis/notizen.sqlite3,
-# andere mit args = [..., "--datei", "D:/jarvis/notizen.sqlite3"]. Schreiben nur nach Rückfrage.
+# andere mit args = [..., "--datei", "D:/jarvis/notizen.sqlite3"]. WRITE_LOCAL: ohne Rückfrage;
+# wer vorher gefragt werden will, setzt WRITE_REVERSIBLE (die Vorschau-Werkzeuge sind da).
 [mcp_servers.notes]
 command = "python"
 args = ["-m", "mcp_servers.notes"]
 previews = { add_note = "preview_add_note", complete_note = "preview_complete_note" }
 
 [mcp_servers.notes.tools]
-add_note = "WRITE_REVERSIBLE"
+add_note = "WRITE_LOCAL"
 list_notes = "READ"
-complete_note = "WRITE_REVERSIBLE"
+complete_note = "WRITE_LOCAL"
 
 # Notion (NUR LESEN, JARVIS-OS-Daten). Token: `jarvis secrets set notion` (OS-Schlüsselbund).
 # env ordnet Namen den Datenbank-IDs (Data-Source-IDs) zu: NOTION_DB_<NAME> = "<ID>".

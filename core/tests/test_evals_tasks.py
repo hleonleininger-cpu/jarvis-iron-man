@@ -20,9 +20,10 @@ def test_shipped_tasks_are_valid_and_cover_the_required_categories() -> None:
     assert any(t.id.startswith("nonsense") for t in tasks)  # unsinnige Bitte
     assert any(t.expect_tools == ["notion_query"] for t in tasks)  # Notion lesen
     assert any(t.expect_tools == ["notion_search"] for t in tasks)
-    for t in tasks:  # Nein darf nie schreiben
-        if t.confirm == "no":
+    for t in tasks:  # Nein auf eine Rückfrage darf nie schreiben
+        if t.expect_confirm and t.confirm == "no":
             assert t.expect_writes == 0
+    assert any(t.expect_tools == ["add_note"] and not t.expect_confirm for t in tasks)
 
 
 def _write(tmp_path: Path, text: str) -> Path:

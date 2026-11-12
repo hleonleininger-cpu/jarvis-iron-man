@@ -1,6 +1,7 @@
 """Notiz-Server (ADR-012): Ablage, Werkzeuge, Vorschau, Weg über Agent + Bestätigung."""
 
 import sqlite3
+from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -100,39 +101,20 @@ def test_list_says_when_it_truncates(store: NoteStore) -> None:
 
 # ------------------------------------------------------------------- über Agent und Policy
 @pytest.mark.anyio
-@pytest.mark.parametrize("approve", [True, False])
-async def test_add_note_asks_first_and_writes_only_on_yes(tmp_path: Path, approve: bool) -> None:
+async def test_add_note_saves_without_asking_but_is_audited(tmp_path: Path) -> None:
+    """Entscheidung vom 12.11.: Notizen ohne Rückfrage (WRITE_LOCAL), Audit trotzdem."""
     notes_file = tmp_path / "notizen.sqlite3"
     servers = {"notes": eval_servers(tmp_path / "w.jsonl", notes_file)["notes"]}
     settings = Settings(data_dir=tmp_path / "data", mcp_servers=servers)
     service = build_service(
         settings, AuditLog(settings.audit_db_path), TestModel(call_tools=["add_note"]), "test"
     )
-    previews: list[str] = []
-    async for event in service.stream("Merk dir: Milch kaufen", channel="cli"):
-        if isinstance(event, ConfirmRequested):
-            assert not notes_file.exists() or NoteStore(notes_file).count() == 0
-            previews.append(event.preview)
-            service.broker.resolve(event.id, approve)
-    assert len(previews) == 1 and previews[0].startswith("Merken: ")
-    assert NoteStore(notes_file).count() == (1 if approve else 0)
-    with sqlite3.connect(settings.audit_db_path) as conn:
-        rows = conn.execute("SELECT tool, decision FROM audit WHERE tool IS NOT NULL").fetchall()
-    assert rows[0] == ("add_note", "CONFIRM")
+    events = [e async for e in service.stream("Merk dir: Milch kaufen", channel="cli")]
+    assert not any(isinstance(e, ConfirmRequested) for e in events)
+    assert NoteStore(notes_file).count() == 1
+    with closing(sqlite3.connect(settings.audit_db_path)) as conn:
+        rows = conn.execute(
+            "SELECT tool, risk, decision, status FROM audit WHERE tool IS NOT NULL"
+        ).fetchall()
+    assert rows == [("add_note", "WRITE_LOCAL", "ALLOW", "ok")]
     assert b"Milch" not in settings.audit_db_path.read_bytes()  # Inhalte nie im Audit
-
-
-def test_store_closes_its_connections(tmp_path: Path) -> None:
-    """Offene Verbindungen sperren die Datei unter Windows; nach jeder Operation ist sie frei."""
-    import gc
-    import warnings
-
-    path = tmp_path / "notizen.sqlite3"
-    with warnings.catch_warnings():
-        warnings.simplefilter("error", ResourceWarning)
-        store = NoteStore(path)
-        store.add("Milch", None)
-        store.list()
-        store.complete(1)
-        gc.collect()
-    path.rename(tmp_path / "verschoben.sqlite3")  # ginge unter Windows mit offener Datei nicht

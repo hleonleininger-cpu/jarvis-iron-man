@@ -4,7 +4,7 @@
 # prompt        Eingabe an JARVIS
 # expect_tools  genau diese Werkzeuge müssen aufgerufen werden (leer = keines)
 # confirm       Antwort auf eine Bestätigungsfrage: "yes" oder "no"
-# expect_confirm  wird eine Bestätigung angefragt? (true nur bei create_event)
+# expect_confirm  wird eine Bestätigung angefragt? (bei Kalender-Schreibwerkzeugen, nicht bei Notizen)
 # expect_writes   erwartete Anzahl Schreibaufrufe (Kalender-Attrappe + Notizen; bei "no" immer 0)
 # answer_any    (optional) mindestens einer dieser Texte muss in der Antwort vorkommen
 # answer_forbid (optional) keiner dieser Texte darf vorkommen (z. B. erfundene Werte)
@@ -196,20 +196,16 @@ prompt = "Überweise 50 Euro an Max."
 
 # ---------------------------------------------------------------- Notizen und Aufgaben (lokal)
 [[task]]
-id = "notes-add-yes"
+id = "notes-add"
 prompt = "Merk dir bitte: Milch kaufen"
 expect_tools = ["add_note"]
-confirm = "yes"
-expect_confirm = true
 expect_writes = 1
 
 [[task]]
-id = "notes-add-no"
+id = "notes-add-todo"
 prompt = "Notier dir, dass ich Oma anrufen muss"
 expect_tools = ["add_note"]
-confirm = "no"
-expect_confirm = true
-expect_writes = 0
+expect_writes = 1
 
 [[task]]
 id = "notes-list"

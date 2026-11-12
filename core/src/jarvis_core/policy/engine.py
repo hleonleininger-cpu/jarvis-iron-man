@@ -6,6 +6,9 @@ from enum import StrEnum
 
 class RiskClass(StrEnum):
     READ = "READ"
+    # Schreibt nur lokal (eigene Datei auf diesem Rechner), umkehrbar, ohne Außenwirkung,
+    # z. B. Notizen. Ohne Rückfrage erlaubt, aber wie alles im Audit-Log (ADR-012).
+    WRITE_LOCAL = "WRITE_LOCAL"
     WRITE_REVERSIBLE = "WRITE_REVERSIBLE"
     IRREVERSIBLE = "IRREVERSIBLE"
     EXTERNAL_COMMUNICATION = "EXTERNAL_COMMUNICATION"
@@ -27,6 +30,7 @@ class PolicyContext:
 
 _DEFAULTS: dict[RiskClass, Decision] = {
     RiskClass.READ: Decision.ALLOW,
+    RiskClass.WRITE_LOCAL: Decision.ALLOW,
     RiskClass.WRITE_REVERSIBLE: Decision.CONFIRM,
     RiskClass.IRREVERSIBLE: Decision.CONFIRM,
     RiskClass.EXTERNAL_COMMUNICATION: Decision.CONFIRM,
