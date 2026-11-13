@@ -15,9 +15,13 @@ class Event:
     start: datetime | date
     end: datetime | date | None
     location: str | None = None
-    calendar: str | None = None
+    calendar: str | None = None  # Anzeigename des Kalenders, aus dem der Termin stammt
     # True, wenn der Server eine Serie nicht in Einzeltermine aufgelöst hat (RRULE im Termin).
-    unexpanded: bool = False  # Anzeigename des Kalenders, aus dem der Termin stammt
+    unexpanded: bool = False
+    # Kennung fürs Ändern/Löschen ("<Kalenderordner>/<Datei>.ics") und ob der Termin zu einer
+    # Serie gehört (RRULE oder RECURRENCE-ID): Serien werden nicht geändert (ADR-014).
+    event_id: str | None = None
+    recurring: bool = False
 
     @property
     def all_day(self) -> bool:
@@ -152,6 +156,7 @@ def parse_events(ics_blocks: list[str]) -> list[Event]:
                             end,
                             str(location) if location else None,
                             unexpanded="rrule" in current,
+                            recurring="rrule" in current or "recurrence_id" in current,
                         )
                     )
                 current = None
@@ -172,6 +177,8 @@ def parse_events(ics_blocks: list[str]) -> list[Event]:
                 current["end"] = _to_value(value, params)
             elif name == "RRULE":
                 current["rrule"] = value
+            elif name == "RECURRENCE-ID":
+                current["recurrence_id"] = value
             elif name == "DURATION":
                 current["duration"] = _duration(value)
     return events
@@ -236,3 +243,76 @@ def build_vevent(
 
 def default_end(start: datetime | date) -> datetime | date:
     return start + timedelta(hours=1) if isinstance(start, datetime) else start + timedelta(days=1)
+
+
+# Felder, die modify_vevent ersetzt; alle anderen Zeilen (UID, VALARM, Teilnehmer ...) bleiben.
+_REPLACED = {"SUMMARY", "DTSTART", "DTEND", "DURATION", "LOCATION", "DESCRIPTION", "DTSTAMP",
+             "LAST-MODIFIED", "SEQUENCE"}  # fmt: skip
+_TIME_FIELDS = {"DTSTART", "DTEND", "DURATION"}
+
+
+def _date_lines(start: datetime | date, end: datetime | date) -> list[str]:
+    if isinstance(start, datetime) and isinstance(end, datetime):
+        return [f"DTSTART:{_utc(start)}", f"DTEND:{_utc(end)}"]
+    return [f"DTSTART;VALUE=DATE:{start:%Y%m%d}", f"DTEND;VALUE=DATE:{end:%Y%m%d}"]
+
+
+def modify_vevent(
+    ics: str,
+    title: str,
+    times: tuple[datetime | date, datetime | date] | None,
+    location: str | None,
+    note: str | None,
+    now: datetime,
+) -> str:
+    """Ändert genau einen (nicht wiederkehrenden) VEVENT; alles Übrige bleibt erhalten.
+
+    Ersetzt den Titel, setzt DTSTAMP/LAST-MODIFIED neu und zählt SEQUENCE hoch. `times` (Start,
+    Ende): None = Zeiten samt Zeitzone unangetastet lassen. Ort und Notiz: None = unverändert
+    lassen, "" = entfernen, sonst ersetzen. Serien (RRULE, RECURRENCE-ID) oder mehrere VEVENTs
+    lehnt sie ab.
+    """
+    replaced = set(_REPLACED)
+    if times is None:
+        replaced -= _TIME_FIELDS
+    if location is None:
+        replaced.discard("LOCATION")
+    if note is None:
+        replaced.discard("DESCRIPTION")
+    lines = _unfold(ics)
+    starts = [i for i, line in enumerate(lines) if line == "BEGIN:VEVENT"]
+    if len(starts) != 1:
+        raise ValueError("Die Termindatei enthält mehrere Termine (Serie); nicht änderbar.")
+    begin = starts[0]
+    finish = lines.index("END:VEVENT", begin)
+    sequence = 0
+    kept: list[str] = []
+    nested = 0
+    for line in lines[begin + 1 : finish]:
+        if line.startswith("BEGIN:"):
+            nested += 1
+        elif line.startswith("END:") and nested:
+            nested -= 1
+        name = _split_key(line.partition(":")[0])[0] if ":" in line else ""
+        if not nested and name in ("RRULE", "RECURRENCE-ID", "RDATE", "EXDATE"):
+            raise ValueError("Serientermine können nicht geändert werden.")
+        if not nested and name == "SEQUENCE":
+            with suppress(ValueError):
+                sequence = int(line.partition(":")[2].strip())
+        if nested or name not in replaced:
+            kept.append(line)
+    stamp = _utc(now)
+    fresh = [
+        f"DTSTAMP:{stamp}",
+        f"LAST-MODIFIED:{stamp}",
+        f"SEQUENCE:{sequence + 1}",
+        *(_date_lines(*times) if times else []),
+        f"SUMMARY:{_escape(title)}",
+        *([f"LOCATION:{_escape(location)}"] if location else []),
+        *([f"DESCRIPTION:{_escape(note)}"] if note else []),
+    ]
+    # Neue Felder vor eingebetteten Komponenten (VALARM), damit die Datei übersichtlich bleibt.
+    split = next((i for i, line in enumerate(kept) if line.startswith("BEGIN:")), len(kept))
+    body = [*lines[: begin + 1], *kept[:split], *fresh, *kept[split:], *lines[finish:]]
+    folded = [part for line in body if line for part in _fold(line)]
+    return "\r\n".join(folded) + "\r\n"

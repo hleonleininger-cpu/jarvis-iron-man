@@ -1,13 +1,15 @@
-"""MCP-Server `calendar`: Termine lesen (list_events) und anlegen (create_event).
+"""MCP-Server `calendar`: Termine lesen, anlegen, ändern und löschen (ADR-005, ADR-014).
 
 Läuft als eigener Prozess (stdio) und importiert nichts aus jarvis_core. Zugangsdaten liest er
 selbst aus dem OS-Schlüsselbund (Dienst "jarvis", Eintrag "apple_caldav", JSON).
-create_event schreibt sofort; die Bestätigung durch den Nutzer erzwingt der Core (Policy).
+Die Schreibwerkzeuge schreiben sofort; die Bestätigung durch den Nutzer erzwingt der Core
+(Policy) und zeigt dabei die Vorschau aus den preview_*-Werkzeugen.
 """
 
 import argparse
 import json
 import uuid
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Any
 
@@ -16,7 +18,7 @@ from keyring.errors import KeyringError
 from mcp.server.mcpserver import MCPServer
 
 from mcp_servers.calendar.caldav import CalDavClient, CalDavError, Credentials
-from mcp_servers.calendar.ics import Event, default_end
+from mcp_servers.calendar.ics import Event, default_end, modify_vevent
 from mcp_servers.calendar.timeutil import (
     TZ,
     format_clock,
@@ -88,6 +90,8 @@ def _event_dict(event: Event) -> dict[str, Any]:
         "ganztaegig": event.all_day,
         "ort": event.location,
         "kalender": event.calendar,
+        **({"id": event.event_id} if event.event_id else {}),
+        **({"serie": True} if event.recurring else {}),
     }
 
 
@@ -142,12 +146,26 @@ def _parse_new_event(
     if len(title) > MAX_TITLE_LENGTH:
         raise ValueError(f"Der Titel darf höchstens {MAX_TITLE_LENGTH} Zeichen lang sein.")
     begin = _plausible(parse_when(start))
-    finish = _plausible(parse_when(ende) if ende and ende.strip() else default_end(begin))
-    if isinstance(begin, datetime) != isinstance(finish, datetime):
+    finish = _parse_end(ende) if ende and ende.strip() else default_end(begin)
+    return title, begin, _checked_end(begin, finish)
+
+
+def _parse_end(ende: str) -> datetime | date:
+    """Ende eines Termins. Ganztägig nennt das Modell den LETZTEN Tag (so liest es ihn auch aus
+    list_events); in ICS ist DTEND exklusiv, also einen Tag später."""
+    value = _plausible(parse_when(ende))
+    return value if isinstance(value, datetime) else value + timedelta(days=1)
+
+
+def _checked_end(begin: datetime | date, finish: datetime | date) -> datetime | date:
+    if isinstance(begin, datetime) and isinstance(finish, datetime):
+        if finish <= begin:
+            raise ValueError("Das Ende muss nach dem Start liegen.")
+    elif isinstance(begin, datetime) or isinstance(finish, datetime):
         raise ValueError("Start und Ende müssen beide ganztägig oder beide mit Uhrzeit sein.")
-    if finish <= begin:
-        raise ValueError("Das Ende muss nach dem Start liegen.")
-    return title, begin, finish
+    elif finish <= begin:
+        raise ValueError("Der letzte Tag darf nicht vor dem ersten liegen.")
+    return _plausible(finish)
 
 
 def describe_event(
@@ -174,14 +192,15 @@ def describe_event(
     if ort and ort.strip():
         text += f", Ort: {ort.strip()}"
     if notiz and notiz.strip():
-        note = notiz.strip()
-        shown = (
-            note
-            if len(note) <= MAX_NOTE_PREVIEW
-            else f"{note[:MAX_NOTE_PREVIEW]}… (gekürzt, {len(note)} Zeichen)"
-        )
-        text += f", Notiz: {shown}"
+        text += f", Notiz: {_note_preview(notiz)}"
     return text
+
+
+def _note_preview(notiz: str) -> str:
+    note = notiz.strip()
+    if len(note) <= MAX_NOTE_PREVIEW:
+        return note
+    return f"{note[:MAX_NOTE_PREVIEW]}… (gekürzt, {len(note)} Zeichen)"
 
 
 def _clean(value: str | None, limit: int) -> str | None:
@@ -234,6 +253,168 @@ def create_event_data(
     return {"ok": True, "angelegt": f"{created}, Kalender: {target}"}
 
 
+def _summary(title: str, begin: datetime | date, finish: datetime | date, ort: str | None) -> str:
+    return describe_event(title, begin, finish, ort, None).removeprefix("Neuer Termin: ")
+
+
+def _existing(event_id: str) -> tuple[CalDavClient, Event, str, str | None]:
+    client = make_client()
+    event, ics, etag = client.get_event(event_id)
+    if event.recurring:
+        raise CalDavError("recurring")
+    return client, event, ics, etag
+
+
+def _event_end(event: Event) -> datetime | date:
+    return event.end if event.end is not None else default_end(event.start)
+
+
+REMOVE = "-"  # ort/notiz: dieser Wert entfernt die Angabe; leer oder ungenannt = unverändert
+
+
+@dataclass(frozen=True)
+class _Change:
+    title: str
+    begin: datetime | date
+    finish: datetime | date
+    retimed: bool  # False: Zeiten (samt Zeitzone) bleiben in der Termindatei unangetastet
+    location: str | None  # None = unverändert, "" = entfernen, sonst neuer Text
+    note: str | None
+
+
+def _field_change(value: str | None, limit: int) -> str | None:
+    """Kleine Modelle füllen ungenutzte Parameter gern mit "": das heißt 'unverändert', nicht
+    'löschen'. Entfernt wird nur mit dem ausdrücklichen Wert '-'."""
+    text = (value or "").strip()
+    if not text:
+        return None
+    return "" if text == REMOVE else text[:limit]
+
+
+def _plan_change(
+    event: Event,
+    titel: str | None,
+    start: str | None,
+    ende: str | None,
+    ort: str | None,
+    notiz: str | None,
+) -> _Change:
+    """Was sich ändert; Ungenanntes bleibt. Ein neuer Start ohne Ende behält die Dauer."""
+    title = (titel or "").strip()
+    new_start, new_end = (start or "").strip(), (ende or "").strip()
+    location = _field_change(ort, MAX_TITLE_LENGTH)
+    note = _field_change(notiz, MAX_NOTE_LENGTH)
+    if not (title or new_start or new_end) and location is None and note is None:
+        raise ValueError("Es wurde nichts zum Ändern angegeben.")
+    if len(title) > MAX_TITLE_LENGTH:
+        raise ValueError(f"Der Titel darf höchstens {MAX_TITLE_LENGTH} Zeichen lang sein.")
+    title = title or event.summary
+    old_end = _event_end(event)
+    if not (new_start or new_end):  # Zeiten bleiben, wie sie sind (auch ein Termin mit Dauer 0)
+        return _Change(title, event.start, old_end, False, location, note)
+    begin = _plausible(parse_when(new_start)) if new_start else event.start
+    finish = _parse_end(new_end) if new_end else _keep_duration(begin, event.start, old_end)
+    return _Change(title, begin, _checked_end(begin, finish), True, location, note)
+
+
+def _keep_duration(
+    begin: datetime | date, old_start: datetime | date, old_end: datetime | date
+) -> datetime | date:
+    """Neues Ende bei verschobenem Start: gleiche Dauer wie bisher. Wechselt der Termin zwischen
+    ganztägig und Uhrzeit, gilt die Standarddauer (1 Stunde bzw. 1 Tag)."""
+    if (
+        isinstance(begin, datetime)
+        and isinstance(old_start, datetime)
+        and isinstance(old_end, datetime)
+    ):
+        return begin + (old_end - old_start)
+    if not (
+        isinstance(begin, datetime)
+        or isinstance(old_start, datetime)
+        or isinstance(old_end, datetime)
+    ):
+        return begin + (old_end - old_start)
+    return default_end(begin)
+
+
+def _change_text(event: Event, change: _Change) -> str:
+    before = _summary(event.summary, event.start, _event_end(event), event.location)
+    location = event.location if change.location is None else change.location
+    after = _summary(change.title, change.begin, change.finish, location)
+    text = f"Termin ändern: {before} → {after}, Kalender: {event.calendar or 'ohne Namen'}"
+    if change.location == "" and event.location:
+        text += ", Ort entfernen"
+    # Der Nutzer bestätigt, was geschrieben wird: den neuen Notiztext zeigen, nicht nur "neu".
+    if change.note:
+        text += f", neue Notiz: {_note_preview(change.note)}"
+    elif change.note == "":
+        text += ", Notiz entfernen"
+    return text
+
+
+def preview_update_data(
+    id: str,
+    titel: str | None = None,
+    start: str | None = None,
+    ende: str | None = None,
+    ort: str | None = None,
+    notiz: str | None = None,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    try:
+        _client, event, _ics, _etag = _existing(id)
+        change = _plan_change(event, titel, start, ende, ort, notiz)
+    except (CalDavError, ValueError) as exc:
+        return _fail(exc)
+    text = _change_text(event, change)
+    if _is_past(change.finish, now or datetime.now(TZ)):
+        text += f" ({PAST_WARNING})"
+    return {"ok": True, "vorschau": text, "frage": "Ändern?"}
+
+
+def update_data(
+    id: str,
+    titel: str | None = None,
+    start: str | None = None,
+    ende: str | None = None,
+    ort: str | None = None,
+    notiz: str | None = None,
+) -> dict[str, Any]:
+    try:
+        client, event, ics, etag = _existing(id)
+        change = _plan_change(event, titel, start, ende, ort, notiz)
+        times = (change.begin, change.finish) if change.retimed else None
+        updated = modify_vevent(
+            ics, change.title, times, change.location, change.note, datetime.now(TZ)
+        )
+        client.replace_event(id, updated, etag)
+    except (CalDavError, ValueError) as exc:
+        return _fail(exc)
+    return {"ok": True, "geaendert": _change_text(event, change).removeprefix("Termin ändern: ")}
+
+
+def _delete_text(event: Event) -> str:
+    summary = _summary(event.summary, event.start, _event_end(event), event.location)
+    return f"Termin löschen: {summary}, Kalender: {event.calendar or 'ohne Namen'}"
+
+
+def preview_delete_data(id: str) -> dict[str, Any]:
+    try:
+        _client, event, _ics, _etag = _existing(id)
+    except CalDavError as exc:
+        return _fail(exc)
+    return {"ok": True, "vorschau": _delete_text(event), "frage": "Endgültig löschen?"}
+
+
+def delete_data(id: str) -> dict[str, Any]:
+    try:
+        client, event, _ics, etag = _existing(id)
+        client.delete_event(id, etag)
+    except CalDavError as exc:
+        return _fail(exc)
+    return {"ok": True, "geloescht": _delete_text(event).removeprefix("Termin löschen: ")}
+
+
 @mcp.tool()
 def list_events(zeitraum: str) -> dict[str, Any]:
     """Liest Termine aus allen Apple-Kalendern (iCloud) des Nutzers. zeitraum: 'heute',
@@ -253,8 +434,9 @@ def create_event(
 ) -> dict[str, Any]:
     """Legt einen Termin im Apple-Kalender an. Direkt aufrufen: die Bestätigung holt das System
     selbst beim Nutzer ein. start/ende als
-    konkretes Datum 'JJJJ-MM-TTTHH:MM' (Europe/Berlin) oder 'JJJJ-MM-TT' für ganztägig; ohne
-    ende dauert der Termin 1 Stunde. Relative Angaben wie 'Montag' vorher in ein Datum umrechnen."""
+    konkretes Datum 'JJJJ-MM-TTTHH:MM' (Europe/Berlin) oder 'JJJJ-MM-TT' für ganztägig (ende ist
+    dann der letzte Tag); ohne ende dauert der Termin 1 Stunde bzw. 1 Tag. Relative Angaben wie
+    'Montag' vorher in ein Datum umrechnen."""
     return create_event_data(titel, start, ende, ort, notiz)
 
 
@@ -268,6 +450,49 @@ def preview_create_event(
 ) -> dict[str, Any]:
     """Interne Vorschau für create_event (schreibt nichts)."""
     return preview_event_data(titel, start, ende, ort, notiz)
+
+
+@mcp.tool()
+def update_event(
+    id: str,
+    titel: str | None = None,
+    start: str | None = None,
+    ende: str | None = None,
+    ort: str | None = None,
+    notiz: str | None = None,
+) -> dict[str, Any]:
+    """Ändert einen bestehenden Termin. id unverändert aus list_events übernehmen (vorher dort
+    nachsehen). Nur Angaben nennen, die sich ändern; ein neuer start ohne ende behält die Dauer.
+    Zeiten wie bei create_event. ort oder notiz '-' entfernt sie. Serientermine sind nicht
+    änderbar. Direkt aufrufen: die Bestätigung holt das System selbst beim Nutzer ein."""
+    return update_data(id, titel, start, ende, ort, notiz)
+
+
+@mcp.tool()
+def delete_event(id: str) -> dict[str, Any]:
+    """Löscht einen Termin endgültig. id unverändert aus list_events übernehmen (vorher dort
+    nachsehen). Serientermine sind nicht löschbar. Direkt aufrufen: die Bestätigung holt das
+    System selbst beim Nutzer ein."""
+    return delete_data(id)
+
+
+@mcp.tool()
+def preview_update_event(
+    id: str,
+    titel: str | None = None,
+    start: str | None = None,
+    ende: str | None = None,
+    ort: str | None = None,
+    notiz: str | None = None,
+) -> dict[str, Any]:
+    """Interne Vorschau für update_event (schreibt nichts)."""
+    return preview_update_data(id, titel, start, ende, ort, notiz)
+
+
+@mcp.tool()
+def preview_delete_event(id: str) -> dict[str, Any]:
+    """Interne Vorschau für delete_event (schreibt nichts)."""
+    return preview_delete_data(id)
 
 
 def main() -> None:
