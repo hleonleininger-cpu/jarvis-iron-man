@@ -59,7 +59,13 @@ def fetch(url: str, params: dict[str, str]) -> bytes:
 def _target(href: str) -> str | None:
     """Echte Zieladresse eines Treffers. DuckDuckGo leitet über /l/?uddg=<Adresse> um; Werbung
     (y.js) und alles außer http(s) fällt weg."""
-    absolute = urllib.parse.urljoin(SEARCH_URL, href)
+    try:
+        return _checked_target(urllib.parse.urljoin(SEARCH_URL, href))
+    except ValueError:  # z. B. "http://[::1" (ungültige IPv6-Adresse): ein Treffer darf nicht alle
+        return None  # anderen mitreißen
+
+
+def _checked_target(absolute: str) -> str | None:
     parts = urllib.parse.urlsplit(absolute)
     if parts.hostname in ("duckduckgo.com", "html.duckduckgo.com") and parts.path == "/l/":
         wanted = urllib.parse.parse_qs(parts.query).get("uddg")

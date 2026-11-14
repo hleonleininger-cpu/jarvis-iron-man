@@ -90,6 +90,16 @@ def test_only_duckduckgo_itself_is_filtered_not_lookalike_domains(
     ]
 
 
+def test_malformed_address_drops_only_that_result(monkeypatch: pytest.MonkeyPatch) -> None:
+    rows = (
+        '<a class="result__a" href="http://[::1">Kaputt</a>'
+        '<a class="result__a" href="//duckduckgo.com/l/?uddg=http%3A%2F%2F%5B%3A%3A1">Kaputt 2</a>'
+        '<a class="result__a" href="https://gut.example/">Gut</a>'
+    )
+    _patch(monkeypatch, f"<html>{rows}</html>".encode())
+    assert [t["titel"] for t in web_search_data("x")["treffer"]] == ["Gut"]
+
+
 def test_at_most_five_results_and_texts_are_shortened(monkeypatch: pytest.MonkeyPatch) -> None:
     rows = "".join(
         f'<a class="result__a" href="https://s{i}.example/">{"T" * 500}</a>'

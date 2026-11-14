@@ -996,3 +996,13 @@ def test_all_day_end_given_by_the_model_is_the_last_day(fake_icloud: FakeICloud)
     assert "Fr 25.12.2026 ganztägig" in one_day["vorschau"]
     backwards = server.preview_event_data("X", "2026-12-25", "2026-12-24", None, None, now=NOW)
     assert "letzte Tag" in backwards["fehler"]
+
+
+def test_ids_with_percent_encoded_characters_work(fake_icloud: FakeICloud) -> None:
+    """iCloud nennt Dateien mit '@' (z. B. von JARVIS angelegte) oft als 'uid%40jarvis.ics'."""
+    url = CALENDARS + "privat/abc%40jarvis.ics"
+    fake_icloud.files[url] = (DENTIST_ICS, '"p1"')
+    assert server.update_data("privat/abc%40jarvis.ics", titel="Neu")["ok"]
+    assert fake_icloud.requests[-1][1] == url and "SUMMARY:Neu" in fake_icloud.files[url][0]
+    assert server.preview_delete_data("privat/abc%2fx.ics")["grund"] == "invalid_event_id"
+    assert server.preview_delete_data("privat/abc%2Fx.ics")["grund"] == "invalid_event_id"

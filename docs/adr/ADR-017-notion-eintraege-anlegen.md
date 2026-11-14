@@ -34,7 +34,8 @@ am 12.11. entschieden: Schreiben ja, aber nur mit Vorschau und Rückfrage.
 - Ein angelegter Eintrag lässt sich von JARVIS nicht mehr ändern oder löschen; das geht in Notion
   (Papierkorb). Fehlerhafte Einträge entstehen nur nach bestätigter Vorschau.
 - Gegen die echte Notion-API ist das Anlegen nicht automatisch getestet (kein Zugang in den
-  Tests); die Anfrage folgt der Notion-Dokumentation für `data_source_id` als Elternobjekt und
-  sollte beim ersten Einsatz mit einem Testeintrag geprüft werden.
+  Tests). Die Form der Anfrage (`data_source_id` als Elternobjekt, Titel in der Titel-Spalte)
+  stimmt mit der Notion-Dokumentation vom 14.11.2026 überein; beim ersten Einsatz trotzdem mit
+  einem Testeintrag prüfen.
 - Wer nur lesen will, lässt `notion_add_entry` in `jarvis.toml` weg: dann sieht das Modell das
   Werkzeug nie.

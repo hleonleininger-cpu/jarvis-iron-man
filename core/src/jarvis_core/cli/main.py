@@ -149,6 +149,8 @@ def init() -> None:
     typer.echo("Nächste Schritte:")
     for step in (
         f"{rec.pull_command}   (empfohlen für diesen Rechner: {rec.reason})",
+        "Umgebungsvariable OLLAMA_CONTEXT_LENGTH=8192 setzen und Ollama neu starten   "
+        "(die Vorlage rechnet mit 8192 Tokens)",
         "jarvis secrets set apple_caldav   (Kalender, optional)",
         "jarvis secrets set notion   (und Datenbank-IDs in jarvis.toml eintragen, optional)",
         "jarvis doctor   (prüft alles)",

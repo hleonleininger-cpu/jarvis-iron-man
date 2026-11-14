@@ -369,7 +369,11 @@ def test_init_creates_a_valid_config_and_never_overwrites(
     from jarvis_core.config import load_settings
 
     result = CliRunner().invoke(app, ["init"])
-    assert result.exit_code == 0 and "ollama pull" in result.stdout
+    assert (
+        result.exit_code == 0
+        and "ollama pull" in result.stdout
+        and "OLLAMA_CONTEXT_LENGTH=8192" in result.stdout
+    )
     created = tmp_path / "jarvis.toml"
     settings = load_settings()  # die Vorlage muss gültig sein
     assert set(settings.mcp_servers) == {
