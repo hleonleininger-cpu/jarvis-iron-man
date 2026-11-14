@@ -46,6 +46,11 @@ Kurztext, ohne Konto und Schlüssel. Nur der Suchbegriff geht ins Netz, nie der 
 Treffer gelten als Fremdtext und JARVIS nennt die Quelle. In `jarvis.toml` abschaltbar
 (`[mcp_servers.websearch]` entfernen). Siehe ADR-015.
 
+**Ideen, Aufträge, Entwürfe (lokal):** `add_idea`, `add_lead`, `set_project_status`,
+`save_draft` (WRITE_LOCAL) und `list_ideas`/`list_leads` (READ) für Nebeneinkünfte: Ideen für
+Produkte und Apps, Aufträge mit Frist und Betrag samt Summen, Entwürfe als Textdateien in
+`~/.jarvis/entwuerfe/`. JARVIS veröffentlicht, sendet und bezahlt nichts. Siehe ADR-016.
+
 **Notizen und Aufgaben (lokal):** `add_note` und `complete_note` (WRITE_LOCAL: ohne Rückfrage,
 aber im Audit-Log), `list_notes` (READ).
 Gespeichert in `~/.jarvis/notizen.sqlite3`, kein Netz. Siehe ADR-012.
@@ -108,9 +113,9 @@ Zugangsdaten gesetzt sind. Ein relativer `data_dir` gilt relativ zur Konfigurati
 **Kontextfenster:** Ollama nutzt über seine OpenAI-Schnittstelle nur seinen Server-Standard
 (4096 Tokens) und kürzt längere Prompts still von vorn, also zuerst die Systemanweisung. JARVIS
 schickt deshalb nur so viel Verlauf mit, wie neben Systemanweisung, Werkzeugen und einer Reserve
-für die Antwort in `context_tokens` passt. Für längere Gespräche: Ollama mit
-`OLLAMA_CONTEXT_LENGTH=16384` starten und `context_tokens = 16384` setzen; `jarvis doctor` zeigt
-beides an.
+für die Antwort in `context_tokens` passt. Die Werkzeuge der Vorlage brauchen allein rund 3000
+Tokens, deshalb: Ollama mit `OLLAMA_CONTEXT_LENGTH=8192` starten (für längere Gespräche 16384) und
+`context_tokens` auf denselben Wert setzen; `jarvis doctor` zeigt beides an.
 
 **Wohnort:** `home_location = "Dortmund"` nennt den Wohnort: Fragen ohne Ort (z. B. "Wie ist das Wetter?")
 beziehen sich dann darauf.

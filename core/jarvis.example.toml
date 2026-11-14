@@ -11,9 +11,10 @@ log_level = "INFO"
 history_max_turns = 10
 history_max_chars = 16000
 # Kontextfenster des Modells in Tokens. Ollama nutzt standardmäßig nur 4096 und kürzt längere
-# Prompts still von vorn. Für längere Gespräche Ollama mit OLLAMA_CONTEXT_LENGTH=16384 starten
+# Prompts still von vorn. Die Werkzeuge dieser Vorlage brauchen zusammen schon rund 3000 Tokens:
+# Ollama deshalb mit OLLAMA_CONTEXT_LENGTH=8192 (für längere Gespräche 16384) starten
 # (Windows: Umgebungsvariable setzen, Ollama neu starten) und hier denselben Wert eintragen.
-context_tokens = 4096
+context_tokens = 8192
 
 # MCP-Server: nur hier deklarierte werden gestartet. `tools` ist die einzige Stelle für
 # Werkzeug-Metadaten; nicht aufgeführte Werkzeuge werden dem Modell nie angeboten.
@@ -70,6 +71,22 @@ reminders = "take_due_reminders"
 add_note = "WRITE_LOCAL"
 list_notes = "READ"
 complete_note = "WRITE_LOCAL"
+
+# Ideen, Aufträge und Entwürfe für Nebeneinkünfte, lokal (ADR-016). Gespeichert in
+# ~/.jarvis/projekte.sqlite3, Entwürfe als Textdateien in ~/.jarvis/entwuerfe/. Andere Orte mit
+# args = [..., "--datei", "D:/jarvis/projekte.sqlite3", "--entwuerfe", "D:/jarvis/entwuerfe"].
+# Nichts wird veröffentlicht, gesendet oder bezahlt; Entwürfe überschreiben nie eine Datei.
+[mcp_servers.projekte]
+command = "python"
+args = ["-m", "mcp_servers.projekte"]
+
+[mcp_servers.projekte.tools]
+add_idea = "WRITE_LOCAL"
+list_ideas = "READ"
+add_lead = "WRITE_LOCAL"
+list_leads = "READ"
+set_project_status = "WRITE_LOCAL"
+save_draft = "WRITE_LOCAL"
 
 # Notion (NUR LESEN, JARVIS-OS-Daten). Token: `jarvis secrets set notion` (OS-Schlüsselbund).
 # env ordnet Namen den Datenbank-IDs (Data-Source-IDs) zu: NOTION_DB_<NAME> = "<ID>".

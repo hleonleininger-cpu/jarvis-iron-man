@@ -377,6 +377,7 @@ def test_init_creates_a_valid_config_and_never_overwrites(
         "websearch",
         "calendar",
         "notes",
+        "projekte",
     }  # Notion erst nach Einrichtung
     assert settings.host == "127.0.0.1"
 

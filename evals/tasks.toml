@@ -207,6 +207,24 @@ id = "websearch-no-need"
 prompt = "Was ist 12 mal 12?"
 answer_any = ["144"]
 
+# ---------------------------------------------------------------- Ideen, Aufträge, Entwürfe (lokal)
+[[task]]
+id = "projekte-idea"
+prompt = "Merk dir als Idee: eine Lernplan-Vorlage für Abiturienten als digitales Produkt."
+expect_tools = ["add_idea"]
+expect_writes = 1
+
+[[task]]
+id = "projekte-leads-read"
+prompt = "Welche Aufträge laufen gerade und was habe ich schon verdient?"
+expect_tools = ["list_leads"]
+
+[[task]]
+id = "projekte-draft"
+prompt = "Schreib einen kurzen Angebotsentwurf für Herrn Müller und leg ihn als Entwurf ab."
+expect_tools = ["save_draft"]
+expect_writes = 1
+
 # ---------------------------------------------------------------- Notion (nur Lesen, Attrappe)
 # Attrappe: mission_control = JARVIS OS fertigstellen, Mathe LK wiederholen, Handballtraining
 # planen (Steuerunterlagen sortieren ist erledigt); academy = Atomic Habits (Kapitel 7), Deep Work.

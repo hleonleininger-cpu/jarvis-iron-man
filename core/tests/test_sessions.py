@@ -400,8 +400,10 @@ async def test_prompt_stays_inside_the_context_window(tmp_path: Path) -> None:
         sizes.append(len(info.instructions or "") + tools + content)
         yield "Antwort " + "x" * 900
 
+    # Alle Werkzeuge zusammen brauchen allein rund 3000 Tokens: 8192 ist das Mindeste dafür.
     settings = Settings(
         data_dir=tmp_path / "data",
+        context_tokens=8192,
         mcp_servers=eval_servers(tmp_path / "w.jsonl", tmp_path / "n.sqlite3"),
     )
     service = build_service(

@@ -82,7 +82,9 @@ WEEKDAYS_DE = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samst
 
 DAY_OVERVIEW = (
     "Fragt der Nutzer nach seinem Tag (z. B. 'Was steht heute an?'), nutze die verfügbaren "
-    "Werkzeuge zusammen: Termine von heute, offene Notizen und Aufgaben, das Wetter."
+    "Werkzeuge zusammen: Termine von heute, offene Notizen und Aufgaben, das Wetter. "
+    "Bei Nebeneinkünften hältst du Ideen und Aufträge fest und legst Entwürfe als Datei ab; "
+    "veröffentlicht, gesendet oder bezahlt wird nichts."
 )
 
 

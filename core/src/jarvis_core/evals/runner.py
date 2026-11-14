@@ -94,7 +94,35 @@ def eval_servers(writes_log: Path, notes_file: Path | None = None) -> dict[str, 
             previews={"add_note": "preview_add_note", "complete_note": "preview_complete_note"},
             reminders="take_due_reminders",
         ),
+        # Ebenfalls der echte Server (nur lokal), mit Wegwerf-Datei und -Ordner.
+        "projekte": McpServerConfig(
+            command="python",
+            args=[
+                "-m",
+                "mcp_servers.projekte",
+                "--datei",
+                str(_projects_file(writes_log)),
+                "--entwuerfe",
+                str(_drafts_dir(writes_log)),
+            ],
+            tools={
+                "add_idea": RiskClass.WRITE_LOCAL,
+                "list_ideas": RiskClass.READ,
+                "add_lead": RiskClass.WRITE_LOCAL,
+                "list_leads": RiskClass.READ,
+                "set_project_status": RiskClass.WRITE_LOCAL,
+                "save_draft": RiskClass.WRITE_LOCAL,
+            },
+        ),
     }
+
+
+def _projects_file(writes_log: Path) -> Path:
+    return writes_log.with_suffix(".projekte")
+
+
+def _drafts_dir(writes_log: Path) -> Path:
+    return writes_log.with_suffix(".entwuerfe")
 
 
 def _tools_from_audit(db_path: Path) -> list[str]:
@@ -110,8 +138,15 @@ def _tools_from_audit(db_path: Path) -> list[str]:
 
 
 def _count_writes(log: Path, notes_file: Path) -> int:
-    """Schreibaufrufe: Zeilen im Protokoll der Kalender-Attrappe plus gespeicherte Notizen."""
+    """Schreibaufrufe: Zeilen im Protokoll der Kalender-Attrappe, gespeicherte Notizen sowie
+    Ideen/Aufträge und Entwürfe des Projekte-Servers."""
     writes = 0
+    projects, drafts = _projects_file(log), _drafts_dir(log)
+    if projects.exists():
+        with closing(sqlite3.connect(projects)) as conn:
+            writes += int(conn.execute("SELECT COUNT(*) FROM items").fetchone()[0])
+    if drafts.exists():
+        writes += len(list(drafts.iterdir()))
     if log.exists():
         writes += len([ln for ln in log.read_text(encoding="utf-8").splitlines() if ln.strip()])
     if notes_file.exists():
