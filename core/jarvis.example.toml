@@ -28,6 +28,15 @@ args = ["-m", "mcp_servers.weather"]
 [mcp_servers.weather.tools]
 get_weather = "READ"
 
+# Websuche über DuckDuckGo (ohne Konto und Schlüssel, ADR-015). Nur der Suchbegriff geht ins
+# Netz, nie der Gesprächsverlauf. Wer das nicht will, löscht diese drei Blöcke.
+[mcp_servers.websearch]
+command = "python"
+args = ["-m", "mcp_servers.websearch"]
+
+[mcp_servers.websearch.tools]
+web_search = "READ"
+
 # Apple-Kalender (iCloud/CalDAV). Zugangsdaten: `jarvis secrets set apple_caldav` (OS-Schlüsselbund).
 # Schreibende Werkzeuge -> Policy: CONFIRM (Vorschau + Rückfrage vor dem Anlegen/Ändern/Löschen).
 # `previews` nennt das Vorschau-Werkzeug (schreibt nichts, wird dem Modell nicht angeboten).

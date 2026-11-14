@@ -374,6 +374,7 @@ def test_init_creates_a_valid_config_and_never_overwrites(
     settings = load_settings()  # die Vorlage muss gültig sein
     assert set(settings.mcp_servers) == {
         "weather",
+        "websearch",
         "calendar",
         "notes",
     }  # Notion erst nach Einrichtung

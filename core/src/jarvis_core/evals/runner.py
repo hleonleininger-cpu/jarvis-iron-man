@@ -47,6 +47,11 @@ def eval_servers(writes_log: Path, notes_file: Path | None = None) -> dict[str, 
             args=["-m", "mcp_servers.doubles.weather"],
             tools={"get_weather": RiskClass.READ},
         ),
+        "websearch": McpServerConfig(
+            command="python",
+            args=["-m", "mcp_servers.doubles.websearch"],
+            tools={"web_search": RiskClass.READ},
+        ),
         "notion": McpServerConfig(
             command="python",
             args=["-m", "mcp_servers.doubles.notion"],

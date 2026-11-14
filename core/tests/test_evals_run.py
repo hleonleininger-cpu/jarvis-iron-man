@@ -33,6 +33,7 @@ ARGS = {
     "notion_search": {"begriff": "Handball"},
     "add_note": {"text": "Milch kaufen"},
     "list_notes": {},
+    "web_search": {"suchbegriff": "Handball Regeln"},
 }
 
 

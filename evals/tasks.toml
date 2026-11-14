@@ -194,6 +194,19 @@ confirm = "no"
 expect_confirm = true
 expect_writes = 0
 
+# ---------------------------------------------------------------- Websuche (Attrappe)
+# Attrappe: "Handball" liefert zwei Treffer (Regeln, Bundesliga), "Python" einen, sonst nichts.
+[[task]]
+id = "websearch-rules"
+prompt = "Such im Web nach den Regeln von Handball."
+expect_tools = ["web_search"]
+answer_any = ["Regeln", "beispiel.example"]
+
+[[task]]
+id = "websearch-no-need"
+prompt = "Was ist 12 mal 12?"
+answer_any = ["144"]
+
 # ---------------------------------------------------------------- Notion (nur Lesen, Attrappe)
 # Attrappe: mission_control = JARVIS OS fertigstellen, Mathe LK wiederholen, Handballtraining
 # planen (Steuerunterlagen sortieren ist erledigt); academy = Atomic Habits (Kapitel 7), Deep Work.

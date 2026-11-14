@@ -41,6 +41,11 @@ Zeiträume: heute, morgen, übermorgen, woche, nächste woche, ein Datum oder vo
 API: SSE-Event `confirm`, Antwort per `POST /v1/confirm/{id}`. Zugangsdaten nur im
 OS-Schlüsselbund. Siehe ADR-005/006/014.
 
+**Websuche (DuckDuckGo):** `web_search` (READ) liefert bis zu 5 Treffer mit Titel, Adresse und
+Kurztext, ohne Konto und Schlüssel. Nur der Suchbegriff geht ins Netz, nie der Gesprächsverlauf;
+Treffer gelten als Fremdtext und JARVIS nennt die Quelle. In `jarvis.toml` abschaltbar
+(`[mcp_servers.websearch]` entfernen). Siehe ADR-015.
+
 **Notizen und Aufgaben (lokal):** `add_note` und `complete_note` (WRITE_LOCAL: ohne Rückfrage,
 aber im Audit-Log), `list_notes` (READ).
 Gespeichert in `~/.jarvis/notizen.sqlite3`, kein Netz. Siehe ADR-012.
