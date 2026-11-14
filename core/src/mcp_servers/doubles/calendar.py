@@ -1,5 +1,5 @@
-"""Kalender-Attrappe: Termine zum angefragten Zeitfenster; Schreibaufrufe (PUT) werden nur
-protokolliert (JSON-Zeilen in die per Argument übergebene Datei), nie irgendwohin geschrieben."""
+"""Kalender-Attrappe: Termine zum angefragten Zeitfenster; Schreibaufrufe (PUT, DELETE) werden
+nur protokolliert (JSON-Zeilen in die per Argument übergebene Datei), nie ausgeführt."""
 
 import json
 import re
@@ -33,21 +33,38 @@ def _events_for(body: str) -> str:
         if match
         else (datetime.now(UTC))
     )
-    ics = "BEGIN:VCALENDAR\r\n" + _vevent("Besprechung", first + timedelta(hours=9), 1)
-    ics += _vevent("Handballtraining", first + timedelta(hours=17), 2) + "END:VCALENDAR\r\n"
-    return _multistatus(
-        f"<D:response><D:href>{BASE}privat/a.ics</D:href><D:propstat><D:prop>"
-        f"<C:calendar-data><![CDATA[{ics}]]></C:calendar-data></D:prop></D:propstat></D:response>"
+    return _multistatus(*(
+        f"<D:response><D:href>{BASE}privat/{name}</D:href><D:propstat><D:prop>"
+        f"<C:calendar-data><![CDATA[{_file(name, first)}]]></C:calendar-data></D:prop>"
+        "</D:propstat></D:response>"
+        for name in EVENTS
+    ))  # fmt: skip
+
+
+# Jeder Termin in einer eigenen Datei, wie bei iCloud: Dateiname -> (Titel, Stunde, Dauer).
+EVENTS = {"besprechung.ics": ("Besprechung", 9, 1), "handball.ics": ("Handballtraining", 17, 2)}
+
+
+def _file(name: str, day: datetime) -> str:
+    title, hour, hours = EVENTS[name]
+    return (
+        f"BEGIN:VCALENDAR\r\n{_vevent(title, day + timedelta(hours=hour), hours)}END:VCALENDAR\r\n"
     )
 
 
 def make_transport(log_path: str) -> Transport:
     def transport(method: str, url: str, headers: dict[str, str], body: bytes | None) -> Response:
         text = body.decode() if body else ""
-        if method == "PUT":
+        name = url.rsplit("/", 1)[-1]
+        if method == "GET":  # einzelner Termin (vor dem Ändern/Löschen)
+            if name not in EVENTS:
+                return Response(404, "", url)
+            midnight = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+            return Response(200, _file(name, midnight + timedelta(days=1)), url, {"etag": '"1"'})
+        if method in ("PUT", "DELETE"):
             with open(log_path, "a", encoding="utf-8") as fh:
-                fh.write(json.dumps({"method": "PUT", "url": url, "ics": text}) + "\n")
-            return Response(201, "", url)
+                fh.write(json.dumps({"method": method, "url": url, "ics": text}) + "\n")
+            return Response(201 if method == "PUT" else 204, "", url)
         if "current-user-principal" in text:
             href = (
                 "<D:current-user-principal><D:href>/1/principal/</D:href>"

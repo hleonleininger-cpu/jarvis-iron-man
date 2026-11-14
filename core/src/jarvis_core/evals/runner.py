@@ -60,8 +60,17 @@ def eval_servers(writes_log: Path, notes_file: Path | None = None) -> dict[str, 
         "calendar": McpServerConfig(
             command="python",
             args=["-m", "mcp_servers.doubles.calendar", str(writes_log)],
-            tools={"list_events": RiskClass.READ, "create_event": RiskClass.WRITE_REVERSIBLE},
-            previews={"create_event": "preview_create_event"},
+            tools={
+                "list_events": RiskClass.READ,
+                "create_event": RiskClass.WRITE_REVERSIBLE,
+                "update_event": RiskClass.WRITE_REVERSIBLE,
+                "delete_event": RiskClass.IRREVERSIBLE,
+            },
+            previews={
+                "create_event": "preview_create_event",
+                "update_event": "preview_update_event",
+                "delete_event": "preview_delete_event",
+            },
         ),
         # Der echte Notiz-Server: er arbeitet ohnehin nur lokal, hier mit einer Wegwerf-Datei.
         "notes": McpServerConfig(

@@ -39,6 +39,19 @@ ERROR_TEXTS: dict[str, str] = {
     "invalid_response": "iCloud lieferte eine unerwartete Antwort.",
     "calendar_not_found": "Es wurde kein passender Kalender gefunden.",
     "write_failed": "iCloud hat den Termin nicht angenommen.",
+    "event_not_found": "Diesen Termin gibt es nicht (mehr). Bitte die Termine neu abrufen.",
+    "changed_meanwhile": (
+        "Der Termin wurde inzwischen anderswo geändert; es wurde nichts überschrieben. Bitte die "
+        "Termine neu abrufen."
+    ),
+    "invalid_event_id": (
+        "Das ist keine gültige Termin-ID. Bitte die id aus list_events unverändert übernehmen."
+    ),
+    "read_only": (
+        "Dieser Kalender lässt keine Änderungen zu (z. B. ein abonnierter oder nur zum Lesen "
+        "freigegebener Kalender)."
+    ),
+    "recurring": "Serientermine können (noch) nicht geändert oder gelöscht werden.",
 }
 
 
@@ -63,6 +76,7 @@ class Response:
     status: int
     body: str
     url: str
+    headers: dict[str, str] = dataclasses.field(default_factory=lambda: {})  # Namen klein
 
 
 # (method, url, headers, body) -> Response. In Tests ersetzt.
@@ -92,7 +106,10 @@ def urllib_transport(
         request = urllib.request.Request(current, data=body, headers=headers, method=method)  # noqa: S310
         try:
             with urllib.request.urlopen(request, timeout=TIMEOUT_SECONDS) as resp:  # noqa: S310
-                return Response(resp.status, resp.read().decode("utf-8", "replace"), current)
+                received = {k.lower(): v for k, v in resp.headers.items()}
+                return Response(
+                    resp.status, resp.read().decode("utf-8", "replace"), current, received
+                )
         except urllib.error.HTTPError as err:
             location = err.headers.get("Location")
             target = urljoin(current, location) if location else None
@@ -152,6 +169,26 @@ def select_calendar(calendars: list[Calendar], wanted: str | None) -> Calendar:
     raise CalDavError("calendar_not_found")
 
 
+def _folder(url: str) -> str:
+    """Letzter Pfadabschnitt einer Kalender-Adresse (z. B. 'home')."""
+    return urlsplit(url).path.rstrip("/").rsplit("/", 1)[-1]
+
+
+def _event_id(calendar: Calendar, href: str) -> str | None:
+    """Kennung eines Termins: '<Kalenderordner>/<Datei>.ics'. Kurz (das Modell muss sie
+    abschreiben) und ohne die Kontonummer aus dem iCloud-Pfad. None, wenn die Datei nicht direkt
+    im Kalender liegt."""
+    base = urlsplit(calendar.url).path.rstrip("/") + "/"
+    path = urlsplit(href).path
+    name = path[len(base) :] if path.startswith(base) else ""
+    if not name.endswith(".ics") or "/" in name or not _folder(calendar.url):
+        return None
+    return f"{_folder(calendar.url)}/{name}"
+
+
+_FORBIDDEN_IN_ID = ("..", "?", "#", "\\", "%2f", "%5c", "%2e")
+
+
 def _caldav_utc(value: datetime) -> str:
     return value.astimezone(UTC).strftime("%Y%m%dT%H%M%SZ")
 
@@ -171,6 +208,7 @@ class CalDavClient:
         self._entry_url = entry_url
         # Kalender, die beim letzten list_events nicht lesbar waren (z. B. abonnierte).
         self.unreadable: list[str] = []
+        self._known_calendars: list[Calendar] | None = None  # je Client nur einmal abfragen
 
     def _request(
         self,
@@ -196,12 +234,26 @@ class CalDavClient:
         except (OSError, TimeoutError) as exc:
             log_error(step, None, f"network_error:{type(exc).__name__}")
             raise CalDavError("unavailable") from None
+        if response.status == 403 and method in ("PUT", "DELETE"):
+            # Die Anmeldung hat beim Lesen eben noch funktioniert: Kalender schreibgeschützt.
+            log_error(step, response.status, "read_only")
+            raise CalDavError("read_only")
         if response.status in (401, 403):
             log_error(step, response.status, "unauthorized")
             raise CalDavError("unauthorized")
         if response.status == 429:
             log_error(step, response.status, "rate_limited")
             raise CalDavError("rate_limited")
+        if (
+            response.status in (404, 410)
+            and method in ("GET", "DELETE", "PUT")
+            and step != "CREATE"
+        ):
+            log_error(step, response.status, "event_not_found")
+            raise CalDavError("event_not_found")
+        if response.status == 412 and step != "CREATE":  # If-Match: inzwischen geändert
+            log_error(step, response.status, "changed_meanwhile")
+            raise CalDavError("changed_meanwhile")
         if response.status not in ok_statuses:
             reason = "write_failed" if method == "PUT" else "unavailable"
             log_error(step, response.status, reason)
@@ -262,7 +314,9 @@ class CalDavClient:
         return calendars
 
     def _all_calendars(self) -> list[Calendar]:
-        return self._calendars(self._home_set(self._principal()))
+        if self._known_calendars is None:
+            self._known_calendars = self._calendars(self._home_set(self._principal()))
+        return self._known_calendars
 
     def _calendar(self) -> Calendar:
         """Der Kalender für neue Termine: der benannte, sonst der erste."""
@@ -308,12 +362,79 @@ class CalDavClient:
         )
         resp = self._request("EVENTS", "REPORT", calendar.url, body=body, depth=1)
         root = _parse_xml(resp.body, "EVENTS", resp.status)
-        blocks = [el.text for el in _find_all(root, "calendar-data") if el.text]
-        return [
-            dataclasses.replace(event, calendar=calendar.display_name)
-            for event in parse_events(blocks)
-            if _overlaps(event, time_min, time_max)
-        ]
+        events: list[Event] = []
+        for response in _find_all(root, "response"):
+            hrefs = [h.text.strip() for h in _find_all(response, "href") if h.text]
+            event_id = _event_id(calendar, urljoin(resp.url, hrefs[0])) if hrefs else None
+            blocks = [el.text for el in _find_all(response, "calendar-data") if el.text]
+            for event in parse_events(blocks):
+                if _overlaps(event, time_min, time_max):
+                    events.append(
+                        dataclasses.replace(
+                            event, calendar=calendar.display_name, event_id=event_id
+                        )
+                    )
+        return events
+
+    def _locate(self, event_id: str) -> tuple[Calendar, str]:
+        """Termin-ID ('<Kalenderordner>/<Datei>.ics') -> (Kalender, URL). Nur Dateien direkt in
+        einem der eigenen (bzw. dem gewählten) Kalender; alles andere wird abgelehnt, bevor eine
+        Anfrage an die Termindatei hinausgeht."""
+        raw = event_id.strip()
+        folder, _, name = raw.partition("/")
+        valid = (
+            bool(folder)
+            and name.endswith(".ics")
+            and "/" not in name
+            and not any(bad in raw.lower() for bad in _FORBIDDEN_IN_ID)
+        )
+        if valid:
+            calendars = self._all_calendars()
+            if self._calendar_name:
+                calendars = [select_calendar(calendars, self._calendar_name)]
+            for calendar in calendars:
+                if _folder(calendar.url) == folder:
+                    return calendar, calendar.url.rstrip("/") + "/" + name
+        log_error("LOCATE", None, "invalid_event_id")
+        raise CalDavError("invalid_event_id")
+
+    def get_event(self, event_id: str) -> tuple[Event, str, str | None]:
+        """(Termin, iCalendar-Text, ETag) eines einzelnen Termins."""
+        calendar, url = self._locate(event_id)
+        resp = self._request("GET_EVENT", "GET", url, ok_statuses=(200,))
+        events = parse_events([resp.body])
+        if not events:
+            log_error("GET_EVENT", resp.status, "invalid_response:no_vevent")
+            raise CalDavError("invalid_response")
+        event = dataclasses.replace(
+            events[0],
+            calendar=calendar.display_name,
+            event_id=event_id.strip(),
+            recurring=events[0].recurring or len(events) > 1,
+        )
+        return event, resp.body, resp.headers.get("etag")
+
+    def _guarded(self, etag: str | None) -> dict[str, str]:
+        # Nur überschreiben/löschen, wenn der Termin seit dem Lesen unverändert ist.
+        return {"If-Match": etag} if etag else {}
+
+    def delete_event(self, event_id: str, etag: str | None) -> None:
+        _calendar, url = self._locate(event_id)
+        self._request(
+            "DELETE_EVENT", "DELETE", url, extra=self._guarded(etag), ok_statuses=(200, 204)
+        )
+
+    def replace_event(self, event_id: str, ics: str, etag: str | None) -> None:
+        _calendar, url = self._locate(event_id)
+        self._request(
+            "UPDATE_EVENT",
+            "PUT",
+            url,
+            body=ics,
+            content_type="text/calendar; charset=utf-8",
+            extra=self._guarded(etag),
+            ok_statuses=(200, 201, 204),
+        )
 
     def create_event(
         self,

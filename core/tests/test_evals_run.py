@@ -27,6 +27,8 @@ ARGS = {
     "get_weather": {"ort": "Dortmund"},
     "list_events": {"zeitraum": "morgen"},
     "create_event": {"titel": "Zahnarzt", "start": "2026-12-12T15:00"},
+    "update_event": {"id": "privat/besprechung.ics", "start": "2026-12-12T11:00"},
+    "delete_event": {"id": "privat/handball.ics"},
     "notion_query": {"datenbank": "mission_control"},
     "notion_search": {"begriff": "Handball"},
     "add_note": {"text": "Milch kaufen"},

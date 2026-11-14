@@ -34,9 +34,12 @@ Siehe ADR-004.
 **Kalender (iCloud):** `list_events` (READ) liest Termine aus allen Kalendern, `create_event`
 (CONFIRM) legt nach Vorschau und Rückfrage `[j/N]` im ersten bzw. gewählten Kalender an; die
 Vorschau nennt Datum mit Jahr und Zielkalender und warnt bei Terminen in der Vergangenheit.
+`update_event` und `delete_event` (beide CONFIRM) ändern bzw. löschen einen einzelnen Termin:
+die Vorschau zeigt alt → neu, überschrieben wird nur, wenn der Termin seit dem Lesen unverändert
+ist, und Serientermine bleiben unangetastet ("Verschiebe den Zahnarzt auf Donnerstag 16 Uhr").
 Zeiträume: heute, morgen, übermorgen, woche, nächste woche, ein Datum oder von/bis (max. 92 Tage).
 API: SSE-Event `confirm`, Antwort per `POST /v1/confirm/{id}`. Zugangsdaten nur im
-OS-Schlüsselbund. Siehe ADR-005/006.
+OS-Schlüsselbund. Siehe ADR-005/006/014.
 
 **Notizen und Aufgaben (lokal):** `add_note` und `complete_note` (WRITE_LOCAL: ohne Rückfrage,
 aber im Audit-Log), `list_notes` (READ).
