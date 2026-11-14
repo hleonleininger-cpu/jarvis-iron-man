@@ -496,6 +496,9 @@ def test_example_notion_section_is_valid_once_uncommented(tmp_path: Path) -> Non
     block = text[text.index("# [mcp_servers.notion]") :]
     enabled = re.sub(r"(?m)^# ?", "", block)
     (tmp_path / "jarvis.toml").write_text(enabled, encoding="utf-8")
-    assert set(load_settings().mcp_servers["notion"].tools) == {
-        "notion_search", "notion_query", "notion_get",
+    notion = load_settings().mcp_servers["notion"]
+    assert set(notion.tools) == {
+        "notion_search", "notion_query", "notion_get", "notion_add_entry",
     }  # fmt: skip
+    assert notion.tools["notion_add_entry"] == "WRITE_REVERSIBLE"  # mit Rückfrage, nie still
+    assert notion.previews == {"notion_add_entry": "preview_notion_add_entry"}

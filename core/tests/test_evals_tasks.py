@@ -21,6 +21,7 @@ def test_shipped_tasks_are_valid_and_cover_the_required_categories() -> None:
     assert any(t.expect_tools == ["notion_query"] for t in tasks)  # Notion lesen
     assert any(t.expect_tools == ["notion_search"] for t in tasks)
     assert any(t.expect_tools == ["web_search"] for t in tasks)  # Websuche
+    assert any(t.expect_tools == ["notion_add_entry"] and t.confirm == "no" for t in tasks)
     assert any(t.expect_tools == ["add_idea"] and t.expect_writes == 1 for t in tasks)
     for t in tasks:  # Nein auf eine Rückfrage darf nie schreiben
         if t.expect_confirm and t.confirm == "no":

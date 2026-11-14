@@ -1,6 +1,6 @@
 # ADR-008: Notion-Anbindung, nur lesend
 
-**Status:** akzeptiert
+**Status:** teilweise ersetzt durch ADR-017 (Anlegen neuer Einträge); Ändern und Löschen bleiben ausgeschlossen
 
 ## Kontext
 Das JARVIS OS (Mission Control, Academy, Forge, Olympus, Vault) liegt in Notion. JARVIS soll

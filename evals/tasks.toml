@@ -288,3 +288,20 @@ expect_tools = ["list_notes"]
 id = "day-overview"
 prompt = "Was steht heute an? Ich bin in Dortmund."
 expect_tools = ["list_events", "list_notes", "get_weather"]
+
+# ---------------------------------------------------------------- Notion anlegen (Attrappe, mit Rückfrage)
+[[task]]
+id = "notion-add-yes"
+prompt = "Leg in Mission Control den Eintrag 'Steuer machen' an."
+expect_tools = ["notion_add_entry"]
+confirm = "yes"
+expect_confirm = true
+expect_writes = 1
+
+[[task]]
+id = "notion-add-no"
+prompt = "Leg in Mission Control den Eintrag 'Steuer machen' an."
+expect_tools = ["notion_add_entry"]
+confirm = "no"
+expect_confirm = true
+expect_writes = 0

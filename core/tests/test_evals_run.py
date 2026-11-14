@@ -34,6 +34,7 @@ ARGS = {
     "add_note": {"text": "Milch kaufen"},
     "list_notes": {},
     "web_search": {"suchbegriff": "Handball Regeln"},
+    "notion_add_entry": {"datenbank": "mission_control", "titel": "Steuer machen"},
     "add_idea": {"titel": "Lernplan-Vorlage", "kategorie": "produkt"},
     "list_leads": {},
     "save_draft": {"titel": "Angebot Müller", "text": "Entwurf"},

@@ -14,7 +14,7 @@ uv run jarvis chat              # Dialog mit Gesprächsverlauf (/neu, /ende)
 uv run jarvis serve --open      # nur 127.0.0.1; öffnet die Web-Oberfläche im Browser
 uv run jarvis tools list        # MCP-Werkzeuge mit Risikoklasse
 uv run jarvis secrets set apple_caldav   # Apple-ID + App-Passwort -> Schlüsselbund
-uv run jarvis secrets set notion          # Notion-Integration-Token (nur Lesen)
+uv run jarvis secrets set notion          # Notion-Integration-Token
 uv run jarvis secrets status
 uv run jarvis secrets generate api_token  # Token für Zugriff übers Tailnet (iPhone)
 uv run jarvis secrets delete notion       # Zugangsdaten wieder entfernen
@@ -59,10 +59,12 @@ Gespeichert in `~/.jarvis/notizen.sqlite3`, kein Netz. Siehe ADR-012.
 meldet sie zur Uhrzeit in der Web-Oberfläche (auf Wunsch als Systembenachrichtigung) oder im
 CLI-Dialog, solange er läuft. Siehe ADR-013.
 
-**Notion (nur Lesen):** `notion_search`, `notion_query`, `notion_get` (alle READ). Token im
-Schlüsselbund, Datenbank-IDs in `jarvis.toml` (`[mcp_servers.notion] env`). Es gibt keinen
-Schreib-Endpunkt im Code. In der Vorlage auskommentiert: nach `jarvis secrets set notion` und dem
-Eintragen der IDs einschalten. Siehe ADR-008.
+**Notion:** `notion_search`, `notion_query`, `notion_get` (READ) lesen; `notion_add_entry`
+(CONFIRM) legt nach Vorschau und Rückfrage einen NEUEN Eintrag (Titel, optional Text) in einer
+konfigurierten Datenbank an. Ändern, Archivieren und Löschen gibt es im Code nicht. Token im
+Schlüsselbund, Datenbank-IDs in `jarvis.toml` (`[mcp_servers.notion] env`); zum Anlegen braucht die
+Integration in Notion die Berechtigung "Inhalte einfügen". In der Vorlage auskommentiert: nach
+`jarvis secrets set notion` und dem Eintragen der IDs einschalten. Siehe ADR-008/017.
 
 **Diagnose:** Was die Werkzeug-Server auf stderr schreiben (z. B. `[caldav:EVENTS] status=401`),
 steht in `data/logs/<server>.log`, jeweils nur vom letzten Lauf.

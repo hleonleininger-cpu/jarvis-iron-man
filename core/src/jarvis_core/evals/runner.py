@@ -54,13 +54,15 @@ def eval_servers(writes_log: Path, notes_file: Path | None = None) -> dict[str, 
         ),
         "notion": McpServerConfig(
             command="python",
-            args=["-m", "mcp_servers.doubles.notion"],
+            args=["-m", "mcp_servers.doubles.notion", str(writes_log)],
             env=EVAL_NOTION_ENV,
             tools={
                 "notion_search": RiskClass.READ,
                 "notion_query": RiskClass.READ,
                 "notion_get": RiskClass.READ,
+                "notion_add_entry": RiskClass.WRITE_REVERSIBLE,
             },
+            previews={"notion_add_entry": "preview_notion_add_entry"},
         ),
         "calendar": McpServerConfig(
             command="python",

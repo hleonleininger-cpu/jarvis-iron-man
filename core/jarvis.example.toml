@@ -88,7 +88,8 @@ list_leads = "READ"
 set_project_status = "WRITE_LOCAL"
 save_draft = "WRITE_LOCAL"
 
-# Notion (NUR LESEN, JARVIS-OS-Daten). Token: `jarvis secrets set notion` (OS-Schlüsselbund).
+# Notion (lesen, und NEUE Einträge anlegen mit Vorschau und Rückfrage; ändern/löschen gibt es nicht,
+# ADR-017). Token: `jarvis secrets set notion` (OS-Schlüsselbund).
 # env ordnet Namen den Datenbank-IDs (Data-Source-IDs) zu: NOTION_DB_<NAME> = "<ID>".
 # Bekannte Namen: MISSION_CONTROL, ACADEMY, FORGE, OLYMPUS, VAULT (frei erweiterbar). Die Datenbank
 # muss in Notion mit der Integration geteilt sein (Seite > Verbindungen).
@@ -98,8 +99,12 @@ save_draft = "WRITE_LOCAL"
 # command = "python"
 # args = ["-m", "mcp_servers.notion"]
 # env = { NOTION_DB_MISSION_CONTROL = "<ID>", NOTION_DB_ACADEMY = "<ID>" }
+# previews = { notion_add_entry = "preview_notion_add_entry" }
 #
 # [mcp_servers.notion.tools]
 # notion_search = "READ"
 # notion_query = "READ"
 # notion_get = "READ"
+# # Anlegen braucht in Notion die Integrationsberechtigung "Inhalte einfügen". Wer nur lesen will,
+# # lässt die Zeile weg: dann bekommt das Modell das Werkzeug nie.
+# notion_add_entry = "WRITE_REVERSIBLE"
