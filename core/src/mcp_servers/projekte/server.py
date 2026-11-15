@@ -79,12 +79,23 @@ def _due(frist: str | None) -> date | None:
     return due
 
 
+def _decimal_text(text: str) -> str:
+    """Deutsche Schreibweise lesen: '1.234,56' und '1,5' ebenso wie '1234.56'. Ein Punkt mit genau
+    drei Ziffern dahinter ('1.500') gilt als Tausendertrenner, nicht als Komma."""
+    text = text.strip().replace(" ", "")
+    if "," in text:
+        return text.replace(".", "").replace(",", ".")
+    if re.fullmatch(r"[1-9]\d{0,2}(\.\d{3})+", text):
+        return text.replace(".", "")
+    return text
+
+
 def to_cents(betrag_eur: str | float | None) -> int | None:
     """Betrag in Euro (z. B. 250 oder '249,90') -> Cent. Negativ, unlesbar oder riesig: Fehler."""
     if betrag_eur is None or str(betrag_eur).strip() == "":
         return None
     try:
-        amount = Decimal(str(betrag_eur).strip().replace(",", "."))
+        amount = Decimal(_decimal_text(str(betrag_eur)))
     except InvalidOperation:
         raise ValueError(f"Ungültiger Betrag '{betrag_eur}'. Erwartet eine Zahl in Euro.") from None
     if not amount.is_finite() or amount < 0 or amount > MAX_AMOUNT_EUR:

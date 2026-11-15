@@ -661,3 +661,11 @@ def test_double_logs_creations_and_never_touches_the_network(tmp_path: Path) -> 
     client.add_entry(MISSION_ID, column, "Titel", ["Text"], "X")
     (line,) = log.read_text(encoding="utf-8").splitlines()
     assert json.loads(line)["body"]["properties"][column]["title"][0]["text"]["content"] == "Titel"
+
+
+def test_note_with_too_many_paragraphs_is_refused_before_asking(recorder: Recorder) -> None:
+    note = "\n\n".join(["a"] * (server.MAX_PARAGRAPHS + 1))
+    for call in (server.preview_add_entry_data, server.add_entry_data):
+        result = call("mission_control", "T", note)
+        assert result["ok"] is False and "zu viele Absätze" in result["fehler"]
+    assert recorder.requests == []

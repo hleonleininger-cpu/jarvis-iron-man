@@ -160,3 +160,12 @@ def test_invalid_drafts_write_nothing(tmp_path: Path) -> None:
 def test_windows_device_names_get_a_prefix(tmp_path: Path) -> None:
     result = server.save_draft_data("CON", "x")
     assert Path(result["datei"]).name == "entwurf-con.md"
+
+
+@pytest.mark.parametrize(
+    ("text", "cents"),
+    [("1.500", 150000), ("1.234,56", 123456), ("249,90", 24990), ("1234.56", 123456),
+     ("12.5", 1250), ("1 500", 150000), ("0,5", 50), ("1.5000", 150), ("0.005", 1), ("0.500", 50)],
+)  # fmt: skip
+def test_german_and_plain_amounts_are_read_correctly(text: str, cents: int) -> None:
+    assert server.to_cents(text) == cents

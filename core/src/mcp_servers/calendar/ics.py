@@ -54,10 +54,11 @@ def _unescape(text: str) -> str:
 
 
 def _escape(text: str) -> str:
+    text = text.replace("\r\n", "\n").replace("\r", "\n")  # auch ein einzelnes \r ist ein Umbruch
     text = text.replace(_BACKSLASH, _BACKSLASH * 2)
     for char in (";", ","):
         text = text.replace(char, _BACKSLASH + char)
-    return text.replace("\r\n", "\n").replace("\n", _BACKSLASH + "n")
+    return text.replace("\n", _BACKSLASH + "n")
 
 
 def _to_value(value: str, params: dict[str, str]) -> datetime | date | None:
@@ -78,11 +79,28 @@ def _to_value(value: str, params: dict[str, str]) -> datetime | date | None:
     return None
 
 
+# Windows-/Outlook-Zonennamen, die in iCloud-Kalendern vorkommen, auf IANA-Namen.
+_WINDOWS_ZONES = {
+    "w. europe standard time": "Europe/Berlin", "central europe standard time": "Europe/Budapest",
+    "romance standard time": "Europe/Paris", "central european standard time": "Europe/Warsaw",
+    "gmt standard time": "Europe/London", "greenwich standard time": "Atlantic/Reykjavik",
+    "e. europe standard time": "Europe/Chisinau", "fle standard time": "Europe/Kyiv",
+    "gtb standard time": "Europe/Bucharest", "russian standard time": "Europe/Moscow",
+    "turkey standard time": "Europe/Istanbul",
+    "pacific standard time": "America/Los_Angeles", "mountain standard time": "America/Denver",
+    "central standard time": "America/Chicago", "eastern standard time": "America/New_York",
+    "atlantic standard time": "America/Halifax", "utc": "UTC",
+    "india standard time": "Asia/Kolkata", "china standard time": "Asia/Shanghai",
+    "tokyo standard time": "Asia/Tokyo", "aus eastern standard time": "Australia/Sydney",
+}  # fmt: skip
+
+
 def _zone(tzid: str | None) -> ZoneInfo:
-    """Zeitzone eines TZID. Unbekannte Namen (z. B. Outlooks 'W. Europe Standard Time') gelten als
+    """Zeitzone eines TZID. Windows-Namen werden übersetzt; ganz unbekannte Namen gelten als
     Europe/Berlin, statt den ganzen Termin zu verwerfen."""
     if not tzid:
         return TZ
+    tzid = _WINDOWS_ZONES.get(tzid.strip().lower(), tzid)
     try:
         return ZoneInfo(tzid)
     except (ZoneInfoNotFoundError, ValueError, OSError):

@@ -58,11 +58,12 @@ def parse_when(value: str) -> datetime | date:
         if len(text) == 10:
             return date.fromisoformat(text)
         parsed = datetime.fromisoformat(text)
-    except ValueError:
+        result = parsed.replace(tzinfo=TZ) if parsed.tzinfo is None else parsed.astimezone(TZ)
+    except (ValueError, OverflowError):  # OverflowError: z. B. Jahr 1 mit Zeitzonenversatz
         raise ValueError(
             f"Ungültige Zeitangabe '{value}'. Erwartet JJJJ-MM-TT oder JJJJ-MM-TTTHH:MM."
         ) from None
-    return parsed.replace(tzinfo=TZ) if parsed.tzinfo is None else parsed.astimezone(TZ)
+    return result
 
 
 def format_day(value: datetime | date) -> str:

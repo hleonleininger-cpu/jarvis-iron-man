@@ -97,6 +97,17 @@ def same_site(origin: str, target: str) -> bool:
     return host == domain or host.endswith("." + domain)
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """urllib folgt Weiterleitungen sonst selbst und schickt dabei den Authorization-Header mit,
+    bevor `same_site` ihn prüfen könnte. Gefolgt wird nur in urllib_transport, nach der Prüfung."""
+
+    def redirect_request(self, *args: object, **kwargs: object) -> None:  # type: ignore[override]
+        return None
+
+
+_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
 def urllib_transport(
     method: str, url: str, headers: dict[str, str], body: bytes | None
 ) -> Response:
@@ -105,7 +116,7 @@ def urllib_transport(
     for _ in range(MAX_REDIRECTS + 1):
         request = urllib.request.Request(current, data=body, headers=headers, method=method)  # noqa: S310
         try:
-            with urllib.request.urlopen(request, timeout=TIMEOUT_SECONDS) as resp:  # noqa: S310
+            with _OPENER.open(request, timeout=TIMEOUT_SECONDS) as resp:
                 received = {k.lower(): v for k, v in resp.headers.items()}
                 return Response(
                     resp.status, resp.read().decode("utf-8", "replace"), current, received
@@ -415,8 +426,12 @@ class CalDavClient:
         return event, resp.body, resp.headers.get("etag")
 
     def _guarded(self, etag: str | None) -> dict[str, str]:
-        # Nur überschreiben/löschen, wenn der Termin seit dem Lesen unverändert ist.
-        return {"If-Match": etag} if etag else {}
+        # Nur überschreiben/löschen, wenn der Termin seit dem Lesen unverändert ist. Ohne ETag
+        # ginge das nicht: dann lieber nichts tun als blind schreiben.
+        if not etag:
+            log_error("GUARD", None, "invalid_response:no_etag")
+            raise CalDavError("changed_meanwhile")
+        return {"If-Match": etag}
 
     def delete_event(self, event_id: str, etag: str | None) -> None:
         _calendar, url = self._locate(event_id)

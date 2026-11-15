@@ -485,7 +485,7 @@ def test_redirect_to_foreign_host_is_not_followed(monkeypatch: pytest.MonkeyPatc
         headers["Location"] = "https://angreifer.example/abgriff"
         raise urllib.error.HTTPError(request.full_url, 302, "Found", headers, None)
 
-    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(caldav._OPENER, "open", fake_urlopen)  # pyright: ignore[reportPrivateUsage]
     response = caldav.urllib_transport(
         "PROPFIND", "https://caldav.icloud.com/", {"Authorization": "Basic geheim"}, b"<x/>"
     )
@@ -926,10 +926,25 @@ def test_read_only_calendar_is_named_as_such(
     assert PASSWORD not in logged and "Zahnarzt" not in logged
 
 
-def test_without_etag_the_write_is_unconditional(fake_icloud: FakeICloud) -> None:
+def test_without_etag_nothing_is_written(fake_icloud: FakeICloud) -> None:
     fake_icloud.files[DENTIST_URL] = (DENTIST_ICS, None)
-    assert server.update_data(DENTIST, titel="X")["ok"]
-    assert "If-Match" not in fake_icloud.requests[-1][2]
+    assert server.update_data(DENTIST, titel="X")["grund"] == "changed_meanwhile"
+    assert server.delete_data(DENTIST)["grund"] == "changed_meanwhile"
+    assert not {"PUT", "DELETE"} & set(fake_icloud.methods)
+
+
+def test_authorization_header_is_never_sent_along_with_an_automatic_redirect() -> None:
+    import urllib.request
+
+    from mcp_servers.calendar import caldav
+
+    request = urllib.request.Request(
+        "https://caldav.icloud.com/x.ics", headers={"Authorization": "Basic SECRET"}
+    )
+    handler = caldav._NoRedirect()  # pyright: ignore[reportPrivateUsage]
+    assert (
+        handler.redirect_request(request, None, 302, "Found", {}, "https://evil.example/x") is None
+    )  # type: ignore[arg-type]
 
 
 def test_delete_preview_asks_and_delete_removes(fake_icloud: FakeICloud) -> None:
@@ -1006,3 +1021,35 @@ def test_ids_with_percent_encoded_characters_work(fake_icloud: FakeICloud) -> No
     assert fake_icloud.requests[-1][1] == url and "SUMMARY:Neu" in fake_icloud.files[url][0]
     assert server.preview_delete_data("privat/abc%2fx.ics")["grund"] == "invalid_event_id"
     assert server.preview_delete_data("privat/abc%2Fx.ics")["grund"] == "invalid_event_id"
+
+
+def test_windows_zone_names_are_translated_not_guessed_as_berlin() -> None:
+    def start(tzid: str) -> datetime:
+        ics = (
+            "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nSUMMARY:x\r\n"
+            f"DTSTART;TZID={tzid}:20260601T090000\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+        )
+        (event,) = parse_events([ics])
+        assert isinstance(event.start, datetime)
+        return event.start
+
+    assert start("Pacific Standard Time").hour == 18  # 09:00 PDT = 18:00 Berlin
+    assert start("Eastern Standard Time").hour == 15
+    assert start("W. Europe Standard Time").hour == 9
+    assert start("Gibt Es Nicht").hour == 9  # ganz Unbekanntes bleibt Berlin
+
+
+def test_lone_carriage_return_cannot_inject_ics_lines() -> None:
+    start = datetime(2026, 11, 10, 15, 0, tzinfo=TZ)
+    ics = build_vevent(
+        "u@j", "T", start, start + timedelta(hours=1), None, "a\rATTENDEE:mailto:x@y.z", NOW
+    )
+    assert "\rATTENDEE" not in ics.replace("\r\n", "\n") and "\nATTENDEE" not in ics.replace(
+        "\r\n", "\n"
+    )
+    assert "DESCRIPTION:a\\nATTENDEE" in ics
+
+
+def test_extreme_start_is_a_message_not_an_exception() -> None:
+    result = server.preview_event_data("x", "0001-01-01T00:00+05:00", None, None, None)
+    assert result["ok"] is False and result["grund"] == "invalid_input"

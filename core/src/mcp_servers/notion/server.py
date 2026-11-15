@@ -36,6 +36,7 @@ MAX_SEARCH_RESULTS = 10
 MAX_TITLE_LENGTH = 200
 MAX_NOTE_LENGTH = 2000
 MAX_NOTE_PREVIEW = 300
+MAX_PARAGRAPHS = 100  # Notion nimmt höchstens 100 Blöcke je Anfrage
 
 
 def configured_databases() -> dict[str, str]:
@@ -227,6 +228,8 @@ def _entry_input(datenbank: str, titel: str, notiz: str | None) -> tuple[str, st
         raise ValueError(str(chosen["fehler"]))
     ((name, source_id),) = chosen.items()
     paragraphs = [p.strip() for p in note.replace("\r\n", "\n").split("\n\n") if p.strip()]
+    if len(paragraphs) > MAX_PARAGRAPHS:
+        raise ValueError(f"Die Notiz hat zu viele Absätze (höchstens {MAX_PARAGRAPHS}).")
     return name, source_id, title, paragraphs
 
 

@@ -45,7 +45,10 @@ Datum) darf deshalb nie ohne Rückfrage durchgehen.
   die Rückmeldung nennt dann den tatsächlichen alten und neuen Stand.
 - Gelöschte Termine sind weg; iCloud hat für Kalender eine eigene Wiederherstellung
   (icloud.com → Datenwiederherstellung), JARVIS selbst kann nichts zurückholen.
-- Liefert iCloud ausnahmsweise kein ETag, wird ohne `If-Match` geschrieben.
+- Liefert iCloud ausnahmsweise kein ETag, wird nichts geändert oder gelöscht (Meldung wie bei
+  einem inzwischen geänderten Termin), statt blind zu schreiben.
+- Auch bei Weiterleitungen geht der Authorization-Header nie an eine fremde Domain: urllib folgt
+  nicht mehr selbst, die Prüfung `same_site` entscheidet.
 - Einzelne Termine einer Serie zu verschieben oder ganze Serien zu löschen geht weiterhin nur in
   der Kalender-App.
 - Wer das nicht will, entfernt `update_event`/`delete_event` aus `jarvis.toml`; nicht
