@@ -506,3 +506,57 @@ def test_example_notion_section_is_valid_once_uncommented(tmp_path: Path) -> Non
     }  # fmt: skip
     assert notion.tools["notion_add_entry"] == "WRITE_REVERSIBLE"  # mit Rückfrage, nie still
     assert notion.previews == {"notion_add_entry": "preview_notion_add_entry"}
+
+
+# --------------------------------------------------------------------------- M0.10 Kontextfenster
+@pytest.mark.parametrize(
+    ("env", "tokens", "warns"),
+    [
+        (None, 8192, True),  # nicht gesetzt: Ollama nutzt 4096
+        ("4096", 8192, True),
+        ("8192", 8192, False),
+        ("16384", 8192, False),
+        (None, 4096, False),  # jarvis.toml verlangt nicht mehr als der Standard
+        ("kaputt", 8192, True),
+    ],
+)
+def test_context_warning_compares_ollama_with_the_config(
+    monkeypatch: pytest.MonkeyPatch, env: str | None, tokens: int, warns: bool
+) -> None:
+    from jarvis_core.cli.main import _context_warning  # pyright: ignore[reportPrivateUsage]
+
+    if env is None:
+        monkeypatch.delenv("OLLAMA_CONTEXT_LENGTH", raising=False)
+    else:
+        monkeypatch.setenv("OLLAMA_CONTEXT_LENGTH", env)
+    warning = _context_warning(tokens)
+    assert (warning is not None) == warns
+    if warning:
+        assert f"OLLAMA_CONTEXT_LENGTH={tokens}" in warning and "jarvis doctor" in warning
+
+
+def test_chat_and_serve_warn_at_start_about_a_too_small_context(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import uvicorn
+    from typer.testing import CliRunner
+
+    from jarvis_core.cli import main as cli_main
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "jarvis.toml").write_text(
+        'context_tokens = 8192\ndata_dir = "d"\nport = 8791\n', encoding="utf-8"
+    )
+    monkeypatch.delenv("OLLAMA_CONTEXT_LENGTH", raising=False)
+
+    def nothing(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    monkeypatch.setattr(uvicorn, "run", nothing)
+    monkeypatch.setattr(cli_main, "_ensure_port_free", nothing)
+    served = CliRunner().invoke(cli_main.app, ["serve"])
+    assert served.exit_code == 0 and "WARNUNG: jarvis.toml rechnet mit 8192" in served.output
+    empty = CliRunner().invoke(cli_main.app, ["chat", " "])
+    assert "WARNUNG: jarvis.toml rechnet mit 8192" in empty.output
+    monkeypatch.setenv("OLLAMA_CONTEXT_LENGTH", "8192")
+    assert "WARNUNG" not in CliRunner().invoke(cli_main.app, ["serve"]).output

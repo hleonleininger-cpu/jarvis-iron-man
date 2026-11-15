@@ -93,6 +93,7 @@ app.add_typer(tools_app, name="tools")
 
 # Interaktive Befehle melden Fehler selbst in Klartext; Warnungen als JSON-Zeile wären doppelt.
 INTERACTIVE_LOG_LEVEL = "ERROR"
+OLLAMA_DEFAULT_CONTEXT = 4096  # ohne OLLAMA_CONTEXT_LENGTH nutzt Ollama über /v1 diesen Wert
 
 
 def _audit(path: Path) -> AuditLog:
@@ -167,6 +168,7 @@ def serve(
 ) -> None:
     """Startet den Core-Server (Standard: nur 127.0.0.1) mit Web-Oberfläche."""
     settings = _settings()
+    _warn_about_context(settings)
     from jarvis_core.api import create_app
     from jarvis_core.api.app import token_required
 
@@ -203,6 +205,12 @@ def serve(
         # Erst öffnen, wenn uvicorn lauscht; ein Timer reicht dafür (Start dauert < 1 s).
         threading.Timer(1.0, webbrowser.open, args=(url,)).start()
     uvicorn.run(app_, host=settings.host, port=settings.port, log_config=None)
+
+
+def _warn_about_context(settings: Settings) -> None:
+    warning = _context_warning(settings.context_tokens)
+    if warning:
+        typer.echo(warning, err=True)
 
 
 def _ensure_port_free(host: str, port: int) -> None:
@@ -378,6 +386,7 @@ def chat(
 ) -> None:
     """Beantwortet eine Nachricht (gestreamt) oder führt ohne Argument einen Dialog."""
     settings = _settings(INTERACTIVE_LOG_LEVEL)  # Terminal bleibt frei von JSON-Logs
+    _warn_about_context(settings)
     audit = _audit(settings.audit_db_path)
     service = build_service(settings, audit)
     service.broker = ConfirmationBroker(timeout=None)  # der Nutzer sitzt vor der Rückfrage
@@ -395,6 +404,23 @@ def chat(
     except KeyboardInterrupt:
         typer.echo("\nAbgebrochen.", err=True)
         raise typer.Exit(130) from None
+
+
+def _context_warning(context_tokens: int) -> str | None:
+    """Warnung für den Start von serve/chat, wenn Ollama (soweit die Umgebung es zeigt) ein
+    kleineres Kontextfenster nutzt als jarvis.toml annimmt; sonst None. Ollama kürzt zu lange
+    Prompts still von vorn, also zuerst Systemanweisung und Werkzeuge."""
+    raw = os.environ.get("OLLAMA_CONTEXT_LENGTH", "").strip()
+    actual = int(raw) if raw.isdigit() else OLLAMA_DEFAULT_CONTEXT
+    if actual >= context_tokens:
+        return None
+    found = f"OLLAMA_CONTEXT_LENGTH={raw}" if raw else "OLLAMA_CONTEXT_LENGTH ist nicht gesetzt"
+    return (
+        f"WARNUNG: jarvis.toml rechnet mit {context_tokens} Tokens Kontextfenster, aber {found} "
+        f"(Ollama nutzt dann {actual}). Antworten können dadurch falsch oder ohne Werkzeuge "
+        f"ausfallen. Abhilfe: Umgebungsvariable OLLAMA_CONTEXT_LENGTH={context_tokens} setzen und "
+        "Ollama neu starten (Prüfen mit: jarvis doctor)."
+    )
 
 
 def _context_row(context_tokens: int) -> str:
