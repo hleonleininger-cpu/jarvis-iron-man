@@ -90,11 +90,10 @@ Ja/Nein). Fürs iPhone den Server an die Tailnet-Adresse binden (`host = "100.x.
 `http://<tailnet-name>:8765/` öffnen; beim ersten Senden fragt die Seite nach dem Token.
 Ohne Token startet ein nicht-lokaler Server nicht. Siehe ADR-010/011.
 
-**Autostart unter Windows** (Aufgabenplanung, einmalig in einer Eingabeaufforderung; Pfad anpassen):
-```bat
-schtasks /Create /TN "JARVIS" /SC ONLOGON /TR "cmd /c cd /d C:\Pfad\jarvis-iron-man\core && uv run jarvis serve"
-```
-Entfernen mit `schtasks /Delete /TN "JARVIS"`.
+**Autostart unter Windows:** `uv run jarvis autostart an` (im Ordner `core`) legt die Startdatei
+`JARVIS.cmd` im Autostart-Ordner des Nutzers an: JARVIS startet dann bei jeder Anmeldung in einem
+minimierten Fenster. `uv run jarvis autostart status` zeigt den Stand, `uv run jarvis autostart aus`
+entfernt die Datei. Braucht keine Administratorrechte.
 
 ## Server
 - `GET /` Web-Client, `GET /health`

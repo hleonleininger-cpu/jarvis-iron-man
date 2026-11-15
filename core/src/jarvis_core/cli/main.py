@@ -35,6 +35,7 @@ from jarvis_core.agent import (
     resolve_model_name,
 )
 from jarvis_core.audit import AuditError, AuditLog
+from jarvis_core.cli import autostart as autostart_task
 from jarvis_core.config import (
     ConfigFileMissing,
     Settings,
@@ -260,8 +261,11 @@ def _kill_server(settings: Settings) -> bool:
         return False
     if pid <= 0 or pid == os.getpid():
         return False
+    # Hart beenden: ein hängender Server verarbeitet ein höfliches SIGTERM nicht mehr. Windows
+    # kennt kein SIGKILL; dort beendet os.kill den Prozess ohnehin sofort.
+    hard = getattr(signal, "SIGKILL", signal.SIGTERM)
     try:
-        os.kill(pid, signal.SIGTERM)  # unter Windows: beendet den Prozess sofort
+        os.kill(pid, hard)
     except OSError:
         return False
     return True
@@ -504,6 +508,28 @@ def chat(
     except KeyboardInterrupt:
         typer.echo("\nAbgebrochen.", err=True)
         raise typer.Exit(130) from None
+
+
+@app.command()
+def autostart(
+    action: str = typer.Argument("status", help="an, aus oder status"),
+) -> None:
+    """Startet JARVIS automatisch mit der Windows-Anmeldung (an), schaltet das ab (aus) oder
+    zeigt den Stand (status). Legt dazu eine Startdatei im Autostart-Ordner des Nutzers an."""
+    wanted = action.strip().lower()
+    if wanted == "an":
+        # Der Ordner mit jarvis.toml: von dort wird `uv run jarvis serve` gestartet.
+        result = autostart_task.enable(config_path().resolve().parent)
+    elif wanted == "aus":
+        result = autostart_task.disable()
+    elif wanted == "status":
+        result = autostart_task.status()
+    else:
+        typer.echo("Bitte 'an', 'aus' oder 'status' angeben.", err=True)
+        raise typer.Exit(2)
+    typer.echo(result.message, err=not result.ok)
+    if not result.ok:
+        raise typer.Exit(1)
 
 
 def _context_warning(context_tokens: int) -> str | None:
