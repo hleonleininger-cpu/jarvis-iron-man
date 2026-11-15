@@ -50,6 +50,11 @@ class ConfirmationBroker:
         future.get_loop().call_soon_threadsafe(_set_result, future, approve)
         return True
 
+    def reject_all(self) -> int:
+        """Not-Aus: beantwortet alle offenen Rückfragen mit Nein. Gibt deren Anzahl zurück."""
+        pending = list(self._pending)
+        return sum(self.resolve(request_id, False) for request_id in pending)
+
 
 def _set_result(future: "asyncio.Future[bool]", value: bool) -> None:
     if not future.done():

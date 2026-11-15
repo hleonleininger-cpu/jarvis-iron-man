@@ -238,6 +238,11 @@ def create_app(
             raise HTTPException(status_code=404, detail="Unbekannte oder bereits beantwortete ID.")
         return {"status": "ok"}
 
+    @app.post("/v1/stop", dependencies=guarded)
+    async def stop() -> dict[str, object]:  # pyright: ignore[reportUnusedFunction]
+        """Not-Aus (ADR-018): bricht alle laufenden und wartenden Anfragen ab."""
+        return {"status": "ok", "abgebrochen": service.emergency_stop("api")}
+
     @app.get("/v1/events", dependencies=guarded)
     async def events_stream() -> StreamingResponse:  # pyright: ignore[reportUnusedFunction]
         """Dauerhafter Stream für Meldungen ohne Anfrage (Erinnerungen, ADR-013)."""

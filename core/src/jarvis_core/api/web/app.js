@@ -240,6 +240,21 @@ form.addEventListener("submit", async (submitEvent) => {
   }
 });
 
+// Not-Aus (ADR-018): stoppt serverseitig ALLES, auch Anfragen anderer Geräte und offene Rückfragen.
+async function panic() {
+  try {
+    const response = await call("POST", "/v1/stop");
+    const data = response.ok ? await response.json() : null;
+    element("div", data ? "info" : "info error", data ? (data.abgebrochen ? "Not-Aus: alles gestoppt." : "Not-Aus: es lief nichts.") : "Not-Aus fehlgeschlagen (" + response.status + ").");
+  } catch (_) {
+    element("div", "info error", "Not-Aus: der Server antwortet nicht. In der Eingabeaufforderung hilft: jarvis stop");
+  }
+}
+document.getElementById("panic").addEventListener("click", panic);
+document.addEventListener("keydown", (keyEvent) => {
+  if ((keyEvent.ctrlKey || keyEvent.metaKey) && keyEvent.key === ".") { keyEvent.preventDefault(); panic(); }
+});
+
 stop.addEventListener("click", () => {
   if (running) running.abort();  // der Server bricht die Anfrage dann ebenfalls ab
 });

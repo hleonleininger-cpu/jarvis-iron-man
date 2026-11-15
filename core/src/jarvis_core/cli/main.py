@@ -2,12 +2,16 @@
 
 import asyncio
 import errno
+import json
 import os
 import re
+import signal
 import socket
 import sys
 import threading
 import tomllib
+import urllib.error
+import urllib.request
 import webbrowser
 from collections.abc import Callable
 from contextlib import suppress
@@ -204,7 +208,103 @@ def serve(
         url = f"http://{_url_host(settings.host)}:{settings.port}/"
         # Erst öffnen, wenn uvicorn lauscht; ein Timer reicht dafür (Start dauert < 1 s).
         threading.Timer(1.0, webbrowser.open, args=(url,)).start()
-    uvicorn.run(app_, host=settings.host, port=settings.port, log_config=None)
+    # Prozessnummer für `jarvis stop`: der Not-Aus beendet einen hängenden Server darüber.
+    pid_file = _pid_file(settings)
+    pid_file.parent.mkdir(parents=True, exist_ok=True)
+    pid_file.write_text(str(os.getpid()), encoding="utf-8")
+    try:
+        uvicorn.run(app_, host=settings.host, port=settings.port, log_config=None)
+    finally:
+        with suppress(OSError):
+            pid_file.unlink()
+
+
+def _pid_file(settings: Settings) -> Path:
+    return settings.data_dir / "jarvis.pid"
+
+
+STOP_TIMEOUT_SECONDS = 5.0
+
+
+def _post_stop(settings: Settings, token: str | None) -> tuple[str, int]:
+    """Ruft den Not-Aus des laufenden Servers. Ergebnis: ("ok", Anzahl abgebrochener Anfragen),
+    ("down", 0) wenn nichts lauscht, ("hung", 0) wenn der Server nicht rechtzeitig antwortet,
+    ("denied", HTTP-Status) bei einer Ablehnung."""
+    request = urllib.request.Request(  # noqa: S310
+        f"http://{_url_host(settings.host)}:{settings.port}/v1/stop",
+        data=b"",
+        method="POST",
+        headers={"Authorization": f"Bearer {token}"} if token else {},
+    )
+    # Ohne System-Proxy: die Anfrage geht an den eigenen Rechner.
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    try:
+        with opener.open(request, timeout=STOP_TIMEOUT_SECONDS) as response:
+            data = json.loads(response.read())
+            return "ok", int(data.get("abgebrochen", 0))
+    except urllib.error.HTTPError as exc:
+        return "denied", exc.code
+    except TimeoutError:
+        return "hung", 0
+    except urllib.error.URLError as exc:
+        return ("hung" if isinstance(exc.reason, TimeoutError) else "down"), 0
+    except (OSError, ValueError):
+        return "down", 0
+
+
+def _kill_server(settings: Settings) -> bool:
+    """Beendet den Server-Prozess aus der PID-Datei. True, wenn ein Signal gesendet wurde."""
+    try:
+        pid = int(_pid_file(settings).read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return False
+    if pid <= 0 or pid == os.getpid():
+        return False
+    try:
+        os.kill(pid, signal.SIGTERM)  # unter Windows: beendet den Prozess sofort
+    except OSError:
+        return False
+    return True
+
+
+@app.command()
+def stop() -> None:
+    """Not-Aus: bricht sofort alles ab, was der laufende JARVIS-Server gerade tut.
+
+    Antwortet der Server nicht mehr (er hängt), wird sein Prozess beendet.
+    """
+    settings = _settings(INTERACTIVE_LOG_LEVEL)
+    from jarvis_core.api.app import token_required
+
+    token: str | None = None
+    if token_required(settings):
+        with suppress(SecretsError):
+            token = read_secret_field("api_token", "token")
+    outcome, value = _post_stop(settings, token)
+    if outcome == "ok":
+        typer.echo(
+            f"Not-Aus: {value} Anfrage(n) abgebrochen." if value else "Not-Aus: es lief nichts."
+        )
+        return
+    if outcome == "down":
+        typer.echo("JARVIS läuft nicht (kein Server erreichbar); es gibt nichts zu stoppen.")
+        return
+    if outcome == "denied":
+        typer.echo(
+            f"Der Server hat den Not-Aus abgelehnt (HTTP {value}). Stimmt das Zugangstoken "
+            "(jarvis secrets status)?",
+            err=True,
+        )
+        raise typer.Exit(1)
+    if _kill_server(settings):
+        typer.echo("Der Server hat nicht geantwortet und wurde beendet. Neu starten: jarvis serve")
+        return
+    typer.echo(
+        "Der Server antwortet nicht und ließ sich nicht beenden. Bitte das Fenster mit "
+        "'jarvis serve' schließen.",
+        err=True,
+    )
+    raise typer.Exit(1)
 
 
 def _warn_about_context(settings: Settings) -> None:

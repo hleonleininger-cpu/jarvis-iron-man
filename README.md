@@ -66,6 +66,10 @@ Schlüsselbund, Datenbank-IDs in `jarvis.toml` (`[mcp_servers.notion] env`); zum
 Integration in Notion die Berechtigung "Inhalte einfügen". In der Vorlage auskommentiert: nach
 `jarvis secrets set notion` und dem Eintragen der IDs einschalten. Siehe ADR-008/017.
 
+**Not-Aus:** Roter Knopf "Not-Aus" oder Strg+. in der Web-Oberfläche, `POST /v1/stop` oder
+`uv run jarvis stop` brechen sofort alle laufenden und wartenden Anfragen, offene Rückfragen und
+Werkzeuge ab. Antwortet der Server nicht mehr, beendet `jarvis stop` seinen Prozess. Siehe ADR-018.
+
 **Diagnose:** Was die Werkzeug-Server auf stderr schreiben (z. B. `[caldav:EVENTS] status=401`),
 steht in `data/logs/<server>.log`, jeweils nur vom letzten Lauf.
 

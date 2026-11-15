@@ -75,6 +75,8 @@ CONTEXT_WARNING = (
 # Höchstens so viele Anfragen warten hinter der laufenden; weitere werden sofort abgewiesen,
 # statt sich unbegrenzt anzustauen.
 MAX_WAITING = 3
+EMERGENCY_STOP_MESSAGE = "Not-Aus: Die Anfrage wurde abgebrochen."
+EMERGENCY_STOP_TOOL = "emergency_stop"  # Name des Audit-Eintrags (kein Werkzeug des Modells)
 OVERLOADED_MESSAGE = "JARVIS ist gerade ausgelastet. Bitte gleich noch einmal versuchen."
 BUSY_MESSAGE = "Eine andere Anfrage läuft noch; diese wartet, bis sie fertig ist."
 WEEKDAYS_DE = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"]
@@ -213,6 +215,29 @@ class ChatService:
         # lokales Modell rechnet ohnehin nur eine Antwort zugleich: Anfragen laufen nacheinander.
         self._run_lock = asyncio.Lock()
         self._waiting = 0
+        # Laufende und wartende Anfragen (für den Not-Aus) und die davon per Not-Aus beendeten.
+        self._tasks: set[asyncio.Task[None]] = set()
+        self._stopped: set[asyncio.Task[None]] = set()
+
+    def emergency_stop(self, channel: str = "system") -> int:
+        """Not-Aus (ADR-018): bricht ALLE laufenden und wartenden Anfragen sofort ab, beantwortet
+        offene Rückfragen mit Nein und beendet damit auch die Werkzeug-Server der Anfrage.
+
+        Wartet auf nichts und braucht die Anfrage-Sperre nicht: wirkt also auch, wenn eine
+        Anfrage hängt. Gibt die Zahl der abgebrochenen Anfragen zurück. Muss in der Event-Loop
+        des Service laufen. Im Audit-Log steht nur, dass gestoppt wurde.
+        """
+        self.broker.reject_all()
+        tasks = [task for task in self._tasks if not task.done()]
+        for task in tasks:
+            self._stopped.add(task)
+            task.cancel()
+        self._audit.record_tool_call(
+            channel=channel, model=self.model_name, tool=EMERGENCY_STOP_TOOL,
+            risk="READ", decision="ALLOW", status="ok" if tasks else "idle",
+        )  # fmt: skip
+        log.warning("emergency_stop", channel=channel, stopped=len(tasks))
+        return len(tasks)
 
     async def stream(
         self, message: str, *, channel: str, session_id: str | None = None
@@ -254,6 +279,15 @@ class ChatService:
         finally:
             current_channel.reset(channel_token)
             current_confirmer.reset(confirmer_token)
+        self._tasks.add(task)
+
+        def finished(done: asyncio.Task[None]) -> None:
+            self._tasks.discard(done)
+            if done in self._stopped:  # Not-Aus: dem Zuhörer Bescheid geben und sauber enden
+                queue.put_nowait(Notice(EMERGENCY_STOP_MESSAGE))
+                queue.put_nowait(None)
+
+        task.add_done_callback(finished)
 
         status = "error"
         try:
@@ -261,7 +295,7 @@ class ChatService:
                 if isinstance(item, BaseException):
                     raise item
                 yield item
-            status = "ok"
+            status = "aborted" if task in self._stopped else "ok"
         except (asyncio.CancelledError, GeneratorExit, KeyboardInterrupt):
             status = "aborted"
             raise
@@ -275,6 +309,7 @@ class ChatService:
                 task.cancel()
             with suppress(asyncio.CancelledError, Exception):
                 await task
+            self._stopped.discard(task)
             self._audit.record(
                 channel=channel, model=self.model_name, tokens=usage[0], status=status
             )
