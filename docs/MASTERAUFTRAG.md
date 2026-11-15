@@ -46,7 +46,7 @@ Dann hörst du auf. Den nächsten Meilenstein beginnst du erst, wenn Master ihn 
 - Notion, Kalender und Mail: Lesen ja. Schreiben, Ändern und Senden nur nach ausdrücklicher Bestätigung im Einzelfall. Ändern und Löschen in Notion gibt es absichtlich nicht.
 - Der Not-Aus stoppt alles sofort und funktioniert auch, wenn der Rest hängt.
 - Dateizugriff nur in ausdrücklich erlaubten Ordnern.
-- Secrets stehen in .env und nie im Repo, nie im Log, nie in einer Ausgabe.
+- Secrets stehen im OS-Schlüsselbund und nie im Repo, nie im Log, nie in einer Ausgabe. (Geändert am 15.11.2026 nach Masters Entscheidung; vorher: .env.)
 - Private Daten verlassen den PC nicht. Ins Netz gehen nur Wetter, Websuche, iCloud und Notion, und das erst, wenn Master sie einschaltet.
 - Bildschirm, Mikrofon und Kamera sind für Master jederzeit sichtbar aktiv und sofort abschaltbar.
 - Jarvis erfindet keine Daten. Er sagt offen, wenn er etwas nicht weiß oder nicht abrufen kann, und trennt Live-Daten, Gespeichertes und eigene Schlüsse.

@@ -16,7 +16,7 @@ Was er kann:
 Qualität:
 - 577 Tests grün, ruff und pyright sauber. Mehr als 100 Mängel wurden in 14 Prüfrunden behoben.
 - Im Browser mit einer Ollama-Attrappe wurden alle Wege durchgespielt.
-- Die CI (Linux und Windows) war für alle Commits bis 7f93d13 grün. Für den letzten Commit 0fab3d2 (sechs Korrekturen) ist das Ergebnis noch nicht geprüft.
+- Die CI (Linux und Windows) war für alle Commits bis 7f93d13 grün. Für den letzten Commit 0fab3d2 (sechs Korrekturen) ist die CI ebenfalls grün (geprüft am 15.11.).
 - Alles liegt in PR #1 auf claude/gallant-carson-tp966a, der offen bleibt.
 
 Nicht geprüft (geht nur auf Masters PC):
@@ -29,7 +29,9 @@ Geld verdienen: JARVIS verdient nichts selbstständig. Er hilft bei Ideen, Reche
 
 Arbeitsweise:
 - Nachtschicht täglich ab 22:02 Uhr, Besprechung morgens um 7:15 bzw. 9:15 Uhr.
-- Neue Funktionen werden erst nach Masters Rückmeldung zu den Tests gebaut.
+- Gebaut wird nach docs/MASTERAUFTRAG.md: ein Meilenstein pro Auftrag, nur Nummern aus docs/CHECKLISTE.md. Beauftragt ist M0.
 - Abgrenzbare Teilaufgaben gehen an Untersessions, damit der Kontext klein bleibt.
 
-Nächster Schritt: Master testet Kalender, Notion und das Modell und meldet, was nicht passt. Danach wird gebaut und korrigiert.
+Abweichungen aus dem Bestandsabgleich (15.11.): Secrets liegen im OS-Schlüsselbund, nicht in .env. Ein Not-Aus, ein Autostart-Befehl, Persona, HUD-Stil und PWA fehlen noch (Details in der Checkliste).
+
+Nächster Schritt: Meilenstein M0 abschließen (M0.10, M0.5, M0.9). Master testet weiterhin Kalender, Notion und das Modell und meldet, was nicht passt.

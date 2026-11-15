@@ -8,14 +8,14 @@ Markierungen:
 
 ## M0 – Fundament
 - [~] M0.1 Python-Core (FastAPI) startet, Web-Oberfläche, CLI und Werkzeug-Server laufen
-- [?] M0.2 jarvis doctor erkennt die Hardware und wählt das Modellprofil S, M oder L
+- [~] M0.2 jarvis doctor erkennt die Hardware und wählt das Modellprofil S, M oder L (Beleg: core/src/jarvis_core/hardware/profile.py, core/tests/test_profile.py)
 - [~] M0.3 Audit-Log ohne Inhalte
 - [~] M0.4 Policy mit Bestätigungspflicht für Schreibendes, Bezahlen und Handeln gesperrt
-- [?] M0.5 Not-Aus per Taste und per Befehl, stoppt alle laufenden Aktionen
+- [ ] M0.5 Not-Aus per Taste und per Befehl, stoppt alle laufenden Aktionen (Bestand: nur "Stopp" für die laufende Anfrage in der Web-Oberfläche, api/web/app.js; kein Not-Aus für alles)
 - [~] M0.6 CLI-Chat mit lokalem Modell über Ollama
-- [?] M0.7 Konfiguration und Secrets getrennt (.env, nie im Repo)
+- [~] M0.7 Konfiguration und Secrets getrennt (OS-Schlüsselbund statt .env, nie im Repo; Entscheidung von Master am 15.11.; Beleg: core/src/jarvis_core/secrets/store.py, core/tests/test_secrets.py, .gitignore)
 - [~] M0.8 Testgerüst: 577 Tests, ruff und pyright sauber, CI auf Linux und Windows
-- [?] M0.9 Core startet automatisch mit Windows
+- [ ] M0.9 Core startet automatisch mit Windows (Bestand: nur eine schtasks-Anleitung in README.md, kein Befehl, kein Test)
 - [ ] M0.10 Ollama-Start mit OLLAMA_CONTEXT_LENGTH=8192 automatisch sicherstellen oder beim Start prüfen und warnen
 
 ## M1 – Gehirn und Gedächtnis
@@ -31,10 +31,10 @@ Markierungen:
 - [ ] M1.10 Vault für Dokumente und Ressourcen
 - [ ] M1.11 "Vergiss das" löscht zuverlässig und nachweisbar
 - [ ] M1.12 Gedächtnispflege: Veraltetes aufräumen, Dateien indexieren
-- [?] M1.13 Persona: Anrede "Master", trockener Humor, höflicher Widerspruch, Warnung bei schlechten Ideen
+- [ ] M1.13 Persona: Anrede "Master", trockener Humor, höflicher Widerspruch, Warnung bei schlechten Ideen (Bestand: Systemprompt in agent/service.py ist sachlich, ohne Anrede und Persona)
 - [ ] M1.14 Optionen mit Einschätzung: bei Entscheidungen zwei bis drei Wege samt Risiko
 - [ ] M1.15 Simulationen: "Was passiert, wenn …" für Lern- und Wochenpläne
-- [?] M1.16 Ehrlichkeit: unterscheidet Live-Daten, Gespeichertes und eigene Schlüsse, erfindet nichts
+- [ ] M1.16 Ehrlichkeit: unterscheidet Live-Daten, Gespeichertes und eigene Schlüsse, erfindet nichts (teilweise: der Systemprompt verbietet Erfinden und gibt Hinweise weiter; die Trennung Live/Gespeichert/Schluss fehlt)
 
 ## M2 – Stimme
 - [ ] M2.1 Wake Word "Hey Jarvis", lokal (openWakeWord)
@@ -52,7 +52,7 @@ Markierungen:
 - [ ] M2.13 Start per Tastenkürzel oder Doppelklatschen
 
 ## M3 – HUD
-- [?] M3.1 Web-Oberfläche im Iron-Man-Stil (prüfen, was die bestehende Oberfläche schon bietet)
+- [ ] M3.1 Web-Oberfläche im Iron-Man-Stil (Bestand: schlichte Chat-Oberfläche hell/dunkel mit Markdown, Stopp, Rückfragen und Erinnerungen, api/web/; kein HUD-Stil)
 - [ ] M3.2 Desktop-App mit Tauri 2
 - [ ] M3.3 Boot-Sequenz und Sounds
 - [ ] M3.4 Audio-Visualizer beim Zuhören und Sprechen
@@ -85,14 +85,14 @@ Markierungen:
 - [ ] M5.3 YouTube-Videos zusammenfassen (Transkript, sonst Whisper)
 - [ ] M5.4 PDFs und Dokumente lesen und zusammenfassen
 - [ ] M5.5 Browser-Automation mit sichtbarem Browser (Playwright)
-- [?] M5.6 SSRF-Schutz für alle Webzugriffe
+- [ ] M5.6 SSRF-Schutz für alle Webzugriffe (Bestand: kein allgemeiner Schutz; heutige Zugriffe gehen nur an feste Adressen bzw. sind im Kalender per same_site begrenzt. Nötig ab M5.2)
 - [ ] M5.7 Tägliches News-Briefing nach Masters Themen
 - [~] M5.8 Wetter: aktuell und nächste drei Tage, mit Wohnort-Voreinstellung
 - [ ] M5.9 Website-Wächter: meldet Änderungen (Vertretungsplan, Preise, neue Uploads)
 
 ## M6 – Leben
 - [~] M6.1 iCloud-Kalender: lesen (alle Kalender), anlegen, ändern, löschen, immer mit Vorschau und Rückfrage; Serientermine bleiben unangetastet. Ändern und Löschen noch nicht gegen echtes iCloud geprüft
-- [~] M6.2 Notion lesen (prüfen, welche Bereiche abgedeckt sind: Mission Control, Academy, Forge, Olympus, Titan Bible, Vault)
+- [~] M6.2 Notion lesen (bekannte Namen: Mission Control, Academy, Forge, Olympus, Vault; Titan Bible geht über NOTION_DB_<NAME>, ist aber ungetestet; mit Attrappe getestet sind Mission Control und Academy)
 - [~] M6.3 Notion: neue Einträge anlegen mit Rückfrage. Noch nicht gegen echtes Notion geprüft, am besten mit einem Testeintrag
 - [ ] M6.4 Mails lesen, sortieren, Entwürfe schreiben; Senden nur nach Bestätigung
 - [ ] M6.5 Aufgabenverwaltung
@@ -118,8 +118,8 @@ Markierungen:
 - [ ] M7.12 Nachtschicht: Aufträge über Nacht, Bericht am Morgen
 
 ## M8 – iPhone und Kanäle
-- [?] M8.1 Web-Oberfläche als PWA auf dem Home-Bildschirm (heute: Web-Client, auch fürs Handy)
-- [?] M8.2 Zugriff nur im Tailscale-Netz (heute: Zugriffstoken bei Nicht-Localhost)
+- [ ] M8.1 Web-Oberfläche als PWA auf dem Home-Bildschirm (Bestand: handytaugliches Layout, aber kein Manifest und kein Home-Bildschirm-Icon)
+- [~] M8.2 Zugriff nur im Tailscale-Netz (Server bindet nur an localhost/private/Tailnet-Adressen, Token-Pflicht außerhalb von localhost, Host-Prüfung; Beleg: config/settings.py is_private_host, tests/test_web_and_token.py. Nicht mit echtem Tailscale geprüft)
 - [ ] M8.3 Kurzbefehl auf der Aktionstaste als Sprechtaste
 - [ ] M8.4 Push-Nachrichten
 - [ ] M8.5 Orts- und Zeit-Auslöser über Kurzbefehle
@@ -153,7 +153,7 @@ Markierungen:
 - [ ] M12.4 Wächter fürs eigene Heimnetz: meldet unbekannte Geräte
 
 ## M13 – Sicherheit und Selbstpflege
-- [?] M13.1 Policy-Engine vollständig: Riskantes nur mit Bestätigung
+- [~] M13.1 Policy-Engine vollständig: Riskantes nur mit Bestätigung (Beleg: policy/engine.py, tests/test_policy.py, tests/test_confirm_flow.py; jedes Werkzeug braucht eine deklarierte Risikoklasse)
 - [~] M13.2 Private Daten bleiben lokal, Audit-Log ohne Inhalte
 - [ ] M13.3 Automatische Backups
 - [ ] M13.4 Wiederaufbau auf einem neuen PC mit einem Befehl
