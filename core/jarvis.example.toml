@@ -80,6 +80,9 @@ complete_note = "WRITE_LOCAL"
 # `ollama pull nomic-embed-text`. Ohne das Modell gilt die Stichwortsuche. Anderes Modell oder
 # anderer Ollama (nur im eigenen Netz): args = [..., "--embed-modell", "...", "--ollama-url", "..."];
 # nur Stichwörter: "--ohne-embeddings".
+# Vault (M1.10): Markdown- und Textdateien aus ausdrücklich genannten Ordnern und deine offenen
+# Notizen durchsuchbar machen: args = [..., "--vault", "D:/Vault", "--notizen", "~/.jarvis/notizen.sqlite3"]
+# (mehrere Ordner: "--vault" wiederholen). Nur Lesen; das Modell wählt nie einen Ordner.
 [mcp_servers.memory]
 command = "python"
 args = ["-m", "mcp_servers.memory"]
@@ -90,6 +93,7 @@ remember = "WRITE_LOCAL"
 recall = "READ"
 list_memories = "READ"
 forget = "IRREVERSIBLE"
+vault_index = "WRITE_LOCAL"
 journal_add = "WRITE_LOCAL"
 journal_read = "READ"
 

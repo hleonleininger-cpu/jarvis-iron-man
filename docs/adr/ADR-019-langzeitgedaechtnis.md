@@ -34,6 +34,16 @@ nur, was der Nutzer ausdrücklich merken lässt.
   `ollama pull nomic-embed-text`. Vektoren verschiedener Modelle werden nie verglichen.
 - **Vergessen:** `forget` löscht Zeile samt Embedding und meldet die Eintragszahl vorher und
   nachher; der Test belegt, dass der Text nach dem Löschen nicht mehr in der Datenbankdatei steht.
+- **Vault (M1.10):** Das Werkzeug `vault_index` (ohne Parameter: das Modell wählt nie einen Ordner)
+  liest Markdown- und Textdateien (`.md`, `.markdown`, `.txt`) aus den Ordnern, die in `jarvis.toml`
+  mit `--vault` ausdrücklich erlaubt sind, und die offenen Notizen (`--notizen`, nur lesend über
+  eine schreibgeschützte Verbindung). Sie werden in Stücke von etwa 600 Zeichen geteilt und wie
+  Gedächtniseinträge durchsucht; Treffer nennen Datei bzw. "Notiz". Es wird nur ein Index geführt,
+  die Originale bleiben unverändert. Sicherheit: Links aus dem Ordner hinaus werden nicht
+  verfolgt (aufgelöster Pfad muss unter dem Ordner liegen), versteckte Ordner, Binärdateien,
+  Dateien über 500 KB und mehr als 2000 Dateien werden übersprungen. Geänderte Dateien werden
+  neu eingelesen (Zeitstempel und Größe), verschwundene aus dem Index entfernt. Embeddings
+  höchstens 300 Stücke je Lauf (CPU ist langsam), der Rest beim nächsten Aufruf. PDF folgt mit M5.4.
 - **Tagesjournal:** Eine Markdown-Datei je Tag in `~/.jarvis/journal/` (`JJJJ-MM-TT.md`), Einträge
   mit Uhrzeit. Der Dateiname entsteht nur aus einem geprüften Datum: kein Pfadausbruch.
 - **Audit:** nur Werkzeugname, Risikoklasse, Entscheidung, Ergebnis; nie Inhalte.

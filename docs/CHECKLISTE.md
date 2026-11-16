@@ -25,10 +25,10 @@ Markierungen:
 - [ ] M1.4 Werkzeugauswahl per Embedding, damit viele Werkzeuge kleine Modelle nicht überfordern
 - [~] M1.5 Kern läuft vollständig lokal
 - [ ] M1.6 Cloud-Stufe nur nach Freigabe pro Aufgabe und nie mit privaten Daten (bisher gibt es keine Cloud-Modelle)
-- [~] M1.7 Langzeitgedächtnis (SQLite + sqlite-vec + Markdown). Heute liegt der Gesprächsverlauf nur im Arbeitsspeicher (gebaut: SQLite-Speicher mit remember/recall/list_memories/forget, Stichwortsuche; sqlite-vec folgt mit M1.8. Beleg: docs/adr/ADR-019-langzeitgedaechtnis.md, core/tests/test_memory_server.py)
-- [~] M1.8 Semantische Suche über Gespräche, Notizen und Dateien (gebaut für das Gedächtnis: Embeddings über Ollama, sqlite-vec mit Python-Ausweichweg, Fallback auf Stichwörter; Notizen und Dateien folgen mit M1.10. Beleg: core/tests/test_memory_server.py. Schwelle 0,5 nur mit echtem Modell prüfbar)
+- [~] M1.7 Langzeitgedächtnis (SQLite + sqlite-vec + Markdown). Heute liegt der Gesprächsverlauf nur im Arbeitsspeicher (gebaut: SQLite-Speicher mit remember/recall/list_memories/forget, Suche, ab M1.8 semantisch mit sqlite-vec. Beleg: docs/adr/ADR-019-langzeitgedaechtnis.md, core/tests/test_memory_server.py)
+- [~] M1.8 Semantische Suche über Gespräche, Notizen und Dateien (gebaut: Gedächtnis, Vault-Dateien und offene Notizen; Embeddings über Ollama, sqlite-vec mit Python-Ausweichweg, Fallback auf Stichwörter. Beleg: core/tests/test_memory_server.py, core/tests/test_memory_vault.py. Schwelle 0,5 nur mit echtem Modell prüfbar)
 - [~] M1.9 Tagesjournal (journal_add/journal_read, eine Markdown-Datei je Tag. Beleg: core/tests/test_memory_server.py)
-- [ ] M1.10 Vault für Dokumente und Ressourcen
+- [~] M1.10 Vault für Dokumente und Ressourcen (gebaut: `vault_index` für ausdrücklich erlaubte Ordner und offene Notizen, Änderungserkennung, kein Link nach draußen. Beleg: core/tests/test_memory_vault.py. PDF folgt mit M5.4)
 - [ ] M1.11 "Vergiss das" löscht zuverlässig und nachweisbar
 - [ ] M1.12 Gedächtnispflege: Veraltetes aufräumen, Dateien indexieren
 - [~] M1.13 Persona: Anrede "Master", trockener Humor, höflicher Widerspruch, Warnung bei schlechten Ideen (gebaut: Systemprompt PERSONA in agent/service.py, Anrede einstellbar über `anrede` in jarvis.toml; Test tests/test_agent_tools.py; Wirkung mit echtem Modell nur von Master prüfbar; Eval persona-address) (gebaut: Systemprompt PERSONA in agent/service.py, Anrede einstellbar über `anrede` in jarvis.toml; Test tests/test_agent_tools.py; Wirkung mit echtem Modell nur von Master prüfbar; Eval persona-address)

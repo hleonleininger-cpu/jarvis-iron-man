@@ -25,6 +25,19 @@ CREATE TABLE IF NOT EXISTS memories (
     embed_model TEXT
 )
 """
+_DOCUMENTS = """
+CREATE TABLE IF NOT EXISTS documents (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source TEXT NOT NULL,
+    path TEXT NOT NULL,
+    chunk INTEGER NOT NULL,
+    text TEXT NOT NULL,
+    fingerprint TEXT NOT NULL,
+    embedding BLOB,
+    embed_model TEXT
+)
+"""
+_DOC_FIELDS = "id, source, path, chunk, text"
 _FIELDS = "id, text, kind, created"
 # Das Embedding steckt als float32-Folge im BLOB (Format von sqlite-vec).
 MIN_SIMILARITY = 0.5  # darunter gilt ein Treffer der semantischen Suche als nicht passend
@@ -122,6 +135,17 @@ def cosine(a: list[float], b: list[float]) -> float:
 
 
 @dataclass(frozen=True)
+class Document:
+    """Ein Textstück aus dem Vault (Datei) oder aus den Notizen. Nur ein Index, kein Original."""
+
+    id: int
+    source: str  # "vault" | "notiz"
+    path: str  # "<Ordnername>/<Datei>" bzw. "notiz:<Nummer>"
+    chunk: int
+    text: str
+
+
+@dataclass(frozen=True)
 class Memory:
     id: int
     text: str
@@ -147,6 +171,16 @@ def _load_vec(conn: sqlite3.Connection) -> bool:
     return True
 
 
+def _similarity(conn: sqlite3.Connection, use_vec: bool, vector: list[float], blob: bytes) -> float:
+    """Kosinus-Ähnlichkeit (1 = gleiche Richtung): sqlite-vec, sonst Python."""
+    if use_vec:
+        distance = conn.execute(
+            "SELECT vec_distance_cosine(?, ?)", (pack(vector), blob)
+        ).fetchone()[0]
+        return 1.0 - float(distance) if distance is not None else 0.0
+    return cosine(vector, unpack(blob))
+
+
 def _row(row: tuple[object, ...]) -> Memory:
     memory_id, text, kind, created = row
     return Memory(int(str(memory_id)), str(text), str(kind), datetime.fromisoformat(str(created)))
@@ -158,6 +192,7 @@ class MemoryStore:
         path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as conn:
             conn.execute(_SCHEMA)
+            conn.execute(_DOCUMENTS)
 
     @contextmanager
     def _connect(self) -> Generator[sqlite3.Connection]:
@@ -239,18 +274,90 @@ class MemoryStore:
             scored: list[tuple[Memory, float]] = []
             use_vec = _load_vec(conn)
             for row in rows:
-                blob = bytes(row[4])
-                if use_vec:
-                    distance = conn.execute(
-                        "SELECT vec_distance_cosine(?, ?)", (pack(vector), blob)
-                    ).fetchone()[0]
-                    similarity = 1.0 - float(distance) if distance is not None else 0.0
-                else:
-                    similarity = cosine(vector, unpack(blob))
-                scored.append((_row(row[:4]), similarity))
+                scored.append((_row(row[:4]), _similarity(conn, use_vec, vector, bytes(row[4]))))
         scored = [pair for pair in scored if pair[1] >= MIN_SIMILARITY]
         scored.sort(key=lambda pair: (-pair[1], -pair[0].id))
         return scored[:limit], compared
+
+    # ----------------------------------------------------------------------- Dokumente (M1.10)
+    def doc_fingerprints(self) -> dict[str, str]:
+        """Pfad -> Fingerabdruck der zuletzt indexierten Fassung (um Änderungen zu erkennen)."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT path, MIN(fingerprint) FROM documents GROUP BY path"
+            ).fetchall()
+        return {str(path): str(fingerprint) for path, fingerprint in rows}
+
+    def replace_document(self, source: str, path: str, fingerprint: str, chunks: list[str]) -> None:
+        """Ersetzt alle Stücke eines Pfads durch die neuen (ohne Embedding, das kommt danach)."""
+        with self._connect() as conn:
+            conn.execute("DELETE FROM documents WHERE path = ?", (path,))
+            conn.executemany(
+                "INSERT INTO documents (source, path, chunk, text, fingerprint) "
+                "VALUES (?, ?, ?, ?, ?)",
+                [(source, path, number, text, fingerprint) for number, text in enumerate(chunks)],
+            )
+
+    def delete_documents(self, paths: list[str]) -> int:
+        with self._connect() as conn:
+            return sum(
+                conn.execute("DELETE FROM documents WHERE path = ?", (path,)).rowcount
+                for path in paths
+            )
+
+    def documents_without_embedding(self, limit: int) -> list[Document]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"SELECT {_DOC_FIELDS} FROM documents WHERE embedding IS NULL ORDER BY id LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [Document(*row) for row in rows]
+
+    def set_document_embedding(self, doc_id: int, vector: list[float], model: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE documents SET embedding = ?, embed_model = ? WHERE id = ?",
+                (pack(vector), model, doc_id),
+            )
+
+    def search_documents(self, question: str, limit: int = 5) -> list[Document]:
+        """Stichwortsuche über die Dokumentstücke, die meisten Treffer zuerst."""
+        wanted = words(question)
+        if not wanted:
+            return []
+        with self._connect() as conn:
+            rows = conn.execute(f"SELECT {_DOC_FIELDS} FROM documents").fetchall()
+        scored = [(Document(*row), len(wanted & words(str(row[4])))) for row in rows]
+        hits = [(doc, score) for doc, score in scored if score > 0]
+        hits.sort(key=lambda pair: (-pair[1], pair[0].id))
+        return [doc for doc, _score in hits[:limit]]
+
+    def semantic_documents(
+        self, vector: list[float], model: str, limit: int = 5
+    ) -> list[tuple[Document, float]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"SELECT {_DOC_FIELDS}, embedding FROM documents "
+                "WHERE embedding IS NOT NULL AND embed_model = ?",
+                (model,),
+            ).fetchall()
+            use_vec = _load_vec(conn)
+            scored = [
+                (Document(*row[:5]), _similarity(conn, use_vec, vector, bytes(row[5])))
+                for row in rows
+            ]
+        scored = [pair for pair in scored if pair[1] >= MIN_SIMILARITY]
+        scored.sort(key=lambda pair: (-pair[1], pair[0].id))
+        return scored[:limit]
+
+    def document_counts(self) -> tuple[int, int]:
+        """(Stücke, davon ohne Embedding)."""
+        with self._connect() as conn:
+            total = int(conn.execute("SELECT COUNT(*) FROM documents").fetchone()[0])
+            missing = int(
+                conn.execute("SELECT COUNT(*) FROM documents WHERE embedding IS NULL").fetchone()[0]
+            )
+        return total, missing
 
     def delete(self, memory_id: int) -> bool:
         """Löscht einen Eintrag samt Embedding. False, wenn es ihn nicht gab."""

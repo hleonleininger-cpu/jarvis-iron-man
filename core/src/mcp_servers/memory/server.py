@@ -22,7 +22,8 @@ from mcp_servers.memory.embed import (
     EmbedError,
     make_embedder,
 )
-from mcp_servers.memory.store import KINDS, Memory, MemoryStore
+from mcp_servers.memory.store import KINDS, Document, Memory, MemoryStore
+from mcp_servers.memory.vault import index_all
 
 TZ = ZoneInfo("Europe/Berlin")
 DEFAULT_FILE = Path.home() / ".jarvis" / "gedaechtnis.sqlite3"
@@ -39,6 +40,10 @@ _journal_dir: Path = DEFAULT_JOURNAL
 # Embeddings (M1.8): None = nicht eingerichtet, dann gilt die Stichwortsuche. In Tests ersetzt.
 _embedder: Embedder | None = None
 _embed_model: str = DEFAULT_MODEL
+# Erlaubte Vault-Ordner und Notizdatei (M1.10): nur aus jarvis.toml (args), nie vom Modell wählbar.
+_vault_roots: list[Path] = []
+_notes_file: Path | None = None
+MAX_SNIPPET = 300
 EMBED_HINT = "Embedding-Modell nicht erreichbar; es gilt die Stichwortsuche (ollama pull {model})."
 
 
@@ -70,8 +75,15 @@ def _kind(art: str | None) -> str:
     return kind
 
 
+def _doc_entry(doc: Document) -> dict[str, Any]:
+    """Treffer aus dem Vault oder den Notizen: Quelle und Stelle statt einer Gedächtnis-Nummer."""
+    where = "Notiz" if doc.source == "notiz" else f"Datei {doc.path}"
+    return {"quelle": where, "text": doc.text[:MAX_SNIPPET]}
+
+
 def _entry(memory: Memory) -> dict[str, Any]:
     return {
+        "quelle": "Gedächtnis",
         "id": memory.id,
         "text": memory.text,
         "art": memory.kind,
@@ -96,28 +108,33 @@ def remember_data(text: str, art: str | None = None) -> dict[str, Any]:
 def recall_data(frage: str) -> dict[str, Any]:
     if not frage.strip():
         return _fail("Es wurde keine Frage genannt.")
-    found: list[Memory] = []
+    ranked: list[tuple[float, dict[str, Any]]] = []  # (Ähnlichkeit, Treffer)
     hint: str | None = None
     method = "Stichwortsuche"
     if _embedder is not None:
         try:
             vector = _embedder([frage.strip()])[0]
             semantic, compared = store().semantic_search(vector, _embed_model, MAX_FOUND)
-            if compared:
+            documents = store().semantic_documents(vector, _embed_model, MAX_FOUND)
+            if compared or documents or store().document_counts()[0]:
                 method = "semantisch"
-                found = [memory for memory, _similarity in semantic]
+            ranked = [(sim, _entry(memory)) for memory, sim in semantic]
+            ranked += [(sim, _doc_entry(doc)) for doc, sim in documents]
+            ranked.sort(key=lambda pair: -pair[0])
         except EmbedError:
             hint = EMBED_HINT.format(model=_embed_model)
+    found = [entry for _sim, entry in ranked][:MAX_FOUND]
     # Stichwort-Treffer kommen immer dazu (auch Einträge ohne Embedding), die semantischen zuerst.
-    for memory, _score in store().search(frage, MAX_FOUND):
-        if memory.id not in {m.id for m in found}:
-            found.append(memory)
-    found = found[:MAX_FOUND]
+    keyword = [_entry(m) for m, _score in store().search(frage, MAX_FOUND)]
+    keyword += [_doc_entry(d) for d in store().search_documents(frage, MAX_FOUND)]
+    for entry in keyword:
+        if len(found) < MAX_FOUND and entry not in found:
+            found.append(entry)
     result: dict[str, Any] = {
         "ok": True,
         "suche": method,
         "anzahl": len(found),
-        "treffer": [_entry(memory) for memory in found],
+        "treffer": found,
     }
     if hint:
         result["hinweis"] = hint
@@ -168,6 +185,26 @@ def forget_data(id: int) -> dict[str, Any]:
     store().delete(id)
     return {"ok": True, "vergessen": found.text, "eintraege_vorher": before,
             "eintraege_nachher": store().count()}  # fmt: skip
+
+
+def vault_index_data() -> dict[str, Any]:
+    """Gleicht den Index mit den erlaubten Ordnern und den offenen Notizen ab (nur lesen)."""
+    if not _vault_roots and _notes_file is None:
+        return _fail(
+            "Es ist kein Vault-Ordner erlaubt. In jarvis.toml unter [mcp_servers.memory] args "
+            '"--vault", "<Ordner>" eintragen.',
+            "not_configured",
+        )
+    report = index_all(store(), _vault_roots, _notes_file, _embedder, _embed_model)
+    result: dict[str, Any] = {"ok": True, "ergebnis": report.text()}
+    if report.without_embedding:
+        result["hinweis"] = (
+            f"{report.without_embedding} Textstücke noch ohne Embedding (Modell nicht erreichbar "
+            "oder Mengenbegrenzung): vault_index später noch einmal aufrufen."
+        )
+    if report.skipped:
+        result["uebersprungen"] = report.skipped
+    return result
 
 
 # --------------------------------------------------------------------------- Tagesjournal (M1.9)
@@ -245,6 +282,13 @@ def recall(frage: str) -> dict[str, Any]:
 
 
 @mcp.tool()
+def vault_index() -> dict[str, Any]:
+    """Liest die erlaubten Ordner des Nutzers (Markdown und Textdateien) und seine offenen Notizen
+    neu ein, damit recall sie findet. Nur lesen; der Nutzer legt die Ordner fest."""
+    return vault_index_data()
+
+
+@mcp.tool()
 def list_memories(art: str | None = None) -> dict[str, Any]:
     """Zeigt, was im Gedächtnis steht (neueste zuletzt). art optional filtert."""
     return list_data(art)
@@ -276,14 +320,26 @@ def journal_read(tag: str | None = None) -> dict[str, Any]:
 
 
 def main() -> None:
-    global _store, _journal_dir, _embedder, _embed_model
+    global _store, _journal_dir, _embedder, _embed_model, _vault_roots, _notes_file
     parser = argparse.ArgumentParser(prog="mcp_servers.memory")
     parser.add_argument("--datei", type=Path, default=DEFAULT_FILE, help="SQLite-Datei")
     parser.add_argument("--journal", type=Path, default=DEFAULT_JOURNAL, help="Journal-Ordner")
     parser.add_argument("--ollama-url", default=DEFAULT_URL, help="Ollama (nur im eigenen Netz)")
     parser.add_argument("--embed-modell", default=DEFAULT_MODEL, help="Embedding-Modell")
     parser.add_argument("--ohne-embeddings", action="store_true", help="nur Stichwortsuche")
+    parser.add_argument(
+        "--vault", type=Path, action="append", default=[], help="erlaubter Ordner (mehrfach)"
+    )
+    parser.add_argument("--notizen", type=Path, help="Notizdatei (nur lesend mitindexieren)")
     args = parser.parse_args()
+    roots = [p.expanduser() for p in args.vault]
+    for root in roots:
+        if not root.is_dir():
+            parser.error(f"Vault-Ordner nicht gefunden: {root}")
+    if len({r.resolve().name for r in roots}) != len(roots):
+        parser.error("Vault-Ordner brauchen verschiedene Namen (sie erscheinen in den Treffern).")
+    _vault_roots = roots
+    _notes_file = args.notizen.expanduser() if args.notizen else None
     _store = MemoryStore(args.datei.expanduser())
     _journal_dir = args.journal.expanduser()
     if not args.ohne_embeddings:
