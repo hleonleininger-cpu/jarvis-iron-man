@@ -6,11 +6,12 @@ die Originale bleiben unverändert, und außerhalb der erlaubten Ordner wird nic
 import hashlib
 import os
 import sqlite3
+import stat
 from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 
-from mcp_servers.memory.embed import Embedder, EmbedError
+from mcp_servers.memory.embed import Embedder, embed_in_batches
 from mcp_servers.memory.store import MemoryStore
 
 SUFFIXES = (".md", ".markdown", ".txt")
@@ -102,17 +103,38 @@ def _fingerprint(path: Path) -> str:
     return f"{info.st_mtime_ns}:{info.st_size}"
 
 
-def _open_notes(notes_file: Path) -> dict[str, str]:
-    """Offene Notizen (Schlüssel 'notiz:<Nr>' -> Text), nur lesend. Fehlt die Datei: leer."""
+def _read_text(path: Path) -> str:
+    """Liest eine Datei so, dass ein zwischen Prüfung und Lesen untergeschobener Link nichts
+    nach drinnen holt: es muss dieselbe reguläre Datei sein wie beim Durchlauf, und gelesen
+    werden höchstens MAX_FILE_BYTES + 1 Bytes. Wirft OSError/ValueError, wenn etwas nicht stimmt."""
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
+    fd = os.open(path, flags)
+    try:
+        opened = os.fstat(fd)
+        if not stat.S_ISREG(opened.st_mode) or opened.st_size > MAX_FILE_BYTES:
+            raise ValueError("keine reguläre Datei oder zu groß")
+        if not os.path.samestat(opened, os.lstat(path)):  # inzwischen ausgetauscht (z. B. Link)
+            raise ValueError("Datei wurde ausgetauscht")
+        data = os.read(fd, MAX_FILE_BYTES + 1)
+    finally:
+        os.close(fd)
+    if len(data) > MAX_FILE_BYTES:
+        raise ValueError("zu groß")
+    return data.decode("utf-8")
+
+
+def _open_notes(notes_file: Path) -> dict[str, str] | None:
+    """Offene Notizen (Schlüssel 'notiz:<Nr>' -> Text), nur lesend. Gibt es die Datei nicht:
+    leer. Ist sie gerade nicht lesbar (gesperrt, Netzpfad): None, damit der Index der Notizen
+    nicht mit gelöscht wird."""
     if not notes_file.is_file():
         return {}
     try:
-        with closing(
-            sqlite3.connect(f"{notes_file.as_uri()}?mode=ro", uri=True, timeout=5)
-        ) as conn:
+        uri = notes_file.resolve().as_uri()
+        with closing(sqlite3.connect(f"{uri}?mode=ro", uri=True, timeout=5)) as conn:
             rows = conn.execute("SELECT id, text FROM notes WHERE done_at IS NULL").fetchall()
-    except sqlite3.Error:
-        return {}
+    except (sqlite3.Error, ValueError, OSError):
+        return None
     return {f"notiz:{row[0]}": str(row[1]) for row in rows}
 
 
@@ -126,7 +148,8 @@ def index_all(
     """Gleicht den Index mit den Ordnern und Notizen ab: Neues und Geändertes einlesen,
     Verschwundenes entfernen, fehlende Embeddings (soweit das Budget reicht) nachholen."""
     files, skipped = _vault_files(roots)
-    notes = _open_notes(notes_file) if notes_file else {}
+    notes_read = _open_notes(notes_file) if notes_file else {}
+    notes = notes_read or {}
     known = store.doc_fingerprints()
     changed = 0
     for key, path in files.items():
@@ -134,8 +157,8 @@ def index_all(
             fingerprint = _fingerprint(path)
             if known.get(key) == fingerprint:
                 continue
-            text = path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
+            text = _read_text(path)
+        except (OSError, ValueError):  # ValueError umfasst UnicodeDecodeError
             skipped += 1
             continue
         if "\x00" in text:  # Binärdatei mit Textendung
@@ -148,18 +171,24 @@ def index_all(
         if known.get(key) != fingerprint:
             store.replace_document("notiz", key, fingerprint, chunk_text(text))
             changed += 1
-    gone = [path for path in known if path not in files and path not in notes]
+    # Notizen nur dann als verschwunden behandeln, wenn die Notizdatei wirklich gelesen wurde.
+    gone = [
+        path
+        for path in known
+        if path not in files
+        and path not in notes
+        and not (path.startswith("notiz:") and notes_read is None)
+    ]
     removed = len(gone)
     store.delete_documents(gone)
     embedded = 0
     if embedder is not None:
-        pending = store.documents_without_embedding(MAX_EMBEDS_PER_RUN)
-        try:
-            vectors = embedder([doc.text for doc in pending]) if pending else []
-        except EmbedError:
-            vectors = []
-        for doc, vector in zip(pending, vectors, strict=False):
-            store.set_document_embedding(doc.id, vector, model)
-            embedded += 1
-    total, missing = store.document_counts()
+        pending = store.documents_without_embedding(model, MAX_EMBEDS_PER_RUN)
+        embedded = embed_in_batches(
+            embedder,
+            pending,
+            lambda doc: doc.text,
+            lambda doc, vector: store.set_document_embedding(doc.id, vector, model),
+        )
+    total, missing = store.document_counts(model)
     return Report(len(files) + len(notes), changed, removed, total, embedded, missing, skipped)

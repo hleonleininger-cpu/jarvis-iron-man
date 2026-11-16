@@ -34,7 +34,10 @@ nur, was der Nutzer ausdrücklich merken lässt.
   `ollama pull nomic-embed-text`. Vektoren verschiedener Modelle werden nie verglichen.
 - **Vergessen (M1.11):** `forget` löscht Zeile samt Embedding und meldet die Eintragszahl vorher
   und nachher. SQLite läuft mit `secure_delete`: Gelöschtes wird überschrieben und steht nicht
-  mehr in der Datei (ein Test prüft die Bytes der Datei ohne VACUUM). Vault-Stücke "vergisst"
+  mehr in der Datei (ein Test prüft die Bytes der Datei ohne VACUUM); das Rollback-Journal wird
+  auf 0 Byte gekürzt. Grenze: Was das Betriebssystem als freie Plattenblöcke zurücklässt, kann
+  ein Datenrettungsprogramm unter Umständen noch lesen (nur Festplattenverschlüsselung hilft
+  dagegen). Die Antwort von `forget` nennt nur die Nummer, nicht den Text. Vault-Stücke "vergisst"
   man, indem man die Datei löscht; der nächste Lauf entfernt sie aus dem Index. Journalzeilen sind
   eigene Einträge und bleiben (Textdatei, jederzeit von Hand zu ändern).
 - **Pflege (M1.12):** `maintain_memory` (und `jarvis memory-pflege`, und im Hintergrund bei jedem
@@ -45,7 +48,8 @@ nur, was der Nutzer ausdrücklich merken lässt.
   liest Markdown- und Textdateien (`.md`, `.markdown`, `.txt`) aus den Ordnern, die in `jarvis.toml`
   mit `--vault` ausdrücklich erlaubt sind, und die offenen Notizen (`--notizen`, nur lesend über
   eine schreibgeschützte Verbindung). Sie werden in Stücke von etwa 600 Zeichen geteilt und wie
-  Gedächtniseinträge durchsucht; Treffer nennen Datei bzw. "Notiz". Es wird nur ein Index geführt,
+  Gedächtniseinträge durchsucht; Treffer nennen Datei bzw. "Notiz" und tragen `fremdinhalt`: Text
+  aus Dateien ist nie eine Anweisung (Systemprompt und Werkzeugbeschreibung sagen das). Es wird nur ein Index geführt,
   die Originale bleiben unverändert. Sicherheit: Links aus dem Ordner hinaus werden nicht
   verfolgt (aufgelöster Pfad muss unter dem Ordner liegen), versteckte Ordner, Binärdateien,
   Dateien über 500 KB und mehr als 2000 Dateien werden übersprungen. Geänderte Dateien werden

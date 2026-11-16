@@ -324,3 +324,52 @@ def test_maintenance_re_embeds_entries_of_an_older_model(embeddings: None) -> No
 def test_maintenance_tool_reports_in_plain_words(embeddings: None) -> None:
     server.remember_data("Ich wohne in Dortmund")
     assert "0 Dubletten entfernt" in server.maintain_data()["ergebnis"]
+
+
+def test_forget_does_not_repeat_the_text_in_its_answer() -> None:
+    server.remember_data("Geheimzahl PLUGH 4711")
+    done = server.forget_data(1)
+    assert "PLUGH" not in str(done) and done["vergessen"] == "Eintrag 1"
+
+
+def test_vectors_of_another_length_never_crash_recall(
+    embeddings: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from mcp_servers.memory import store as store_module
+
+    server.remember_data("Mein Lieblingsverein ist der BVB")
+    server.store().set_embedding(1, [1.0, 0.0], "test-modell")  # gleicher Modellname, andere Länge
+    assert server.recall_data("Welcher Fußballclub gefällt mir?")["ok"]  # sqlite-vec
+
+    def no_vec(_conn: object) -> bool:
+        return False
+
+    monkeypatch.setattr(store_module, "_load_vec", no_vec)
+    assert server.recall_data("Welcher Fußballclub gefällt mir?")["ok"]  # Python-Weg, gleich
+
+
+def test_numeric_and_hex_host_names_are_not_local() -> None:
+    from mcp_servers.memory.embed import is_local_url
+
+    for url in (
+        "http://134744072/v1",
+        "http://0x08080808/v1",
+        "http://8.8.8.8.:11434",
+        "http://0x7f.1/",
+    ):
+        assert not is_local_url(url), url
+    assert is_local_url("http://127.0.0.1:11434") and is_local_url("http://mein-pc:11434")
+
+
+def test_truncated_http_answers_are_embed_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    import http.client
+    import urllib.request
+
+    from mcp_servers.memory.embed import EmbedError, make_embedder
+
+    def cut(self: object, request: object, timeout: float) -> object:
+        raise http.client.IncompleteRead(b"x")
+
+    monkeypatch.setattr(urllib.request.OpenerDirector, "open", cut)
+    with pytest.raises(EmbedError):
+        make_embedder("http://127.0.0.1:11434/v1", "m")(["a"])

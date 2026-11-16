@@ -1,11 +1,13 @@
 """Embeddings vom lokalen Ollama (`/v1/embeddings`). Nur Rechner im eigenen Netz (ADR-003)."""
 
+import http.client
 import ipaddress
 import json
+import re
 import urllib.error
 import urllib.parse
 import urllib.request
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 
 DEFAULT_URL = "http://127.0.0.1:11434/v1"
 DEFAULT_MODEL = "nomic-embed-text"
@@ -28,8 +30,40 @@ def is_local_url(url: str) -> bool:
     try:
         ip = ipaddress.ip_address(host)
     except ValueError:
+        # "134744072" oder "0x08080808" sind für Betriebssysteme gültige Schreibweisen von
+        # IP-Adressen (hier 8.8.8.8), für ipaddress aber keine: nicht als Rechnername gelten lassen.
+        if re.fullmatch(r"[0-9.]+|0x[0-9a-f.]*", host):
+            return False
         return host == "localhost" or "." not in host or host.endswith((".ts.net", ".local"))
     return ip.is_loopback or ip.is_private or ip in ipaddress.ip_network("100.64.0.0/10")
+
+
+def embed_in_batches[T](
+    embedder: Embedder,
+    items: Sequence[T],
+    text_of: Callable[[T], str],
+    save: Callable[[T, list[float]], None],
+    batch: int = MAX_BATCH,
+    max_failures: int = 2,
+) -> int:
+    """Bettet Stück für Stück ein und speichert jedes Paket sofort: ein Fehler mitten drin
+    verwirft nicht die schon fertigen. Nach `max_failures` Fehlern in Folge (Modell weg) wird
+    aufgegeben. Gibt die Zahl gespeicherter Einträge zurück."""
+    saved = failures = 0
+    for start in range(0, len(items), batch):
+        chunk = items[start : start + batch]
+        try:
+            vectors = embedder([text_of(item) for item in chunk])
+        except EmbedError:
+            failures += 1
+            if failures >= max_failures:
+                break
+            continue
+        failures = 0
+        for item, vector in zip(chunk, vectors, strict=True):
+            save(item, vector)
+            saved += 1
+    return saved
 
 
 def make_embedder(base_url: str = DEFAULT_URL, model: str = DEFAULT_MODEL) -> Embedder:
@@ -57,7 +91,9 @@ def make_embedder(base_url: str = DEFAULT_URL, model: str = DEFAULT_MODEL) -> Em
                 raise EmbedError(
                     f"Das Embedding-Modell '{model}' antwortet mit {exc.code}."
                 ) from None
-            except (OSError, TimeoutError, ValueError, KeyError, TypeError) as exc:
+            except (
+                OSError, TimeoutError, ValueError, KeyError, TypeError, http.client.HTTPException
+            ) as exc:  # fmt: skip
                 raise EmbedError("Das Embedding-Modell ist nicht erreichbar.") from exc
             if len(got) != len(batch) or any(not v for v in got):
                 raise EmbedError("Das Embedding-Modell lieferte eine unerwartete Antwort.")

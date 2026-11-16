@@ -4,7 +4,7 @@ Vault und Notizen abgleichen. Begrenzt, damit der Lauf auch beim Start nur kurz 
 from dataclasses import dataclass
 from pathlib import Path
 
-from mcp_servers.memory.embed import Embedder, EmbedError
+from mcp_servers.memory.embed import Embedder, embed_in_batches
 from mcp_servers.memory.store import MemoryStore
 from mcp_servers.memory.vault import MAX_EMBEDS_PER_RUN, index_all
 
@@ -40,14 +40,12 @@ def maintain(
         seen.add(key)
     embedded = 0
     if embedder is not None:
-        pending = store.needing_embedding(model, MAX_EMBEDS_PER_RUN)
-        try:
-            vectors = embedder([m.text for m in pending]) if pending else []
-        except EmbedError:
-            vectors = []
-        for memory, vector in zip(pending, vectors, strict=False):
-            store.set_embedding(memory.id, vector, model)
-            embedded += 1
+        embedded = embed_in_batches(
+            embedder,
+            store.needing_embedding(model, MAX_EMBEDS_PER_RUN),
+            lambda memory: memory.text,
+            lambda memory, vector: store.set_embedding(memory.id, vector, model),
+        )
     report = index_all(store, roots, notes_file, embedder, model)
     return Maintenance(
         removed,

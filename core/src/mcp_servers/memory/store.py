@@ -172,7 +172,10 @@ def _load_vec(conn: sqlite3.Connection) -> bool:
 
 
 def _similarity(conn: sqlite3.Connection, use_vec: bool, vector: list[float], blob: bytes) -> float:
-    """Kosinus-Ähnlichkeit (1 = gleiche Richtung): sqlite-vec, sonst Python."""
+    """Kosinus-Ähnlichkeit (1 = gleiche Richtung): sqlite-vec, sonst Python. Eine andere Länge
+    (gleicher Modellname, anderer Stand) ist unvergleichbar: 0, in beiden Wegen gleich."""
+    if len(blob) != 4 * len(vector):
+        return 0.0
     if use_vec:
         distance = conn.execute(
             "SELECT vec_distance_cosine(?, ?)", (pack(vector), blob)
@@ -202,6 +205,9 @@ class MemoryStore:
             # Gelöschtes wird überschrieben statt nur freigegeben: sonst stünde ein "vergessener"
             # Text weiter in der Datei (M1.11, "Vergiss das" muss nachweisbar sein).
             conn.execute("PRAGMA secure_delete = ON")
+            # Das Rollback-Journal wird nach dem Schreiben auf 0 Byte gekürzt, nicht nur
+            # gelöscht: es enthält beim Löschen sonst die alte Seite samt Text.
+            conn.execute("PRAGMA journal_mode = TRUNCATE")
             yield conn
 
     def add(self, text: str, kind: str, now: datetime | None = None) -> tuple[Memory, bool]:
@@ -318,11 +324,13 @@ class MemoryStore:
                 for path in paths
             )
 
-    def documents_without_embedding(self, limit: int) -> list[Document]:
+    def documents_without_embedding(self, model: str, limit: int) -> list[Document]:
+        """Stücke ohne Embedding oder mit dem eines anderen (früheren) Modells."""
         with self._connect() as conn:
             rows = conn.execute(
-                f"SELECT {_DOC_FIELDS} FROM documents WHERE embedding IS NULL ORDER BY id LIMIT ?",
-                (limit,),
+                f"SELECT {_DOC_FIELDS} FROM documents "
+                "WHERE embedding IS NULL OR embed_model IS NOT ? ORDER BY id LIMIT ?",
+                (model, limit),
             ).fetchall()
         return [Document(*row) for row in rows]
 
@@ -363,12 +371,16 @@ class MemoryStore:
         scored.sort(key=lambda pair: (-pair[1], pair[0].id))
         return scored[:limit]
 
-    def document_counts(self) -> tuple[int, int]:
-        """(Stücke, davon ohne Embedding)."""
+    def document_counts(self, model: str) -> tuple[int, int]:
+        """(Stücke, davon ohne passendes Embedding)."""
         with self._connect() as conn:
             total = int(conn.execute("SELECT COUNT(*) FROM documents").fetchone()[0])
             missing = int(
-                conn.execute("SELECT COUNT(*) FROM documents WHERE embedding IS NULL").fetchone()[0]
+                conn.execute(
+                    "SELECT COUNT(*) FROM documents "
+                    "WHERE embedding IS NULL OR embed_model IS NOT ?",
+                    (model,),
+                ).fetchone()[0]
             )
         return total, missing
 
