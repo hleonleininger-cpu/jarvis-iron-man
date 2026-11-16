@@ -310,9 +310,10 @@ async def test_servers_start_in_parallel(tmp_path: Path) -> None:
     started = time.monotonic()
     async with McpHub(servers, audit, "test"):
         three = time.monotonic() - started
-    # Nacheinander wären es ~3 x single; parallel kaum mehr als einer (Python startet unter
+    # Nacheinander wären es ~3 x single; parallel kaum mehr als einer (auf einem überlasteten
+    # CI-Rechner wurden 2,1 x gemessen, daher 2,6 statt 2). Python startet unter
     # Windows deutlich langsamer, daher relativ statt einer festen Sekundengrenze).
-    assert three < 2 * single, f"{three:.1f} s für drei, {single:.1f} s für einen Server"
+    assert three < 2.6 * single, f"{three:.1f} s für drei, {single:.1f} s für einen Server"
 
 
 # ------------------------------------------------------------------------------------- Runde 13
