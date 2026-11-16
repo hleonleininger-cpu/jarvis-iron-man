@@ -243,7 +243,8 @@ form.addEventListener("submit", async (submitEvent) => {
 // Not-Aus (ADR-018): stoppt serverseitig ALLES, auch Anfragen anderer Geräte und offene Rückfragen.
 async function panic() {
   try {
-    const response = await call("POST", "/v1/stop");
+    // Zeitlimit: hängt der Server, käme sonst nie eine Antwort und der Knopf wirkte tot.
+    const response = await call("POST", "/v1/stop", undefined, AbortSignal.timeout(5000));
     const data = response.ok ? await response.json() : null;
     element("div", data ? "info" : "info error", data ? (data.abgebrochen ? "Not-Aus: alles gestoppt." : "Not-Aus: es lief nichts.") : "Not-Aus fehlgeschlagen (" + response.status + ").");
   } catch (_) {

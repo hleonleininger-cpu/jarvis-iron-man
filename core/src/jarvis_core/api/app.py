@@ -183,7 +183,21 @@ def create_app(
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
-    guarded = [Depends(authorized)]
+    async def same_site(
+        origin: str | None = Header(default=None),
+        host: str | None = Header(default=None),
+        sec_fetch_site: str | None = Header(default=None),
+    ) -> None:
+        """Fremde Webseiten dürfen im Browser des Nutzers nichts auslösen (CSRF), auch nicht den
+        Not-Aus, der ohne Token und ohne Inhalt auskommt. Programme ohne Browser senden diese
+        Header nicht."""
+        foreign = sec_fetch_site not in (None, "same-origin", "none")
+        if origin is not None and origin.partition("://")[2] != (host or ""):
+            foreign = True
+        if foreign:
+            raise HTTPException(status_code=403, detail="Anfrage von einer fremden Seite.")
+
+    guarded = [Depends(same_site), Depends(authorized)]
 
     for route, (name, media_type) in WEB_FILES.items():
         content = (WEB_DIR / name).read_bytes()
@@ -203,9 +217,12 @@ def create_app(
         # Gab es zu dieser ID keinen Verlauf (neu, abgelaufen, Server neu gestartet)? Der Client
         # erfährt es im `done`-Ereignis und kann sagen, dass JARVIS das Gespräch nicht mehr kennt.
         fresh = not service.sessions.history(session_id)
+        accepted_at = service.stop_count
 
         async def events() -> AsyncIterator[str]:
-            stream = service.stream(request.message, channel="api", session_id=session_id)
+            stream = service.stream(
+                request.message, channel="api", session_id=session_id, accepted_at=accepted_at
+            )
             try:
                 async for event in with_keepalive(stream, keepalive_seconds):
                     match event:

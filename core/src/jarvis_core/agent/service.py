@@ -218,6 +218,7 @@ class ChatService:
         # Laufende und wartende Anfragen (für den Not-Aus) und die davon per Not-Aus beendeten.
         self._tasks: set[asyncio.Task[None]] = set()
         self._stopped: set[asyncio.Task[None]] = set()
+        self.stop_count = 0  # zählt Not-Aus-Auslösungen (siehe `stream`, Parameter accepted_at)
 
     def emergency_stop(self, channel: str = "system") -> int:
         """Not-Aus (ADR-018): bricht ALLE laufenden und wartenden Anfragen sofort ab, beantwortet
@@ -227,6 +228,7 @@ class ChatService:
         Anfrage hängt. Gibt die Zahl der abgebrochenen Anfragen zurück. Muss in der Event-Loop
         des Service laufen. Im Audit-Log steht nur, dass gestoppt wurde.
         """
+        self.stop_count += 1
         self.broker.reject_all()
         tasks = [task for task in self._tasks if not task.done()]
         for task in tasks:
@@ -240,7 +242,12 @@ class ChatService:
         return len(tasks)
 
     async def stream(
-        self, message: str, *, channel: str, session_id: str | None = None
+        self,
+        message: str,
+        *,
+        channel: str,
+        session_id: str | None = None,
+        accepted_at: int | None = None,
     ) -> AsyncGenerator[StreamEvent]:
         """Liefert Ereignisse. Schreibt genau einen Chat-Audit-Eintrag (ohne Inhalte).
 
@@ -249,7 +256,17 @@ class ChatService:
 
         Der Agent läuft in einem eigenen Task, damit Ereignisse (z. B. eine Bestätigungsanfrage)
         auch dann ausgeliefert werden, während ein Werkzeugaufruf auf die Antwort wartet.
+
+        `accepted_at`: Stand von `stop_count`, als die Anfrage angenommen wurde. Kam seitdem ein
+        Not-Aus (zwischen Annahme und Start liegen ein paar Schritte der Event-Loop), startet
+        sie gar nicht erst.
         """
+        if accepted_at is not None and accepted_at != self.stop_count:
+            self._audit.record(
+                channel=channel, model=self.model_name, tokens=None, status="aborted"
+            )
+            yield Notice(EMERGENCY_STOP_MESSAGE)
+            return
         queue: asyncio.Queue[StreamEvent | BaseException | None] = asyncio.Queue()
         usage: list[int | None] = [None]
 

@@ -215,11 +215,43 @@ def test_api_stop_needs_the_token_when_the_server_does(tmp_path: Path) -> None:
     assert ok.status_code == 200
 
 
+@pytest.mark.parametrize(
+    ("headers", "status"),
+    [
+        ({}, 200),  # kein Browser (z. B. jarvis stop)
+        ({"Origin": "http://127.0.0.1", "Sec-Fetch-Site": "same-origin"}, 200),
+        ({"Origin": "https://evil.example", "Sec-Fetch-Site": "cross-site"}, 403),
+        ({"Origin": "https://evil.example"}, 403),
+        ({"Sec-Fetch-Site": "cross-site"}, 403),
+        ({"Origin": "null"}, 403),
+    ],
+)
+def test_foreign_pages_cannot_trigger_stop_or_anything_else(
+    settings: Settings, headers: dict[str, str], status: int
+) -> None:
+    client = TestClient(create_app(settings, TestModel(), "t"), base_url="http://127.0.0.1")
+    assert client.post("/v1/stop", headers=headers).status_code == status
+    forget = client.delete("/v1/sessions/abc", headers=headers).status_code
+    assert (forget == 403) == (status == 403)
+
+
+async def test_request_accepted_just_before_a_stop_never_starts(settings: Settings) -> None:
+    service = build_service(settings, AuditLog(settings.audit_db_path), TestModel(), "t")
+    accepted_at = service.stop_count
+    service.emergency_stop("api")  # trifft ein, bevor die Anfrage gestartet ist
+    events = [e async for e in service.stream("x", channel="api", accepted_at=accepted_at)]
+    assert events == [Notice(EMERGENCY_STOP_MESSAGE)]
+    assert _audit(settings)[-1] == ("api", None, "aborted")
+    later = [e async for e in service.stream("x", channel="api", accepted_at=service.stop_count)]
+    assert any(isinstance(event, TextDelta) for event in later)
+
+
 def test_web_page_offers_the_stop_button_and_shortcut() -> None:
     web = Path(cli_main.__file__).parent.parent / "api" / "web"
     assert 'id="panic"' in (web / "index.html").read_text(encoding="utf-8")
     script = (web / "app.js").read_text(encoding="utf-8")
     assert '"/v1/stop"' in script and 'keyEvent.key === "."' in script
+    assert "AbortSignal.timeout(5000)" in script  # hängender Server: Meldung statt Stille
 
 
 # --------------------------------------------------------------------------- jarvis stop
@@ -258,14 +290,58 @@ def test_cli_stop_kills_a_server_that_no_longer_answers(
         return "hung", 0
 
     monkeypatch.setattr(cli_main, "_post_stop", hung)
-    victim = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(600)"])  # noqa: S603
+    code = "import time; time.sleep(600)  # jarvis serve"
+    victim = subprocess.Popen([sys.executable, "-c", code])  # noqa: S603
+    pid_file = cli_env / "d" / "jarvis.pid"
     try:
-        (cli_env / "d" / "jarvis.pid").write_text(str(victim.pid), encoding="utf-8")
+        pid_file.write_text(str(victim.pid), encoding="utf-8")
         result = CliRunner().invoke(cli_main.app, ["stop"])
         assert result.exit_code == 0 and "wurde beendet" in result.output
         assert victim.wait(timeout=10) != 0
+        assert not pid_file.exists()  # sonst zeigte sie später auf einen fremden Prozess
     finally:
         victim.kill()
+
+
+def test_cli_stop_never_kills_a_process_that_is_not_jarvis(
+    cli_env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Liegengebliebene PID-Datei, Nummer inzwischen an ein fremdes Programm vergeben."""
+
+    def not_jarvis(_pid: int) -> bool:
+        return False
+
+    monkeypatch.setattr(cli_main, "_is_jarvis_process", not_jarvis)
+    stranger = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(600)"])  # noqa: S603
+    try:
+        (cli_env / "d" / "jarvis.pid").write_text(str(stranger.pid), encoding="utf-8")
+        result = CliRunner().invoke(cli_main.app, ["stop", "--hart"])
+        assert result.exit_code == 1 and "ließ sich nicht beenden" in result.output
+        assert stranger.poll() is None  # lebt noch
+    finally:
+        stranger.kill()
+
+
+def test_is_jarvis_process_recognises_itself_and_rejects_dead_pids() -> None:
+    probe = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(600)  # jarvis"])  # noqa: S603
+    try:
+        deadline = time.monotonic() + 5  # kurz nach dem Start ist die Befehlszeile noch nicht da
+        while not cli_main._is_jarvis_process(probe.pid) and time.monotonic() < deadline:  # pyright: ignore[reportPrivateUsage]
+            time.sleep(0.05)
+        assert cli_main._is_jarvis_process(probe.pid)  # pyright: ignore[reportPrivateUsage]
+    finally:
+        probe.kill()
+        probe.wait()
+    assert not cli_main._is_jarvis_process(probe.pid)  # pyright: ignore[reportPrivateUsage]
+
+
+def test_cli_stop_hard_skips_the_question(cli_env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def never(_settings: Settings, _token: str | None) -> tuple[str, int]:
+        raise AssertionError("mit --hart wird der Server nicht gefragt")
+
+    monkeypatch.setattr(cli_main, "_post_stop", never)
+    result = CliRunner().invoke(cli_main.app, ["stop", "--hart"])
+    assert result.exit_code == 1  # keine PID-Datei: nichts zu beenden
 
 
 @pytest.mark.parametrize("content", [None, "", "kein-pid", "0", "-5"])

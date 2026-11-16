@@ -60,7 +60,9 @@ def start_script(project_dir: Path, executable: str | None = None) -> str:
         # Gibt es den Ordner nicht mehr (verschoben), nicht irgendwo anders starten.
         f"cd /d {_quoted(text, 'Der Projektordner')} || exit /b 1",
         # Das erste Argument in Anführungszeichen ist für `start` immer der Fenstertitel.
-        f'start "{TASK_NAME}" /min {uv} run jarvis serve',
+        # `|| pause`: endet der Server mit einem Fehler (Port belegt, Tailscale noch nicht da),
+        # bleibt das minimierte Fenster mit der Meldung offen, statt spurlos zu verschwinden.
+        f'start "{TASK_NAME}" /min cmd /c "{uv} run jarvis serve || pause"',
     )
     return "".join(f"{line}\r\n" for line in lines)
 

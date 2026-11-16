@@ -11,12 +11,12 @@ Markierungen:
 - [~] M0.2 jarvis doctor erkennt die Hardware und wählt das Modellprofil S, M oder L (Beleg: core/src/jarvis_core/hardware/profile.py, core/tests/test_profile.py)
 - [~] M0.3 Audit-Log ohne Inhalte
 - [~] M0.4 Policy mit Bestätigungspflicht für Schreibendes, Bezahlen und Handeln gesperrt
-- [ ] M0.5 Not-Aus per Taste und per Befehl, stoppt alle laufenden Aktionen (Bestand: nur "Stopp" für die laufende Anfrage in der Web-Oberfläche, api/web/app.js; kein Not-Aus für alles)
+- [~] M0.5 Not-Aus per Taste und per Befehl, stoppt alle laufenden Aktionen (roter Knopf und Strg+. in der Web-Oberfläche, `jarvis stop`, POST /v1/stop; beendet auch einen hängenden Server. Beleg: docs/adr/ADR-018-not-aus.md, core/tests/test_emergency_stop.py. Eine systemweite Taste außerhalb des Browsers kommt mit der Desktop-App, M3)
 - [~] M0.6 CLI-Chat mit lokalem Modell über Ollama
 - [~] M0.7 Konfiguration und Secrets getrennt (OS-Schlüsselbund statt .env, nie im Repo; Entscheidung von Master am 15.11.; Beleg: core/src/jarvis_core/secrets/store.py, core/tests/test_secrets.py, .gitignore)
-- [~] M0.8 Testgerüst: 577 Tests, ruff und pyright sauber, CI auf Linux und Windows
-- [ ] M0.9 Core startet automatisch mit Windows (Bestand: nur eine schtasks-Anleitung in README.md, kein Befehl, kein Test)
-- [ ] M0.10 Ollama-Start mit OLLAMA_CONTEXT_LENGTH=8192 automatisch sicherstellen oder beim Start prüfen und warnen
+- [~] M0.8 Testgerüst: 644 Tests, ruff und pyright sauber, CI auf Linux und Windows
+- [~] M0.9 Core startet automatisch mit Windows (`jarvis autostart an|aus|status`, Startdatei im Autostart-Ordner. Beleg: core/src/jarvis_core/cli/autostart.py, core/tests/test_autostart.py. Die Startdatei ist auf der Windows-CI ausgeführt worden, eine echte Anmeldung nicht)
+- [~] M0.10 Ollama-Start mit OLLAMA_CONTEXT_LENGTH=8192 automatisch sicherstellen oder beim Start prüfen und warnen (gebaut: `jarvis serve` und `jarvis chat` prüfen beim Start und warnen. Beleg: core/tests/test_config.py. Ollama wird nicht von JARVIS gestartet)
 
 ## M1 – Gehirn und Gedächtnis
 - [ ] M1.1 Modell-Router: kleines Modell für Schnelles, großes für Schweres

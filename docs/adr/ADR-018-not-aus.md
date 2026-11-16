@@ -19,7 +19,16 @@ Geräts, und es hilft nicht, wenn der Server selbst nicht mehr antwortet.
   - Befehl `jarvis stop` in der Eingabeaufforderung.
 - **Wenn der Server hängt:** `jarvis stop` wartet 5 Sekunden auf die Antwort. Kommt keine,
   beendet es den Server-Prozess über die Prozessnummer, die `jarvis serve` beim Start in
-  `data/jarvis.pid` schreibt (und beim Beenden löscht).
+  `data/jarvis.pid` schreibt (und beim Beenden löscht). Vorher wird geprüft, dass die Nummer
+  noch zu einem JARVIS-/Python-Prozess gehört: eine liegengebliebene Datei darf nie ein fremdes
+  Programm treffen. `jarvis stop --hart` beendet den Prozess ohne Nachfrage beim Server (z. B.
+  wenn das Zugangstoken nicht mehr passt). Der Knopf in der Web-Oberfläche meldet nach 5
+  Sekunden ohne Antwort, dass `jarvis stop` hilft.
+- **Kein Auslösen durch fremde Webseiten:** Alle `/v1`-Routen lehnen Anfragen ab, die der
+  Browser als fremd kennzeichnet (`Origin`, `Sec-Fetch-Site`). Sonst könnte jede geöffnete
+  Webseite den Not-Aus in Schleife drücken.
+- **Anfragen im Start:** Der Service zählt Not-Aus-Auslösungen; eine eben angenommene, noch
+  nicht gestartete Anfrage startet danach nicht mehr.
 - **Zuhörer** bekommen die feste Meldung "Not-Aus: Die Anfrage wurde abgebrochen." und das
   Ereignis-Ende; die abgebrochene Runde landet nicht im Gesprächsverlauf.
 - **Audit:** ein Eintrag `emergency_stop` (Kanal, Ergebnis `ok` oder `idle`), ohne Inhalte; die

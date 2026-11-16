@@ -48,14 +48,14 @@ def test_start_script_exact_content() -> None:
         "@echo off\r\n"
         "chcp 65001 >nul\r\n"
         'cd /d "C:\\JARVIS\\core" || exit /b 1\r\n'
-        'start "JARVIS" /min uv run jarvis serve\r\n'
+        'start "JARVIS" /min cmd /c "uv run jarvis serve || pause"\r\n'
     )
 
 
 def test_start_script_quotes_executable() -> None:
     script = start_script(PROJECT, executable="C:\\Users\\Max Muster\\bin\\uv.exe")
     assert script.splitlines()[-1] == (
-        'start "JARVIS" /min "C:\\Users\\Max Muster\\bin\\uv.exe" run jarvis serve'
+        'start "JARVIS" /min cmd /c ""C:\\Users\\Max Muster\\bin\\uv.exe" run jarvis serve || pause"'
     )
 
 
@@ -93,7 +93,7 @@ def test_enable_writes_file_with_space_and_umlaut(tmp_path: Path) -> None:
             "@echo off\r\n"
             "chcp 65001 >nul\r\n"
             'cd /d "C:\\Pfad mit Leer\\Jörg Müßig\\core" || exit /b 1\r\n'
-            'start "JARVIS" /min uv run jarvis serve\r\n'
+            'start "JARVIS" /min cmd /c "uv run jarvis serve || pause"\r\n'
         ).encode()
     )
     assert [p.name for p in tmp_path.iterdir()] == ["JARVIS.cmd"]
@@ -240,7 +240,7 @@ def test_cli_autostart_reports_and_sets_the_exit_code(
     from jarvis_core.cli import main as cli_main
 
     monkeypatch.chdir(tmp_path)
-    (tmp_path / "jarvis.toml").write_text("", encoding="utf-8")
+    monkeypatch.setattr(cli_main, "PROJECT_DIR", tmp_path)
     calls: list[tuple[str, Path | None]] = []
 
     def fake_enable(project_dir: Path) -> Result:
@@ -253,9 +253,14 @@ def test_cli_autostart_reports_and_sets_the_exit_code(
 
     monkeypatch.setattr(cli_main.autostart_task, "enable", fake_enable)
     monkeypatch.setattr(cli_main.autostart_task, "disable", fake_disable)
+    # Ohne pyproject.toml und jarvis.toml im Projektordner wird nichts eingerichtet.
+    missing = CliRunner().invoke(cli_main.app, ["autostart", "an"])
+    assert missing.exit_code == 1 and "braucht jarvis.toml" in missing.output and calls == []
+    (tmp_path / "jarvis.toml").write_text("", encoding="utf-8")
+    (tmp_path / "pyproject.toml").write_text("", encoding="utf-8")
     on = CliRunner().invoke(cli_main.app, ["autostart", "AN"])
     assert on.exit_code == 0 and "eingerichtet" in on.output
     off = CliRunner().invoke(cli_main.app, ["autostart", "aus"])
     assert off.exit_code == 1 and "geht nicht" in off.output
-    assert calls == [("an", tmp_path.resolve()), ("aus", None)]  # Ordner mit jarvis.toml
+    assert calls == [("an", tmp_path), ("aus", None)]  # der Projektordner
     assert CliRunner().invoke(cli_main.app, ["autostart", "vielleicht"]).exit_code == 2

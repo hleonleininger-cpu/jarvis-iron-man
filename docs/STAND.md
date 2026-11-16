@@ -11,10 +11,13 @@ Was er kann:
 - Websuche: DuckDuckGo, ohne Konto. Nur der Suchbegriff geht raus.
 - Ideen, Aufträge, Entwürfe: lokal, für Nebeneinkünfte. Aufträge mit Frist, Betrag und Summen, Entwürfe als Textdateien.
 - Notion: lesen, und neue Einträge anlegen mit Rückfrage. Ändern und Löschen gibt es im Code nicht.
+- Not-Aus: roter Knopf und Strg+. in der Web-Oberfläche, `jarvis stop` in der Eingabeaufforderung. Bricht alle laufenden und wartenden Anfragen, offene Rückfragen und Werkzeuge ab; ein hängender Server wird beendet.
+- Autostart: `jarvis autostart an` startet JARVIS bei jeder Windows-Anmeldung.
+- Start-Prüfung: `jarvis serve` und `jarvis chat` warnen, wenn Ollamas Kontextfenster kleiner ist als in jarvis.toml angenommen.
 - Sicherheit: Bezahlen und Handeln sind gesperrt, Schreibendes braucht Bestätigung, das Audit-Log enthält nie Inhalte, und es gibt keine Cloud-Modelle.
 
 Qualität:
-- 577 Tests grün, ruff und pyright sauber. Mehr als 100 Mängel wurden in 14 Prüfrunden behoben.
+- 644 Tests grün, ruff und pyright sauber. Mehr als 100 Mängel wurden in 15 Prüfrunden behoben.
 - Im Browser mit einer Ollama-Attrappe wurden alle Wege durchgespielt.
 - Die CI (Linux und Windows) war für alle Commits bis 7f93d13 grün. Für den letzten Commit 0fab3d2 (sechs Korrekturen) ist die CI ebenfalls grün (geprüft am 15.11.).
 - Alles liegt in PR #1 auf claude/gallant-carson-tp966a, der offen bleibt.
@@ -32,6 +35,8 @@ Arbeitsweise:
 - Gebaut wird nach docs/MASTERAUFTRAG.md: ein Meilenstein pro Auftrag, nur Nummern aus docs/CHECKLISTE.md. Beauftragt ist M0.
 - Abgrenzbare Teilaufgaben gehen an Untersessions, damit der Kontext klein bleibt.
 
-Abweichungen aus dem Bestandsabgleich (15.11.): Secrets liegen im OS-Schlüsselbund, nicht in .env. Ein Not-Aus, ein Autostart-Befehl, Persona, HUD-Stil und PWA fehlen noch (Details in der Checkliste).
+Abweichungen aus dem Bestandsabgleich (15.11.): Secrets liegen im OS-Schlüsselbund, nicht in .env. Persona, HUD-Stil und PWA fehlen noch (Details in der Checkliste).
 
-Nächster Schritt: Meilenstein M0 abschließen (M0.10, M0.5, M0.9). Master testet weiterhin Kalender, Notion und das Modell und meldet, was nicht passt.
+Meilenstein M0 (16.11.): alle Nummern stehen auf [~]. Nicht geprüft, geht nur auf Masters PC: Autostart bei einer echten Windows-Anmeldung, `jarvis stop` gegen einen hängenden Server unter Windows.
+
+Nächster Schritt: Master probiert M0 aus und setzt [x]. Beauftragt ist danach M1 (Gehirn und Gedächtnis); dafür wird zuerst ein Plan vorgelegt. Master testet weiterhin Kalender, Notion und das Modell und meldet, was nicht passt.

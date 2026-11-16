@@ -7,6 +7,7 @@ import os
 import re
 import signal
 import socket
+import subprocess
 import sys
 import threading
 import tomllib
@@ -135,7 +136,8 @@ def _settings(log_level: str | None = None) -> Settings:
 
 
 # Vorlage im Repository (core/jarvis.example.toml); `jarvis init` kopiert sie.
-EXAMPLE_CONFIG = Path(__file__).resolve().parents[3] / "jarvis.example.toml"
+PROJECT_DIR = Path(__file__).resolve().parents[3]  # Ordner core (pyproject.toml)
+EXAMPLE_CONFIG = PROJECT_DIR / "jarvis.example.toml"
 
 
 @app.command()
@@ -239,6 +241,12 @@ def _post_stop(settings: Settings, token: str | None) -> tuple[str, int]:
     )
     # Ohne System-Proxy: die Anfrage geht an den eigenen Rechner.
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    # Lauscht überhaupt jemand? Ein Zeitlimit schon beim Verbinden (z. B. Tailnet-Adresse ohne
+    # Tailscale) heißt "kein Server", nicht "Server hängt".
+    try:
+        socket.create_connection((settings.host.strip("[]"), settings.port), timeout=2.0).close()
+    except OSError:
+        return "down", 0
     try:
         with opener.open(request, timeout=STOP_TIMEOUT_SECONDS) as response:
             data = json.loads(response.read())
@@ -253,14 +261,37 @@ def _post_stop(settings: Settings, token: str | None) -> tuple[str, int]:
         return "down", 0
 
 
+def _is_jarvis_process(pid: int) -> bool:
+    """Gehört die Prozessnummer (noch) zu einem JARVIS-Server? Eine liegengebliebene PID-Datei
+    kann auf einen fremden Prozess zeigen, dem das System die Nummer inzwischen gegeben hat."""
+    if os.name == "nt":
+        try:
+            done = subprocess.run(  # noqa: S603
+                ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],  # noqa: S607
+                capture_output=True, text=True, timeout=10, check=False,
+            )  # fmt: skip
+        except (OSError, subprocess.SubprocessError):
+            return False
+        image = done.stdout.strip().split(",")[0].strip('"').lower()
+        return image in ("python.exe", "pythonw.exe", "jarvis.exe", "uv.exe")
+    try:
+        command = Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\0", b" ")
+    except OSError:
+        return False
+    return b"jarvis" in command
+
+
 def _kill_server(settings: Settings) -> bool:
     """Beendet den Server-Prozess aus der PID-Datei. True, wenn ein Signal gesendet wurde."""
+    pid_file = _pid_file(settings)
     try:
-        pid = int(_pid_file(settings).read_text(encoding="utf-8").strip())
+        pid = int(pid_file.read_text(encoding="utf-8").strip())
     except (OSError, ValueError):
         return False
-    if pid <= 0 or pid == os.getpid():
+    if pid <= 0 or pid == os.getpid() or not _is_jarvis_process(pid):
         return False
+    with suppress(OSError):  # der beendete Server räumt sie nicht mehr selbst weg
+        pid_file.unlink()
     # Hart beenden: ein hängender Server verarbeitet ein höfliches SIGTERM nicht mehr. Windows
     # kennt kein SIGKILL; dort beendet os.kill den Prozess ohnehin sofort.
     hard = getattr(signal, "SIGKILL", signal.SIGTERM)
@@ -272,10 +303,15 @@ def _kill_server(settings: Settings) -> bool:
 
 
 @app.command()
-def stop() -> None:
+def stop(
+    hard: Annotated[
+        bool, typer.Option("--hart", help="Server-Prozess sofort beenden, ohne ihn zu fragen")
+    ] = False,
+) -> None:
     """Not-Aus: bricht sofort alles ab, was der laufende JARVIS-Server gerade tut.
 
-    Antwortet der Server nicht mehr (er hängt), wird sein Prozess beendet.
+    Antwortet der Server nicht mehr (er hängt), wird sein Prozess beendet. Mit --hart wird der
+    Prozess in jedem Fall beendet (z. B. wenn das Zugangstoken nicht mehr passt).
     """
     settings = _settings(INTERACTIVE_LOG_LEVEL)
     from jarvis_core.api.app import token_required
@@ -284,7 +320,7 @@ def stop() -> None:
     if token_required(settings):
         with suppress(SecretsError):
             token = read_secret_field("api_token", "token")
-    outcome, value = _post_stop(settings, token)
+    outcome, value = ("hung", 0) if hard else _post_stop(settings, token)
     if outcome == "ok":
         typer.echo(
             f"Not-Aus: {value} Anfrage(n) abgebrochen." if value else "Not-Aus: es lief nichts."
@@ -295,13 +331,14 @@ def stop() -> None:
         return
     if outcome == "denied":
         typer.echo(
-            f"Der Server hat den Not-Aus abgelehnt (HTTP {value}). Stimmt das Zugangstoken "
-            "(jarvis secrets status)?",
+            f"Der Server hat den Not-Aus abgelehnt (HTTP {value}): das Zugangstoken passt nicht "
+            "(mehr). Sofort beenden geht mit: jarvis stop --hart",
             err=True,
         )
         raise typer.Exit(1)
     if _kill_server(settings):
-        typer.echo("Der Server hat nicht geantwortet und wurde beendet. Neu starten: jarvis serve")
+        reason = "wurde" if hard else "hat nicht geantwortet und wurde"
+        typer.echo(f"Der Server {reason} beendet. Neu starten: jarvis serve")
         return
     typer.echo(
         "Der Server antwortet nicht und ließ sich nicht beenden. Bitte das Fenster mit "
@@ -518,8 +555,17 @@ def autostart(
     zeigt den Stand (status). Legt dazu eine Startdatei im Autostart-Ordner des Nutzers an."""
     wanted = action.strip().lower()
     if wanted == "an":
-        # Der Ordner mit jarvis.toml: von dort wird `uv run jarvis serve` gestartet.
-        result = autostart_task.enable(config_path().resolve().parent)
+        # Gestartet wird im Projektordner (core): nur dort findet `uv run jarvis serve` das
+        # Projekt, und dort muss auch jarvis.toml liegen (sie wird im Startordner gesucht).
+        project = PROJECT_DIR
+        if not (project / "pyproject.toml").is_file() or not (project / "jarvis.toml").is_file():
+            typer.echo(
+                f"Autostart braucht jarvis.toml im Projektordner {project}. Dort 'jarvis init' "
+                "ausführen bzw. die Datei dorthin legen.",
+                err=True,
+            )
+            raise typer.Exit(1)
+        result = autostart_task.enable(project)
     elif wanted == "aus":
         result = autostart_task.disable()
     elif wanted == "status":
