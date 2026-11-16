@@ -106,6 +106,7 @@ def eval_servers(writes_log: Path, notes_file: Path | None = None) -> dict[str, 
                 str(writes_log.with_suffix(".gedaechtnis")),
                 "--journal",
                 str(writes_log.with_suffix(".journal")),
+                "--ohne-embeddings",  # Evals brauchen kein laufendes Ollama für Embeddings
             ],
             tools={
                 "remember": RiskClass.WRITE_LOCAL,

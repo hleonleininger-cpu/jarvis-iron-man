@@ -1,6 +1,6 @@
 # ADR-019: Langzeitgedächtnis und Tagesjournal
 
-**Status:** akzeptiert (Stand: Speicher, Stichwortsuche, Journal; Embeddings folgen mit M1.8)
+**Status:** akzeptiert (Stand: Speicher, semantische Suche, Journal; Vault und Pflege folgen)
 
 ## Kontext
 Der Masterauftrag (M1.7–M1.12) verlangt ein Gedächtnis, das Neustarts überlebt: "Merk dir, dass
@@ -19,9 +19,19 @@ nur, was der Nutzer ausdrücklich merken lässt.
   Nutzer sagen lässt. Das Modell speichert nichts von sich aus.
 - **Arten:** fakt, vorliebe, person, projekt, sonstiges. Gleiche Texte (ohne Rücksicht auf
   Groß-/Kleinschreibung) werden nicht doppelt gespeichert; Länge höchstens 1000 Zeichen.
-- **Suche (Stand jetzt):** Stichwortsuche über Wörter der Frage ohne Füllwörter; bis zu 5
-  Treffer, die besten zuerst. Das Ergebnis sagt "Stichwortsuche". Jeder Eintrag hat schon einen
-  Platz für ein Embedding (M1.8), damit die Suche später ohne Umbau semantisch werden kann.
+- **Suche (M1.8):** Bei jedem `remember` wird der Text über Ollama (`/v1/embeddings`, Standard
+  `nomic-embed-text`) in einen Vektor verwandelt und im Eintrag gespeichert (float32 im BLOB).
+  `recall` bettet die Frage genauso ein und nimmt die ähnlichsten Einträge (Kosinus-Ähnlichkeit
+  mindestens 0,5, bis zu 5 Treffer); Stichwort-Treffer kommen immer dazu, auch für Einträge ohne
+  Embedding. Das Ergebnis sagt `semantisch` oder `Stichwortsuche`. Gerechnet wird mit
+  `sqlite-vec` (`vec_distance_cosine`, einzige neue Abhängigkeit, von Master am 16.11.
+  freigegeben); lässt es sich auf einem Rechner nicht laden, rechnet Python dasselbe (ein Test
+  belegt, dass beide gleich ordnen).
+- **Nur lokal:** Der Embedder spricht nur mit Loopback, privaten und Tailnet-Adressen (ADR-003),
+  ohne System-Proxy; eine andere Adresse wird beim Start abgelehnt.
+- **Ohne Modell:** Fehlt das Embedding-Modell oder ist Ollama nicht erreichbar, wird trotzdem
+  gespeichert (Eintrag ohne Embedding) und `recall` fällt auf Stichwörter zurück, mit Hinweis
+  `ollama pull nomic-embed-text`. Vektoren verschiedener Modelle werden nie verglichen.
 - **Vergessen:** `forget` löscht Zeile samt Embedding und meldet die Eintragszahl vorher und
   nachher; der Test belegt, dass der Text nach dem Löschen nicht mehr in der Datenbankdatei steht.
 - **Tagesjournal:** Eine Markdown-Datei je Tag in `~/.jarvis/journal/` (`JJJJ-MM-TT.md`), Einträge
@@ -32,5 +42,6 @@ nur, was der Nutzer ausdrücklich merken lässt.
 - Das Gedächtnis liegt unverschlüsselt als Datei auf dem PC (wie Notizen). Backup ist Sache des
   Nutzers; automatische Backups sind M13.3.
 - Ein Eintrag im Journal ist unabhängig vom Gedächtnis: `forget` löscht keine Journalzeilen.
-- Die Stichwortsuche findet Synonyme nicht ("Fußballclub" statt "Verein"); das behebt M1.8.
+- Die Schwelle 0,5 für `nomic-embed-text` ist eine Annahme, die nur mit dem echten Modell auf
+  Masters PC geprüft werden kann (Konstante `MIN_SIMILARITY` in `store.py`).
 - Wer das nicht will, entfernt `[mcp_servers.memory]` aus `jarvis.toml`.

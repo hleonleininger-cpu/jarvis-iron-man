@@ -4,8 +4,10 @@ Gespeichert wird nur, was der Nutzer ausdrücklich sagen lässt ("Merk dir ...")
 tragen Platz für ein Embedding (M1.8); ohne Embedding-Modell funktioniert die Stichwortsuche.
 """
 
+import math
 import re
 import sqlite3
+import struct
 from collections.abc import Generator
 from contextlib import closing, contextmanager
 from dataclasses import dataclass
@@ -24,6 +26,8 @@ CREATE TABLE IF NOT EXISTS memories (
 )
 """
 _FIELDS = "id, text, kind, created"
+# Das Embedding steckt als float32-Folge im BLOB (Format von sqlite-vec).
+MIN_SIMILARITY = 0.5  # darunter gilt ein Treffer der semantischen Suche als nicht passend
 _WORD = re.compile(r"[a-zäöüß0-9]{3,}")
 # Füllwörter, die in jeder Frage vorkommen und nichts über das Thema sagen.
 _STOPWORDS = frozenset(
@@ -102,6 +106,21 @@ _STOPWORDS = frozenset(
 )
 
 
+def pack(vector: list[float]) -> bytes:
+    return struct.pack(f"<{len(vector)}f", *vector)
+
+
+def unpack(blob: bytes) -> list[float]:
+    return list(struct.unpack(f"<{len(blob) // 4}f", blob))
+
+
+def cosine(a: list[float], b: list[float]) -> float:
+    if len(a) != len(b):
+        return 0.0
+    norm = math.sqrt(sum(x * x for x in a)) * math.sqrt(sum(y * y for y in b))
+    return sum(x * y for x, y in zip(a, b, strict=True)) / norm if norm else 0.0
+
+
 @dataclass(frozen=True)
 class Memory:
     id: int
@@ -113,6 +132,19 @@ class Memory:
 def words(text: str) -> set[str]:
     """Suchbegriffe eines Textes: kleingeschrieben, ohne Füllwörter und sehr kurze Wörter."""
     return {w for w in _WORD.findall(text.casefold()) if w not in _STOPWORDS}
+
+
+def _load_vec(conn: sqlite3.Connection) -> bool:
+    """Lädt sqlite-vec in die Verbindung. False, wenn das auf diesem Rechner nicht geht."""
+    try:
+        import sqlite_vec  # pyright: ignore[reportMissingTypeStubs]
+
+        conn.enable_load_extension(True)
+        sqlite_vec.load(conn)  # pyright: ignore[reportUnknownMemberType]
+        conn.enable_load_extension(False)
+    except (ImportError, AttributeError, sqlite3.Error):
+        return False
+    return True
 
 
 def _row(row: tuple[object, ...]) -> Memory:
@@ -175,6 +207,50 @@ class MemoryStore:
         hits = [(m, score) for m, score in scored if score > 0]
         hits.sort(key=lambda pair: (-pair[1], -pair[0].id))
         return hits[:limit]
+
+    def set_embedding(self, memory_id: int, vector: list[float], model: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE memories SET embedding = ?, embed_model = ? WHERE id = ?",
+                (pack(vector), model, memory_id),
+            )
+
+    def without_embedding(self) -> list[Memory]:
+        """Einträge, die (noch) kein Embedding haben, z. B. weil das Modell fehlte."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"SELECT {_FIELDS} FROM memories WHERE embedding IS NULL ORDER BY id"
+            ).fetchall()
+        return [_row(r) for r in rows]
+
+    def semantic_search(
+        self, vector: list[float], model: str, limit: int = 5
+    ) -> tuple[list[tuple[Memory, float]], int]:
+        """(Treffer mit Ähnlichkeit, Zahl der verglichenen Einträge). Verglichen werden nur
+        Einträge, die mit demselben Modell eingebettet wurden (sonst sind Vektoren unvergleichbar).
+        sqlite-vec rechnet, wenn es sich laden lässt; sonst rechnet Python (gleiches Ergebnis)."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"SELECT {_FIELDS}, embedding FROM memories "
+                "WHERE embedding IS NOT NULL AND embed_model = ?",
+                (model,),
+            ).fetchall()
+            compared = len(rows)
+            scored: list[tuple[Memory, float]] = []
+            use_vec = _load_vec(conn)
+            for row in rows:
+                blob = bytes(row[4])
+                if use_vec:
+                    distance = conn.execute(
+                        "SELECT vec_distance_cosine(?, ?)", (pack(vector), blob)
+                    ).fetchone()[0]
+                    similarity = 1.0 - float(distance) if distance is not None else 0.0
+                else:
+                    similarity = cosine(vector, unpack(blob))
+                scored.append((_row(row[:4]), similarity))
+        scored = [pair for pair in scored if pair[1] >= MIN_SIMILARITY]
+        scored.sort(key=lambda pair: (-pair[1], -pair[0].id))
+        return scored[:limit], compared
 
     def delete(self, memory_id: int) -> bool:
         """Löscht einen Eintrag samt Embedding. False, wenn es ihn nicht gab."""

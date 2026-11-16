@@ -76,6 +76,10 @@ complete_note = "WRITE_LOCAL"
 # Langzeitgedächtnis und Tagesjournal, lokal (ADR-019): JARVIS merkt sich, was du ausdrücklich
 # sagst ("Merk dir ..."), findet es wieder und vergisst es auf Wunsch (nach Rückfrage). Gespeichert
 # in ~/.jarvis/gedaechtnis.sqlite3, Journal als Textdatei je Tag in ~/.jarvis/journal/.
+# Die Suche versteht Bedeutung (nicht nur Wörter), wenn Ollama ein Embedding-Modell hat:
+# `ollama pull nomic-embed-text`. Ohne das Modell gilt die Stichwortsuche. Anderes Modell oder
+# anderer Ollama (nur im eigenen Netz): args = [..., "--embed-modell", "...", "--ollama-url", "..."];
+# nur Stichwörter: "--ohne-embeddings".
 [mcp_servers.memory]
 command = "python"
 args = ["-m", "mcp_servers.memory"]

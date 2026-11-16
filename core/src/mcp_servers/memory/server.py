@@ -7,6 +7,7 @@ was der Nutzer ausdrücklich sagen lässt. remember und die Journal-Werkzeuge sc
 """
 
 import argparse
+from contextlib import suppress
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -14,6 +15,13 @@ from zoneinfo import ZoneInfo
 
 from mcp.server.mcpserver import MCPServer
 
+from mcp_servers.memory.embed import (
+    DEFAULT_MODEL,
+    DEFAULT_URL,
+    Embedder,
+    EmbedError,
+    make_embedder,
+)
 from mcp_servers.memory.store import KINDS, Memory, MemoryStore
 
 TZ = ZoneInfo("Europe/Berlin")
@@ -28,6 +36,10 @@ FIRST_YEAR, LAST_YEAR = 1970, 2200
 mcp = MCPServer("memory", log_level="WARNING")
 _store: MemoryStore | None = None
 _journal_dir: Path = DEFAULT_JOURNAL
+# Embeddings (M1.8): None = nicht eingerichtet, dann gilt die Stichwortsuche. In Tests ersetzt.
+_embedder: Embedder | None = None
+_embed_model: str = DEFAULT_MODEL
+EMBED_HINT = "Embedding-Modell nicht erreichbar; es gilt die Stichwortsuche (ollama pull {model})."
 
 
 def store() -> MemoryStore:
@@ -73,6 +85,10 @@ def remember_data(text: str, art: str | None = None) -> dict[str, Any]:
     except ValueError as exc:
         return _fail(str(exc))
     memory, new = store().add(cleaned, kind)
+    if new and _embedder is not None:
+        # Ohne Embedding bleibt der Eintrag per Stichwort auffindbar (die Pflege holt nach).
+        with suppress(EmbedError):
+            store().set_embedding(memory.id, _embedder([cleaned])[0], _embed_model)
     note = "Gemerkt." if new else "Das wusste ich schon."
     return {"ok": True, "gespeichert": note, "id": memory.id, "text": memory.text}
 
@@ -80,14 +96,34 @@ def remember_data(text: str, art: str | None = None) -> dict[str, Any]:
 def recall_data(frage: str) -> dict[str, Any]:
     if not frage.strip():
         return _fail("Es wurde keine Frage genannt.")
-    hits = store().search(frage, MAX_FOUND)
-    return {
+    found: list[Memory] = []
+    hint: str | None = None
+    method = "Stichwortsuche"
+    if _embedder is not None:
+        try:
+            vector = _embedder([frage.strip()])[0]
+            semantic, compared = store().semantic_search(vector, _embed_model, MAX_FOUND)
+            if compared:
+                method = "semantisch"
+                found = [memory for memory, _similarity in semantic]
+        except EmbedError:
+            hint = EMBED_HINT.format(model=_embed_model)
+    # Stichwort-Treffer kommen immer dazu (auch Einträge ohne Embedding), die semantischen zuerst.
+    for memory, _score in store().search(frage, MAX_FOUND):
+        if memory.id not in {m.id for m in found}:
+            found.append(memory)
+    found = found[:MAX_FOUND]
+    result: dict[str, Any] = {
         "ok": True,
-        "suche": "Stichwortsuche",
-        "anzahl": len(hits),
-        "treffer": [_entry(memory) for memory, _score in hits],
-        **({} if hits else {"hinweis": "Dazu ist nichts gespeichert."}),
+        "suche": method,
+        "anzahl": len(found),
+        "treffer": [_entry(memory) for memory in found],
     }
+    if hint:
+        result["hinweis"] = hint
+    elif not found:
+        result["hinweis"] = "Dazu ist nichts gespeichert."
+    return result
 
 
 def list_data(art: str | None = None) -> dict[str, Any]:
@@ -203,8 +239,8 @@ def remember(text: str, art: str | None = None) -> dict[str, Any]:
 
 @mcp.tool()
 def recall(frage: str) -> dict[str, Any]:
-    """Sucht im Gedächtnis des Nutzers (bis zu 5 Treffer). Für 'Was weißt du über ...?'. Ergebnisse
-    nennst du 'gespeichert'."""
+    """Sucht im Gedächtnis des Nutzers nach Bedeutung (bis zu 5 Treffer). Für 'Was weißt du über
+    ...?'. Ergebnisse nennst du 'gespeichert'."""
     return recall_data(frage)
 
 
@@ -240,11 +276,17 @@ def journal_read(tag: str | None = None) -> dict[str, Any]:
 
 
 def main() -> None:
-    global _store, _journal_dir
+    global _store, _journal_dir, _embedder, _embed_model
     parser = argparse.ArgumentParser(prog="mcp_servers.memory")
     parser.add_argument("--datei", type=Path, default=DEFAULT_FILE, help="SQLite-Datei")
     parser.add_argument("--journal", type=Path, default=DEFAULT_JOURNAL, help="Journal-Ordner")
+    parser.add_argument("--ollama-url", default=DEFAULT_URL, help="Ollama (nur im eigenen Netz)")
+    parser.add_argument("--embed-modell", default=DEFAULT_MODEL, help="Embedding-Modell")
+    parser.add_argument("--ohne-embeddings", action="store_true", help="nur Stichwortsuche")
     args = parser.parse_args()
     _store = MemoryStore(args.datei.expanduser())
     _journal_dir = args.journal.expanduser()
+    if not args.ohne_embeddings:
+        _embed_model = args.embed_modell
+        _embedder = make_embedder(args.ollama_url, args.embed_modell)
     mcp.run(transport="stdio")

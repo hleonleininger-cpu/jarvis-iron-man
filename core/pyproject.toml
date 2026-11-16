@@ -15,6 +15,7 @@ dependencies = [
     "typer",
     "keyring",
     "tzdata",
+    "sqlite-vec>=0.1.9",
 ]
 
 [dependency-groups]

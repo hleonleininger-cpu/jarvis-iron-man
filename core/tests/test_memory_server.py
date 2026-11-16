@@ -130,3 +130,145 @@ def test_long_journal_is_shortened_when_read(tmp_path: Path) -> None:
     read = server.journal_read_data("heute", NOW)
     assert len(read["inhalt"]) == server.MAX_JOURNAL_SHOWN and "Nur die letzten" in read["hinweis"]
     assert "Eintrag 199" in read["inhalt"]
+
+
+# --------------------------------------------------------------------------- Embeddings (M1.8)
+VECTORS = {
+    "mein lieblingsverein ist der bvb": [1.0, 0.1, 0.0],
+    "die mathe-klausur ist am 12. dezember": [0.0, 1.0, 0.1],
+    "welcher fussballclub gefällt mir?": [
+        0.9,
+        0.2,
+        0.0,
+    ],  # casefold macht aus ß ss  # ähnlich zum Verein, ohne gleiches Wort
+    "was kostet ein flug?": [0.0, 0.0, 1.0],
+}
+
+
+def fake_embedder(texts: list[str]) -> list[list[float]]:
+    return [VECTORS.get(text.casefold(), [0.3, 0.3, 0.3]) for text in texts]
+
+
+@pytest.fixture
+def embeddings(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(server, "_embedder", fake_embedder)
+    monkeypatch.setattr(server, "_embed_model", "test-modell")
+
+
+def test_semantic_recall_finds_synonyms_without_a_shared_word(embeddings: None) -> None:
+    server.remember_data("Mein Lieblingsverein ist der BVB")
+    server.remember_data("Die Mathe-Klausur ist am 12. Dezember")
+    found = server.recall_data("Welcher Fußballclub gefällt mir?")
+    assert found["suche"] == "semantisch"
+    assert [t["text"] for t in found["treffer"]] == ["Mein Lieblingsverein ist der BVB"]
+    # Ohne Embeddings fände die Stichwortsuche hier nichts:
+    assert server.store().search("Welcher Fußballclub gefällt mir?") == []
+
+
+def test_unrelated_question_finds_nothing_semantically(embeddings: None) -> None:
+    server.remember_data("Mein Lieblingsverein ist der BVB")
+    found = server.recall_data("Was kostet ein Flug?")
+    assert found["anzahl"] == 0 and "nichts gespeichert" in found["hinweis"]
+
+
+def test_keyword_hits_are_kept_when_the_embedding_model_is_down(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from mcp_servers.memory.embed import EmbedError
+
+    def down(_texts: list[str]) -> list[list[float]]:
+        raise EmbedError("aus")
+
+    monkeypatch.setattr(server, "_embedder", down)
+    result = server.remember_data("Mein Lieblingsverein ist der BVB")  # wird trotzdem gespeichert
+    assert result["ok"] and server.store().without_embedding()[0].id == result["id"]
+    found = server.recall_data("Lieblingsverein")
+    assert found["suche"] == "Stichwortsuche" and found["anzahl"] == 1
+    assert "ollama pull" in found["hinweis"]
+
+
+def test_entries_of_another_model_are_not_compared(embeddings: None) -> None:
+    server.remember_data("Mein Lieblingsverein ist der BVB")
+    server.store().set_embedding(1, [1.0, 0.1], "altes-modell")  # andere Dimension und Modell
+    assert server.recall_data("Welcher Fußballclub gefällt mir?")["suche"] == "Stichwortsuche"
+
+
+def test_forget_removes_the_embedding_too(embeddings: None, tmp_path: Path) -> None:
+    server.remember_data("Mein Lieblingsverein ist der BVB")
+    server.forget_data(1)
+    with sqlite3.connect(tmp_path / "g.sqlite3") as conn:
+        assert conn.execute("SELECT COUNT(*) FROM memories").fetchone() == (0,)
+    assert server.recall_data("Welcher Fußballclub gefällt mir?")["anzahl"] == 0
+
+
+def test_sqlite_vec_and_the_python_fallback_agree(
+    embeddings: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from mcp_servers.memory import store as store_module
+
+    server.remember_data("Mein Lieblingsverein ist der BVB")
+    server.remember_data("Die Mathe-Klausur ist am 12. Dezember")
+    vector = [0.9, 0.2, 0.0]
+    with_vec = server.store().semantic_search(vector, "test-modell")
+
+    def no_vec(_conn: object) -> bool:
+        return False
+
+    monkeypatch.setattr(store_module, "_load_vec", no_vec)
+    without = server.store().semantic_search(vector, "test-modell")
+    assert [m.id for m, _ in with_vec[0]] == [m.id for m, _ in without[0]] == [1]
+    assert with_vec[0][0][1] == pytest.approx(without[0][0][1], abs=1e-5)
+
+
+def test_embedder_only_talks_to_the_own_network() -> None:
+    from mcp_servers.memory.embed import is_local_url, make_embedder
+
+    for url in ("http://127.0.0.1:11434/v1", "http://localhost:11434/v1", "http://192.168.1.5:11434",
+                "http://100.101.102.103:11434", "http://mein-pc:11434", "http://pc.tail1234.ts.net:11434"):  # fmt: skip
+        assert is_local_url(url), url
+    for url in ("https://api.openai.com/v1", "http://8.8.8.8/v1", "ftp://127.0.0.1", "", "http://"):
+        assert not is_local_url(url), url
+    with pytest.raises(ValueError, match="eigenen Netz"):
+        make_embedder("https://api.openai.com/v1")
+
+
+def test_embedder_talks_openai_protocol_and_reports_problems(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import json
+    import urllib.request
+
+    from mcp_servers.memory.embed import EmbedError, make_embedder
+
+    seen: list[tuple[str, dict[str, object]]] = []
+
+    class Reply:
+        def __init__(self, body: bytes) -> None:
+            self._body = body
+
+        def __enter__(self) -> "Reply":
+            return self
+
+        def __exit__(self, *_exc: object) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return self._body
+
+    replies = [
+        b'{"data": [{"embedding": [0.1, 0.2]}, {"embedding": [0.3, 0.4]}]}',
+        b"{}",
+        b"kaputt",
+    ]
+
+    def fake_open(self: object, request: urllib.request.Request, timeout: float) -> Reply:
+        seen.append((request.full_url, json.loads(request.data or b"{}")))  # type: ignore[arg-type]
+        return Reply(replies.pop(0))
+
+    monkeypatch.setattr(urllib.request.OpenerDirector, "open", fake_open)
+    embed = make_embedder("http://127.0.0.1:11434/v1", "m")
+    assert embed(["a", "b"]) == [[0.1, 0.2], [0.3, 0.4]]
+    assert seen == [("http://127.0.0.1:11434/v1/embeddings", {"model": "m", "input": ["a", "b"]})]
+    for _ in range(2):
+        with pytest.raises(EmbedError):
+            embed(["a"])

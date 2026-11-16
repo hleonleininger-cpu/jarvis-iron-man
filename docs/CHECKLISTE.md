@@ -26,7 +26,7 @@ Markierungen:
 - [~] M1.5 Kern läuft vollständig lokal
 - [ ] M1.6 Cloud-Stufe nur nach Freigabe pro Aufgabe und nie mit privaten Daten (bisher gibt es keine Cloud-Modelle)
 - [~] M1.7 Langzeitgedächtnis (SQLite + sqlite-vec + Markdown). Heute liegt der Gesprächsverlauf nur im Arbeitsspeicher (gebaut: SQLite-Speicher mit remember/recall/list_memories/forget, Stichwortsuche; sqlite-vec folgt mit M1.8. Beleg: docs/adr/ADR-019-langzeitgedaechtnis.md, core/tests/test_memory_server.py)
-- [ ] M1.8 Semantische Suche über Gespräche, Notizen und Dateien
+- [~] M1.8 Semantische Suche über Gespräche, Notizen und Dateien (gebaut für das Gedächtnis: Embeddings über Ollama, sqlite-vec mit Python-Ausweichweg, Fallback auf Stichwörter; Notizen und Dateien folgen mit M1.10. Beleg: core/tests/test_memory_server.py. Schwelle 0,5 nur mit echtem Modell prüfbar)
 - [~] M1.9 Tagesjournal (journal_add/journal_read, eine Markdown-Datei je Tag. Beleg: core/tests/test_memory_server.py)
 - [ ] M1.10 Vault für Dokumente und Ressourcen
 - [ ] M1.11 "Vergiss das" löscht zuverlässig und nachweisbar
