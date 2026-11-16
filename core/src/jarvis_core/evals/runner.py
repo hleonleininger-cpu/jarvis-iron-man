@@ -96,6 +96,27 @@ def eval_servers(writes_log: Path, notes_file: Path | None = None) -> dict[str, 
             previews={"add_note": "preview_add_note", "complete_note": "preview_complete_note"},
             reminders="take_due_reminders",
         ),
+        # Das Gedächtnis: ebenfalls der echte Server (nur lokal), mit Wegwerf-Datei und -Ordner.
+        "memory": McpServerConfig(
+            command="python",
+            args=[
+                "-m",
+                "mcp_servers.memory",
+                "--datei",
+                str(writes_log.with_suffix(".gedaechtnis")),
+                "--journal",
+                str(writes_log.with_suffix(".journal")),
+            ],
+            tools={
+                "remember": RiskClass.WRITE_LOCAL,
+                "recall": RiskClass.READ,
+                "list_memories": RiskClass.READ,
+                "forget": RiskClass.IRREVERSIBLE,
+                "journal_add": RiskClass.WRITE_LOCAL,
+                "journal_read": RiskClass.READ,
+            },
+            previews={"forget": "preview_forget"},
+        ),
         # Ebenfalls der echte Server (nur lokal), mit Wegwerf-Datei und -Ordner.
         "projekte": McpServerConfig(
             command="python",
@@ -143,6 +164,12 @@ def _count_writes(log: Path, notes_file: Path) -> int:
     """Schreibaufrufe: Zeilen im Protokoll der Kalender-Attrappe, gespeicherte Notizen sowie
     Ideen/Aufträge und Entwürfe des Projekte-Servers."""
     writes = 0
+    memory, journal = log.with_suffix(".gedaechtnis"), log.with_suffix(".journal")
+    if memory.exists():
+        with closing(sqlite3.connect(memory)) as conn:
+            writes += int(conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0])
+    if journal.exists():
+        writes += len(list(journal.iterdir()))
     projects, drafts = _projects_file(log), _drafts_dir(log)
     if projects.exists():
         with closing(sqlite3.connect(projects)) as conn:

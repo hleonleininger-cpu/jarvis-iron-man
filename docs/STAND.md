@@ -10,6 +10,7 @@ Was er kann:
 - Notizen und Erinnerungen: lokal gespeichert, ohne Rückfrage. Erinnerungen melden sich zur Uhrzeit, solange JARVIS läuft.
 - Websuche: DuckDuckGo, ohne Konto. Nur der Suchbegriff geht raus.
 - Ideen, Aufträge, Entwürfe: lokal, für Nebeneinkünfte. Aufträge mit Frist, Betrag und Summen, Entwürfe als Textdateien.
+- Gedächtnis (M1, in Arbeit): JARVIS merkt sich Ausdrückliches über Neustarts hinweg (Stichwortsuche), vergisst nach Rückfrage und führt ein Tagesjournal. Anrede "Master", Optionen mit Risiko, Kennzeichnung der Herkunft von Aussagen.
 - Notion: lesen, und neue Einträge anlegen mit Rückfrage. Ändern und Löschen gibt es im Code nicht.
 - Not-Aus: roter Knopf und Strg+. in der Web-Oberfläche, `jarvis stop` in der Eingabeaufforderung. Bricht alle laufenden und wartenden Anfragen, offene Rückfragen und Werkzeuge ab; ein hängender Server wird beendet.
 - Autostart: `jarvis autostart an` startet JARVIS bei jeder Windows-Anmeldung.

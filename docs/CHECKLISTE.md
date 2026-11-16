@@ -25,13 +25,13 @@ Markierungen:
 - [ ] M1.4 Werkzeugauswahl per Embedding, damit viele Werkzeuge kleine Modelle nicht überfordern
 - [~] M1.5 Kern läuft vollständig lokal
 - [ ] M1.6 Cloud-Stufe nur nach Freigabe pro Aufgabe und nie mit privaten Daten (bisher gibt es keine Cloud-Modelle)
-- [ ] M1.7 Langzeitgedächtnis (SQLite + sqlite-vec + Markdown). Heute liegt der Gesprächsverlauf nur im Arbeitsspeicher
+- [~] M1.7 Langzeitgedächtnis (SQLite + sqlite-vec + Markdown). Heute liegt der Gesprächsverlauf nur im Arbeitsspeicher (gebaut: SQLite-Speicher mit remember/recall/list_memories/forget, Stichwortsuche; sqlite-vec folgt mit M1.8. Beleg: docs/adr/ADR-019-langzeitgedaechtnis.md, core/tests/test_memory_server.py)
 - [ ] M1.8 Semantische Suche über Gespräche, Notizen und Dateien
-- [ ] M1.9 Tagesjournal
+- [~] M1.9 Tagesjournal (journal_add/journal_read, eine Markdown-Datei je Tag. Beleg: core/tests/test_memory_server.py)
 - [ ] M1.10 Vault für Dokumente und Ressourcen
 - [ ] M1.11 "Vergiss das" löscht zuverlässig und nachweisbar
 - [ ] M1.12 Gedächtnispflege: Veraltetes aufräumen, Dateien indexieren
-- [~] M1.13 Persona: Anrede "Master", trockener Humor, höflicher Widerspruch, Warnung bei schlechten Ideen (gebaut: Systemprompt PERSONA in agent/service.py, Anrede einstellbar über `anrede` in jarvis.toml; Test tests/test_agent_tools.py; Wirkung mit echtem Modell nur von Master prüfbar; Eval persona-address)
+- [~] M1.13 Persona: Anrede "Master", trockener Humor, höflicher Widerspruch, Warnung bei schlechten Ideen (gebaut: Systemprompt PERSONA in agent/service.py, Anrede einstellbar über `anrede` in jarvis.toml; Test tests/test_agent_tools.py; Wirkung mit echtem Modell nur von Master prüfbar; Eval persona-address) (gebaut: Systemprompt PERSONA in agent/service.py, Anrede einstellbar über `anrede` in jarvis.toml; Test tests/test_agent_tools.py; Wirkung mit echtem Modell nur von Master prüfbar; Eval persona-address)
 - [~] M1.14 Optionen mit Einschätzung: bei Entscheidungen zwei bis drei Wege samt Risiko (Systemprompt, agent/service.py; Wirkung mit echtem Modell nur von Master prüfbar; Eval persona-options)
 - [ ] M1.15 Simulationen: "Was passiert, wenn …" für Lern- und Wochenpläne
 - [~] M1.16 Ehrlichkeit: unterscheidet Live-Daten, Gespeichertes und eigene Schlüsse, erfindet nichts (gebaut: Systemprompt HONESTY trennt aktuelle Daten, 'gespeichert' und 'meine Einschätzung'; Wirkung mit echtem Modell nur von Master prüfbar; Eval honesty-unknown)

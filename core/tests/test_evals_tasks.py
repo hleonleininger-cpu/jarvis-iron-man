@@ -7,7 +7,7 @@ from jarvis_core.evals import EvalTaskError, default_evals_dir, load_tasks
 
 def test_shipped_tasks_are_valid_and_cover_the_required_categories() -> None:
     tasks = load_tasks(default_evals_dir() / "tasks.toml")
-    assert 18 <= len(tasks) <= 70
+    assert 18 <= len(tasks) <= 80
     ids = [t.id for t in tasks]
     assert len(ids) == len(set(ids))
     assert any(not t.expect_tools for t in tasks)  # reiner Chat / unsinnig
@@ -23,6 +23,8 @@ def test_shipped_tasks_are_valid_and_cover_the_required_categories() -> None:
     assert any(t.expect_tools == ["web_search"] for t in tasks)  # Websuche
     assert any(t.expect_tools == ["notion_add_entry"] and t.confirm == "no" for t in tasks)
     assert any(t.expect_tools == ["add_idea"] and t.expect_writes == 1 for t in tasks)
+    assert any(t.expect_tools == ["remember"] and t.expect_writes == 1 for t in tasks)
+    assert any(t.expect_tools == ["recall"] for t in tasks)
     for t in tasks:  # Nein auf eine Rückfrage darf nie schreiben
         if t.expect_confirm and t.confirm == "no":
             assert t.expect_writes == 0

@@ -46,6 +46,11 @@ Kurztext, ohne Konto und Schlüssel. Nur der Suchbegriff geht ins Netz, nie der 
 Treffer gelten als Fremdtext und JARVIS nennt die Quelle. In `jarvis.toml` abschaltbar
 (`[mcp_servers.websearch]` entfernen). Siehe ADR-015.
 
+**Gedächtnis und Tagesjournal (lokal):** `remember` ("Merk dir im Gedächtnis ..."), `recall`,
+`list_memories`, `forget` (nach Rückfrage, endgültig) und `journal_add`/`journal_read`. Merkt sich
+nur, was du ausdrücklich sagst, und überlebt Neustarts (`~/.jarvis/gedaechtnis.sqlite3`,
+Journal als Textdatei je Tag in `~/.jarvis/journal/`). Siehe ADR-019.
+
 **Ideen, Aufträge, Entwürfe (lokal):** `add_idea`, `add_lead`, `set_project_status`,
 `save_draft` (WRITE_LOCAL) und `list_ideas`/`list_leads` (READ) für Nebeneinkünfte: Ideen für
 Produkte und Apps, Aufträge mit Frist und Betrag samt Summen, Entwürfe als Textdateien in

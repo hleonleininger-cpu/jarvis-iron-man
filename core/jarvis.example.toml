@@ -73,6 +73,22 @@ add_note = "WRITE_LOCAL"
 list_notes = "READ"
 complete_note = "WRITE_LOCAL"
 
+# Langzeitgedächtnis und Tagesjournal, lokal (ADR-019): JARVIS merkt sich, was du ausdrücklich
+# sagst ("Merk dir ..."), findet es wieder und vergisst es auf Wunsch (nach Rückfrage). Gespeichert
+# in ~/.jarvis/gedaechtnis.sqlite3, Journal als Textdatei je Tag in ~/.jarvis/journal/.
+[mcp_servers.memory]
+command = "python"
+args = ["-m", "mcp_servers.memory"]
+previews = { forget = "preview_forget" }
+
+[mcp_servers.memory.tools]
+remember = "WRITE_LOCAL"
+recall = "READ"
+list_memories = "READ"
+forget = "IRREVERSIBLE"
+journal_add = "WRITE_LOCAL"
+journal_read = "READ"
+
 # Ideen, Aufträge und Entwürfe für Nebeneinkünfte, lokal (ADR-016). Gespeichert in
 # ~/.jarvis/projekte.sqlite3, Entwürfe als Textdateien in ~/.jarvis/entwuerfe/. Andere Orte mit
 # args = [..., "--datei", "D:/jarvis/projekte.sqlite3", "--entwuerfe", "D:/jarvis/entwuerfe"].
