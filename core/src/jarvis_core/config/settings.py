@@ -118,6 +118,8 @@ class Settings(BaseSettings):
     mcp_servers: dict[str, McpServerConfig] = {}
     # Wohnort für Fragen ohne Ortsangabe (z. B. "Wie ist das Wetter?"), etwa "Dortmund".
     home_location: str | None = Field(default=None, max_length=80)
+    # Wie JARVIS den Nutzer anspricht (Masterauftrag: "Master").
+    anrede: str = Field(default="Master", min_length=1, max_length=40)
     # Zugangstoken für /v1/* (ADR-011). None = automatisch: Pflicht, sobald host nicht lokal ist.
     require_api_token: bool | None = None
 

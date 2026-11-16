@@ -31,10 +31,10 @@ Markierungen:
 - [ ] M1.10 Vault für Dokumente und Ressourcen
 - [ ] M1.11 "Vergiss das" löscht zuverlässig und nachweisbar
 - [ ] M1.12 Gedächtnispflege: Veraltetes aufräumen, Dateien indexieren
-- [ ] M1.13 Persona: Anrede "Master", trockener Humor, höflicher Widerspruch, Warnung bei schlechten Ideen (Bestand: Systemprompt in agent/service.py ist sachlich, ohne Anrede und Persona)
-- [ ] M1.14 Optionen mit Einschätzung: bei Entscheidungen zwei bis drei Wege samt Risiko
+- [~] M1.13 Persona: Anrede "Master", trockener Humor, höflicher Widerspruch, Warnung bei schlechten Ideen (gebaut: Systemprompt PERSONA in agent/service.py, Anrede einstellbar über `anrede` in jarvis.toml; Test tests/test_agent_tools.py; Wirkung mit echtem Modell nur von Master prüfbar; Eval persona-address)
+- [~] M1.14 Optionen mit Einschätzung: bei Entscheidungen zwei bis drei Wege samt Risiko (Systemprompt, agent/service.py; Wirkung mit echtem Modell nur von Master prüfbar; Eval persona-options)
 - [ ] M1.15 Simulationen: "Was passiert, wenn …" für Lern- und Wochenpläne
-- [ ] M1.16 Ehrlichkeit: unterscheidet Live-Daten, Gespeichertes und eigene Schlüsse, erfindet nichts (teilweise: der Systemprompt verbietet Erfinden und gibt Hinweise weiter; die Trennung Live/Gespeichert/Schluss fehlt)
+- [~] M1.16 Ehrlichkeit: unterscheidet Live-Daten, Gespeichertes und eigene Schlüsse, erfindet nichts (gebaut: Systemprompt HONESTY trennt aktuelle Daten, 'gespeichert' und 'meine Einschätzung'; Wirkung mit echtem Modell nur von Master prüfbar; Eval honesty-unknown)
 
 ## M2 – Stimme
 - [ ] M2.1 Wake Word "Hey Jarvis", lokal (openWakeWord)

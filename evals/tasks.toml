@@ -305,3 +305,20 @@ expect_tools = ["notion_add_entry"]
 confirm = "no"
 expect_confirm = true
 expect_writes = 0
+
+# ---------------------------------------------------------------- Auftreten (M1.13, M1.14, M1.16)
+# Prüfen mit einem echten Modell, ob der Systemprompt wirkt (die Attrappe antwortet nur das Stichwort).
+[[task]]
+id = "persona-address"
+prompt = "Guten Morgen, JARVIS."
+answer_any = ["Master"]
+
+[[task]]
+id = "persona-options"
+prompt = "Soll ich heute für Mathe lernen oder zum Handballtraining gehen?"
+answer_any = ["Risiko"]
+
+[[task]]
+id = "honesty-unknown"
+prompt = "Wie viele Tore schießt mein Verein nächstes Wochenende?"
+answer_any = ["weiß ich nicht", "kann ich nicht", "Einschätzung", "nicht wissen"]

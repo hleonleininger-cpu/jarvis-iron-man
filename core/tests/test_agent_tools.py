@@ -213,6 +213,42 @@ def test_system_prompt_names_home_and_day_overview() -> None:
     assert "wohnt" not in system_prompt(now)
 
 
+def test_system_prompt_has_persona_honesty_and_options_rules() -> None:
+    from jarvis_core.agent.service import system_prompt
+
+    text = system_prompt()
+    assert "mit 'Master' an" in text  # Standardanrede
+    assert "trockenem Humor" in text and "schlechte oder riskante Idee" in text  # M1.13
+    assert "zwei bis drei Wege" in text and "Risiko" in text  # M1.14
+    assert "'gespeichert'" in text and "'meine Einschätzung'" in text  # M1.16
+    assert "mit 'Chef' an" in system_prompt(address="Chef")
+    assert "mit 'Master' an" in system_prompt(address="  ")  # leer: Standard
+
+
+async def test_configured_form_of_address_reaches_the_model(tmp_path: Path) -> None:
+    from pydantic_ai.messages import ModelMessage
+    from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+    from jarvis_core.agent import build_service
+    from jarvis_core.audit import AuditLog
+    from jarvis_core.config import Settings
+
+    seen: list[str] = []
+
+    async def stream(_messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        seen.append(info.instructions or "")
+        yield "ok"
+
+    settings = Settings(data_dir=tmp_path / "d", anrede="Chef")
+    service = build_service(
+        settings, AuditLog(settings.audit_db_path), FunctionModel(stream_function=stream), "t"
+    )
+    _ = [event async for event in service.stream("Hallo", channel="cli")]
+    assert "mit 'Chef' an" in seen[0]
+    with pytest.raises(ValueError):
+        Settings(data_dir=tmp_path / "x", anrede="")
+
+
 async def test_home_location_reaches_the_model(tmp_path: Path) -> None:
     seen: list[str | None] = []
 
