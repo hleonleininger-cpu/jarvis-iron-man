@@ -50,7 +50,9 @@ Treffer gelten als Fremdtext und JARVIS nennt die Quelle. In `jarvis.toml` absch
 `list_memories`, `forget` (nach Rückfrage, endgültig) und `journal_add`/`journal_read`. Merkt sich
 nur, was du ausdrücklich sagst, und überlebt Neustarts (`~/.jarvis/gedaechtnis.sqlite3`,
 Journal als Textdatei je Tag in `~/.jarvis/journal/`). Die Suche versteht Bedeutung, wenn Ollama das
-Embedding-Modell hat (`ollama pull nomic-embed-text`), sonst gilt die Stichwortsuche. Siehe ADR-019.
+Embedding-Modell hat (`ollama pull nomic-embed-text`), sonst gilt die Stichwortsuche. Mit
+`--vault <Ordner>` in `jarvis.toml` durchsucht JARVIS auch deine Markdown-/Textdateien und offenen
+Notizen (nur lesen); `uv run jarvis memory-pflege` räumt auf (läuft auch beim Start). Siehe ADR-019.
 
 **Ideen, Aufträge, Entwürfe (lokal):** `add_idea`, `add_lead`, `set_project_status`,
 `save_draft` (WRITE_LOCAL) und `list_ideas`/`list_leads` (READ) für Nebeneinkünfte: Ideen für

@@ -29,8 +29,8 @@ Markierungen:
 - [~] M1.8 Semantische Suche über Gespräche, Notizen und Dateien (gebaut: Gedächtnis, Vault-Dateien und offene Notizen; Embeddings über Ollama, sqlite-vec mit Python-Ausweichweg, Fallback auf Stichwörter. Beleg: core/tests/test_memory_server.py, core/tests/test_memory_vault.py. Schwelle 0,5 nur mit echtem Modell prüfbar)
 - [~] M1.9 Tagesjournal (journal_add/journal_read, eine Markdown-Datei je Tag. Beleg: core/tests/test_memory_server.py)
 - [~] M1.10 Vault für Dokumente und Ressourcen (gebaut: `vault_index` für ausdrücklich erlaubte Ordner und offene Notizen, Änderungserkennung, kein Link nach draußen. Beleg: core/tests/test_memory_vault.py. PDF folgt mit M5.4)
-- [ ] M1.11 "Vergiss das" löscht zuverlässig und nachweisbar
-- [ ] M1.12 Gedächtnispflege: Veraltetes aufräumen, Dateien indexieren
+- [~] M1.11 "Vergiss das" löscht zuverlässig und nachweisbar (forget nach Rückfrage, secure_delete: der Text steht danach nicht mehr in der Datei. Beleg: core/tests/test_memory_server.py)
+- [~] M1.12 Gedächtnispflege: Veraltetes aufräumen, Dateien indexieren (`jarvis memory-pflege` und beim Start von `jarvis serve`: Dubletten, fehlende Embeddings, Vault/Notizen. Beleg: core/tests/test_memory_server.py, test_config.py)
 - [~] M1.13 Persona: Anrede "Master", trockener Humor, höflicher Widerspruch, Warnung bei schlechten Ideen (gebaut: Systemprompt PERSONA in agent/service.py, Anrede einstellbar über `anrede` in jarvis.toml; Test tests/test_agent_tools.py; Wirkung mit echtem Modell nur von Master prüfbar; Eval persona-address) (gebaut: Systemprompt PERSONA in agent/service.py, Anrede einstellbar über `anrede` in jarvis.toml; Test tests/test_agent_tools.py; Wirkung mit echtem Modell nur von Master prüfbar; Eval persona-address)
 - [~] M1.14 Optionen mit Einschätzung: bei Entscheidungen zwei bis drei Wege samt Risiko (Systemprompt, agent/service.py; Wirkung mit echtem Modell nur von Master prüfbar; Eval persona-options)
 - [ ] M1.15 Simulationen: "Was passiert, wenn …" für Lern- und Wochenpläne

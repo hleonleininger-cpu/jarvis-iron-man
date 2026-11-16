@@ -211,6 +211,7 @@ def serve(
         url = f"http://{_url_host(settings.host)}:{settings.port}/"
         # Erst öffnen, wenn uvicorn lauscht; ein Timer reicht dafür (Start dauert < 1 s).
         threading.Timer(1.0, webbrowser.open, args=(url,)).start()
+    threading.Thread(target=_maintain_memory, args=(settings,), daemon=True).start()
     # Prozessnummer für `jarvis stop`: der Not-Aus beendet einen hängenden Server darüber.
     pid_file = _pid_file(settings)
     pid_file.parent.mkdir(parents=True, exist_ok=True)
@@ -220,6 +221,44 @@ def serve(
     finally:
         with suppress(OSError):
             pid_file.unlink()
+
+
+MEMORY_MAINTENANCE_TIMEOUT = 120.0
+
+
+def _run_memory_maintenance(settings: Settings) -> tuple[bool, str]:
+    """Führt die Pflege des Gedächtnis-Servers aus (sein Befehl aus jarvis.toml plus --pflege).
+    (ok, Ausgabe oder Fehler). Gibt es den Server nicht in jarvis.toml: (False, Hinweis)."""
+    cfg = settings.mcp_servers.get("memory")
+    if cfg is None:
+        return False, "Kein Gedächtnis-Server in jarvis.toml ([mcp_servers.memory])."
+    command = [sys.executable if cfg.command == "python" else cfg.command, *cfg.args, "--pflege"]
+    try:
+        done = subprocess.run(  # noqa: S603
+            command, capture_output=True, text=True, timeout=MEMORY_MAINTENANCE_TIMEOUT, check=False
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return False, f"Pflege nicht möglich: {type(exc).__name__}"
+    if done.returncode != 0:
+        lines = (done.stderr or done.stdout).strip().splitlines()
+        return False, lines[-1] if lines else f"Pflege endete mit Code {done.returncode}"
+    return True, done.stdout.strip()
+
+
+def _maintain_memory(settings: Settings) -> None:
+    """Pflege beim Start im Hintergrund; ein Fehler stört den Server nicht."""
+    if "memory" in settings.mcp_servers:
+        _run_memory_maintenance(settings)
+
+
+@app.command("memory-pflege")
+def memory_pflege() -> None:
+    """Räumt das Gedächtnis auf: Dubletten, fehlende Suchdaten nachholen, Vault abgleichen."""
+    settings = _settings(INTERACTIVE_LOG_LEVEL)
+    ok, message = _run_memory_maintenance(settings)
+    typer.echo(message, err=not ok)
+    if not ok:
+        raise typer.Exit(1)
 
 
 def _pid_file(settings: Settings) -> Path:

@@ -199,6 +199,9 @@ class MemoryStore:
         """Verbindung mit Commit am Ende, die IMMER geschlossen wird (Windows hält sonst die
         Datei fest)."""
         with closing(sqlite3.connect(self._path, timeout=10.0)) as conn, conn:
+            # Gelöschtes wird überschrieben statt nur freigegeben: sonst stünde ein "vergessener"
+            # Text weiter in der Datei (M1.11, "Vergiss das" muss nachweisbar sein).
+            conn.execute("PRAGMA secure_delete = ON")
             yield conn
 
     def add(self, text: str, kind: str, now: datetime | None = None) -> tuple[Memory, bool]:
@@ -249,6 +252,16 @@ class MemoryStore:
                 "UPDATE memories SET embedding = ?, embed_model = ? WHERE id = ?",
                 (pack(vector), model, memory_id),
             )
+
+    def needing_embedding(self, model: str, limit: int) -> list[Memory]:
+        """Einträge ohne Embedding oder mit dem eines anderen (früheren) Modells."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"SELECT {_FIELDS} FROM memories WHERE embedding IS NULL OR embed_model IS NOT ? "
+                "ORDER BY id LIMIT ?",
+                (model, limit),
+            ).fetchall()
+        return [_row(r) for r in rows]
 
     def without_embedding(self) -> list[Memory]:
         """Einträge, die (noch) kein Embedding haben, z. B. weil das Modell fehlte."""

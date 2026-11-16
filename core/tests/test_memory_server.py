@@ -272,3 +272,55 @@ def test_embedder_talks_openai_protocol_and_reports_problems(
     for _ in range(2):
         with pytest.raises(EmbedError):
             embed(["a"])
+
+
+# --------------------------------------------------------------------------- M1.11 und M1.12
+def test_a_forgotten_text_is_gone_from_the_file_without_any_vacuum(tmp_path: Path) -> None:
+    """secure_delete: gelöschter Inhalt wird überschrieben, nicht nur freigegeben."""
+    server.remember_data("Streng vertraulicher Satz PLUGH " + "x" * 200)
+    assert b"PLUGH" in (tmp_path / "g.sqlite3").read_bytes()
+    server.forget_data(1)
+    assert b"PLUGH" not in (tmp_path / "g.sqlite3").read_bytes()
+
+
+def test_maintenance_removes_duplicates_and_fills_missing_embeddings(
+    embeddings: None,
+) -> None:
+    from mcp_servers.memory.maintain import maintain
+
+    # Dubletten, wie sie durch ältere Fassungen oder Handarbeit in der Datei entstehen könnten
+    store = server.store()
+    with store._connect() as conn:  # pyright: ignore[reportPrivateUsage]
+        for text in (
+            "Ich wohne in Dortmund",
+            "ICH WOHNE IN DORTMUND",
+            "Mein Lieblingsverein ist der BVB",
+        ):
+            conn.execute(
+                "INSERT INTO memories (text, kind, created) VALUES (?, 'fakt', '2026-11-16T00:00:00+00:00')",
+                (text,),
+            )
+    first = maintain(store, [], None, fake_embedder, "test-modell")
+    assert first.duplicates_removed == 1 and first.memories_embedded == 2
+    assert [m.text for m in store.entries()] == [
+        "Ich wohne in Dortmund",
+        "Mein Lieblingsverein ist der BVB",
+    ]
+    second = maintain(store, [], None, fake_embedder, "test-modell")
+    assert second.duplicates_removed == 0 and second.memories_embedded == 0
+    assert second.memories_without_embedding == 0
+
+
+def test_maintenance_re_embeds_entries_of_an_older_model(embeddings: None) -> None:
+    from mcp_servers.memory.maintain import maintain
+
+    server.remember_data("Mein Lieblingsverein ist der BVB")
+    server.store().set_embedding(1, [1.0], "altes-modell")
+    done = maintain(server.store(), [], None, fake_embedder, "test-modell")
+    assert done.memories_embedded == 1
+    assert server.recall_data("Welcher Fußballclub gefällt mir?")["suche"] == "semantisch"
+
+
+def test_maintenance_tool_reports_in_plain_words(embeddings: None) -> None:
+    server.remember_data("Ich wohne in Dortmund")
+    assert "0 Dubletten entfernt" in server.maintain_data()["ergebnis"]

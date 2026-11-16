@@ -561,3 +561,28 @@ def test_chat_and_serve_warn_at_start_about_a_too_small_context(
     assert "WARNUNG: jarvis.toml rechnet mit 8192" in empty.output
     monkeypatch.setenv("OLLAMA_CONTEXT_LENGTH", "8192")
     assert "WARNUNG" not in CliRunner().invoke(cli_main.app, ["serve"]).output
+
+
+def test_memory_maintenance_command_runs_the_servers_own_flag(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import sys
+
+    from typer.testing import CliRunner
+
+    from jarvis_core.cli import main as cli_main
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "jarvis.toml").write_text(
+        'data_dir = "d"\n[mcp_servers.memory]\ncommand = "python"\n'
+        f'args = ["-m", "mcp_servers.memory", "--datei", "{(tmp_path / "g.sqlite3").as_posix()}", '
+        f'"--journal", "{(tmp_path / "j").as_posix()}", "--ohne-embeddings"]\n'
+        '[mcp_servers.memory.tools]\nrecall = "READ"\n',
+        encoding="utf-8",
+    )
+    result = CliRunner().invoke(cli_main.app, ["memory-pflege"])
+    assert result.exit_code == 0 and "0 Dubletten entfernt" in result.output, result.output
+    assert sys.executable  # der Server lief mit demselben Python wie JARVIS
+    (tmp_path / "jarvis.toml").write_text('data_dir = "d"\n', encoding="utf-8")
+    none = CliRunner().invoke(cli_main.app, ["memory-pflege"])
+    assert none.exit_code == 1 and "Kein Gedächtnis-Server" in none.output

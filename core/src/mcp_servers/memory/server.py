@@ -22,6 +22,7 @@ from mcp_servers.memory.embed import (
     EmbedError,
     make_embedder,
 )
+from mcp_servers.memory.maintain import maintain
 from mcp_servers.memory.store import KINDS, Document, Memory, MemoryStore
 from mcp_servers.memory.vault import index_all
 
@@ -207,6 +208,12 @@ def vault_index_data() -> dict[str, Any]:
     return result
 
 
+def maintain_data() -> dict[str, Any]:
+    """Pflege (M1.12): Dubletten, fehlende Embeddings, Vault und Notizen abgleichen."""
+    done = maintain(store(), _vault_roots, _notes_file, _embedder, _embed_model)
+    return {"ok": True, "ergebnis": done.text()}
+
+
 # --------------------------------------------------------------------------- Tagesjournal (M1.9)
 def _day(tag: str | None, now: datetime | None = None) -> date:
     today = (now or datetime.now(TZ)).astimezone(TZ).date()
@@ -289,6 +296,13 @@ def vault_index() -> dict[str, Any]:
 
 
 @mcp.tool()
+def maintain_memory() -> dict[str, Any]:
+    """Räumt das Gedächtnis auf: Dubletten entfernen, fehlende Suchdaten nachholen, Vault und
+    Notizen abgleichen. Löscht nur doppelte Einträge."""
+    return maintain_data()
+
+
+@mcp.tool()
 def list_memories(art: str | None = None) -> dict[str, Any]:
     """Zeigt, was im Gedächtnis steht (neueste zuletzt). art optional filtert."""
     return list_data(art)
@@ -331,6 +345,7 @@ def main() -> None:
         "--vault", type=Path, action="append", default=[], help="erlaubter Ordner (mehrfach)"
     )
     parser.add_argument("--notizen", type=Path, help="Notizdatei (nur lesend mitindexieren)")
+    parser.add_argument("--pflege", action="store_true", help="Pflege ausführen und beenden")
     args = parser.parse_args()
     roots = [p.expanduser() for p in args.vault]
     for root in roots:
@@ -345,4 +360,7 @@ def main() -> None:
     if not args.ohne_embeddings:
         _embed_model = args.embed_modell
         _embedder = make_embedder(args.ollama_url, args.embed_modell)
+    if args.pflege:  # kein MCP-Betrieb: für `jarvis memory-pflege` und den Start von jarvis serve
+        print(maintain_data()["ergebnis"])
+        return
     mcp.run(transport="stdio")

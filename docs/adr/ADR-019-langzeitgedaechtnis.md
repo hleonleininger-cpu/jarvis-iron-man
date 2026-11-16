@@ -32,8 +32,15 @@ nur, was der Nutzer ausdrücklich merken lässt.
 - **Ohne Modell:** Fehlt das Embedding-Modell oder ist Ollama nicht erreichbar, wird trotzdem
   gespeichert (Eintrag ohne Embedding) und `recall` fällt auf Stichwörter zurück, mit Hinweis
   `ollama pull nomic-embed-text`. Vektoren verschiedener Modelle werden nie verglichen.
-- **Vergessen:** `forget` löscht Zeile samt Embedding und meldet die Eintragszahl vorher und
-  nachher; der Test belegt, dass der Text nach dem Löschen nicht mehr in der Datenbankdatei steht.
+- **Vergessen (M1.11):** `forget` löscht Zeile samt Embedding und meldet die Eintragszahl vorher
+  und nachher. SQLite läuft mit `secure_delete`: Gelöschtes wird überschrieben und steht nicht
+  mehr in der Datei (ein Test prüft die Bytes der Datei ohne VACUUM). Vault-Stücke "vergisst"
+  man, indem man die Datei löscht; der nächste Lauf entfernt sie aus dem Index. Journalzeilen sind
+  eigene Einträge und bleiben (Textdatei, jederzeit von Hand zu ändern).
+- **Pflege (M1.12):** `maintain_memory` (und `jarvis memory-pflege`, und im Hintergrund bei jedem
+  Start von `jarvis serve`) entfernt Dubletten (der älteste Eintrag bleibt), holt fehlende oder
+  veraltete Embeddings nach (höchstens 300 je Lauf) und gleicht Vault und Notizen ab. Es löscht
+  nie etwas anderes als doppelte Gedächtniseinträge.
 - **Vault (M1.10):** Das Werkzeug `vault_index` (ohne Parameter: das Modell wählt nie einen Ordner)
   liest Markdown- und Textdateien (`.md`, `.markdown`, `.txt`) aus den Ordnern, die in `jarvis.toml`
   mit `--vault` ausdrücklich erlaubt sind, und die offenen Notizen (`--notizen`, nur lesend über
