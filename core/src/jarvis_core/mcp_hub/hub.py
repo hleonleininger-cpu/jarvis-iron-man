@@ -162,13 +162,23 @@ class McpHub:
 
     @property
     def toolsets(self) -> list[AbstractToolset[Any]]:
-        """Verbundene Server; je Server nur die für ihn in jarvis.toml deklarierten Werkzeuge."""
+        """Verbundene Server; je Server nur die für ihn in jarvis.toml deklarierten und für die
+        Anfrage gewählten Werkzeuge."""
+        return self.toolsets_for(self._selected)
+
+    def toolsets_for(self, names: frozenset[str] | None) -> list[AbstractToolset[Any]]:
+        """Wie `toolsets`, aber mit einem eigenen Teilset (Sub-Agenten). Angeboten wird nur, was
+        auch für die Anfrage gewählt ist (`select_tools`): ein Teilset erweitert nie das Angebot."""
 
         def only_declared(server: str, toolset: MCPToolset[Any]) -> AbstractToolset[Any]:
             declared = frozenset(self._servers[server].tools)
             selected = self._selected
             return toolset.filtered(
-                lambda _ctx, td: td.name in declared and (selected is None or td.name in selected)
+                lambda _ctx, td: (
+                    td.name in declared
+                    and (selected is None or td.name in selected)
+                    and (names is None or td.name in names)
+                )
             )
 
         return [only_declared(server, ts) for server, ts in self._connected.items()]

@@ -1,7 +1,7 @@
 # Stand von JARVIS (15.11.2026)
 (Geschrieben vom bisherigen Claude-Code-Lauf. Wo der Code etwas anderes zeigt, gilt der Code, und du meldest die Abweichung.)
 
-Was JARVIS ist: ein lokaler persönlicher Assistent. Ein Python-Server (FastAPI) steht zwischen Master und einem Ollama-Modell, dazu kommen Web-Oberfläche, Kommandozeile und Werkzeug-Server. Alles läuft auf Masters Rechner. Nur Wetter, Websuche, iCloud und Notion gehen ins Netz, und das erst, wenn Master sie einschaltet.
+Was JARVIS ist: ein lokaler persönlicher Assistent. Ein Python-Server (FastAPI) steht zwischen Master und einem Ollama-Modell, dazu kommen Web-Oberfläche, Kommandozeile und Werkzeug-Server. Alles läuft auf Masters Rechner. Nur Wetter, Websuche, iCloud und Notion gehen ins Netz, und das erst, wenn Master sie einschaltet (dazu das Cloud-Gerüst, aus und ohne Anbieter).
 
 Was er kann:
 - Chat: Web-Client (auch fürs Handy), CLI-Dialog, Gesprächsverlauf nur im Arbeitsspeicher, Zugriffstoken bei Nicht-Localhost.
@@ -12,11 +12,12 @@ Was er kann:
 - Ideen, Aufträge, Entwürfe: lokal, für Nebeneinkünfte. Aufträge mit Frist, Betrag und Summen, Entwürfe als Textdateien.
 - Gedächtnis (M1, in Arbeit): JARVIS merkt sich Ausdrückliches über Neustarts hinweg (Stichwortsuche), vergisst nach Rückfrage und führt ein Tagesjournal. Anrede "Master", Optionen mit Risiko, Kennzeichnung der Herkunft von Aussagen.
 - Router und Planer (M1, Block C): Werkzeugauswahl per Embedding (`tool_select_limit`), zwei Modelle (`model_fast`/`model_strong`), `/plan <Auftrag>` mit Schrittliste und Selbstprüfung, `/simulation <Frage>` mit nur lesenden Werkzeugen. Alles aus, bis es in jarvis.toml eingeschaltet wird.
+- Sub-Agenten und Cloud-Stufe (M1, Block D): `/team <Auftrag>` zerlegt in unabhängige Teilaufgaben mit eigenem Kontext und Werkzeug-Teilset. Die Cloud-Stufe ist nur ein abgeschaltetes Gerüst (`/cloud`, Freigabe je Frage, nie mit privaten Daten); es gibt keinen Anbieter und keinen Schlüssel.
 - Notion: lesen, und neue Einträge anlegen mit Rückfrage. Ändern und Löschen gibt es im Code nicht.
 - Not-Aus: roter Knopf und Strg+. in der Web-Oberfläche, `jarvis stop` in der Eingabeaufforderung. Bricht alle laufenden und wartenden Anfragen, offene Rückfragen und Werkzeuge ab; ein hängender Server wird beendet.
 - Autostart: `jarvis autostart an` startet JARVIS bei jeder Windows-Anmeldung.
 - Start-Prüfung: `jarvis serve` und `jarvis chat` warnen, wenn Ollamas Kontextfenster kleiner ist als in jarvis.toml angenommen.
-- Sicherheit: Bezahlen und Handeln sind gesperrt, Schreibendes braucht Bestätigung, das Audit-Log enthält nie Inhalte, und es gibt keine Cloud-Modelle.
+- Sicherheit: Bezahlen und Handeln sind gesperrt, Schreibendes braucht Bestätigung, das Audit-Log enthält nie Inhalte, und die Cloud-Stufe ist aus und ohne Anbieter (ADR-021).
 
 Qualität:
 - 644 Tests grün, ruff und pyright sauber. Mehr als 100 Mängel wurden in 15 Prüfrunden behoben.

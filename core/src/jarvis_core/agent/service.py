@@ -34,7 +34,7 @@ from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import UsageLimits
 
-from jarvis_core.agent import cloud, planner
+from jarvis_core.agent import cloud, planner, subagents
 from jarvis_core.agent.confirmation import ConfirmationBroker, ConfirmRequest
 from jarvis_core.agent.router import DEFAULT_TOOL_MATCH, FAST, choose_tier
 from jarvis_core.agent.sessions import SessionStore
@@ -241,7 +241,9 @@ class ChatService:
         tool_match: float = DEFAULT_TOOL_MATCH,
         cloud_config: CloudConfig | None = None,
         cloud_model: Callable[[], Model | None] | None = None,
+        subagent_parallel: int = 1,
     ) -> None:
+        self._subagent_parallel = subagent_parallel
         self._cloud = cloud_config or CloudConfig()
         self._cloud_model = cloud_model  # baut das Cloud-Modell erst, wenn es gebraucht wird
         self.model_name = model_name
@@ -432,6 +434,73 @@ class ChatService:
             self.hub.select_tools(frozenset(i.name for i in infos) if read_only else None)
         return selection
 
+    async def _run_team(
+        self,
+        task: str,
+        queue: asyncio.Queue[StreamEvent | BaseException | None],
+        on_events: Callable[[RunContext[object], AsyncIterable[AgentStreamEvent]], Awaitable[None]],
+        quiet_events: Callable[
+            [RunContext[object], AsyncIterable[AgentStreamEvent]], Awaitable[None]
+        ],
+        usage: list[int | None],
+    ) -> None:
+        """Orchestrator (M1.2): Teilaufgaben -> je ein Sub-Agent (eigener Kontext, eigenes
+        Werkzeug-Teilset, Kurzbericht) -> Zusammenfassung. Jeder Lauf hat sein eigenes
+        Anfrage-Limit; Werkzeuge laufen durch Policy, Rückfrage und Audit wie sonst."""
+        if not task:
+            queue.put_nowait(Notice("Nach /team fehlt der Auftrag."))
+            return
+        total = 0
+
+        def count(result: AgentRunResult[str]) -> None:
+            nonlocal total
+            total += result.usage.total_tokens or 0
+            usage[0] = total or None
+
+        limits = UsageLimits(request_limit=MAX_MODEL_REQUESTS)
+        splitter: Agent[None, str] = Agent(self._model, instructions=subagents.SPLIT_INSTRUCTIONS)
+        split = await splitter.run(task, usage_limits=limits)
+        count(split)
+        subtasks = subagents.parse_subtasks(split.output) or [subagents.SubTask(task[:40], task)]
+        queue.put_nowait(Progress("agent", "Teilaufgaben: " + "; ".join(s.title for s in subtasks)))
+        # Auch lokales Schreiben fragt nach: Sub-Agenten lesen Fremdinhalt (Web, Dateien).
+        self.hub.confirm_local_writes = True
+        # Je Teilaufgabe ein eigenes Werkzeug-Teilset; angeboten wird die Vereinigung, damit der
+        # Hub nur Werkzeuge ausführt, die irgendein Sub-Agent haben darf.
+        subsets: list[frozenset[str] | None] = []
+        infos = self.hub.list_tools()
+        for sub in subtasks:
+            selection = await self._selector.choose(infos, sub.task) if self._selector else None
+            subsets.append(selection.names if selection else None)
+        union: frozenset[str] | None = frozenset()
+        for names in subsets:
+            union = None if names is None or union is None else union | names
+        self.hub.select_tools(union)
+        base = system_prompt(home=self.home, address=self.address)
+
+        async def run_one(index: int, sub: subagents.SubTask) -> str:
+            queue.put_nowait(Progress("agent", f"{index + 1}/{len(subtasks)} startet: {sub.title}"))
+            agent: Agent[None, str] = Agent(
+                self._model,
+                instructions=f"{base}\n{subagents.SUB_INSTRUCTIONS}",
+                toolsets=self.hub.toolsets_for(subsets[index]),
+            )
+            result = await agent.run(
+                sub.task, event_stream_handler=quiet_events, usage_limits=limits
+            )
+            count(result)
+            queue.put_nowait(Progress("agent", f"{index + 1}/{len(subtasks)} fertig: {sub.title}"))
+            return result.output[: subagents.MAX_REPORT_CHARS]
+
+        reports = await subagents.run_all(subtasks, run_one, self._subagent_parallel)
+        writer: Agent[None, str] = Agent(self._model, instructions=subagents.SYNTHESIS_INSTRUCTIONS)
+        answer = await writer.run(
+            subagents.synthesis_message(task, list(zip(subtasks, reports, strict=True))),
+            event_stream_handler=on_events,
+            usage_limits=limits,
+        )
+        count(answer)
+
     def _audit_cloud(self, decision: str, status: str, name: str) -> None:
         self._audit.record_tool_call(
             channel=current_channel.get(), model=name, tool=cloud.CLOUD_TOOL,
@@ -572,6 +641,18 @@ class ChatService:
     ) -> None:
         started = False  # Leerraum vor dem ersten Wort (z. B. nach <think>-Block) weglassen
 
+        def tool_event(event: AgentStreamEvent) -> None:
+            if not isinstance(event, FunctionToolCallEvent):
+                return
+            name = event.part.tool_name
+            if name in self.hub.offered_tools:
+                queue.put_nowait(ToolUsed(name))
+            else:
+                self.hub.record_unknown_tool(name)
+                queue.put_nowait(
+                    Notice(f"Unbekanntes Werkzeug '{safe_tool_name(name)}' wurde abgelehnt.")
+                )
+
         async def on_events(
             _ctx: RunContext[object], events: AsyncIterable[AgentStreamEvent]
         ) -> None:
@@ -583,16 +664,14 @@ class ChatService:
                     started = bool(text)
                 if text:
                     queue.put_nowait(TextDelta(text))
-                if not isinstance(event, FunctionToolCallEvent):
-                    continue
-                name = event.part.tool_name
-                if name in self.hub.offered_tools:
-                    queue.put_nowait(ToolUsed(name))
-                else:
-                    self.hub.record_unknown_tool(name)
-                    queue.put_nowait(
-                        Notice(f"Unbekanntes Werkzeug '{safe_tool_name(name)}' wurde abgelehnt.")
-                    )
+                tool_event(event)
+
+        async def quiet_events(
+            _ctx: RunContext[object], events: AsyncIterable[AgentStreamEvent]
+        ) -> None:
+            """Für Sub-Agenten: nur Werkzeugaufrufe zeigen, ihr Text ist nur ein Kurzbericht."""
+            async for event in events:
+                tool_event(event)
 
         try:
             cloud_question = cloud.parse_cloud_request(message)
@@ -604,6 +683,11 @@ class ChatService:
             async with self._turn(queue), self.hub:
                 for failure in self.hub.failures:
                     queue.put_nowait(Notice(failure))
+                team_task = subagents.parse_team_request(message)
+                if team_task is not None:  # Orchestrator mit Sub-Agenten (M1.2)
+                    await self._run_team(team_task, queue, on_events, quiet_events, usage)
+                    queue.put_nowait(None)
+                    return
                 request = planner.parse_request(message)
                 if request is not None:  # Plan oder Simulation (M1.3, M1.15): starkes Modell
                     await self._run_plan(request, queue, on_events, usage)
@@ -725,4 +809,5 @@ def build_service(
         address=settings.anrede, selector=selector or _tool_selector(settings),
         fast=fast, tool_match=settings.router_tool_match,
         cloud_config=settings.cloud, cloud_model=_cloud_model_factory(settings.cloud),
+        subagent_parallel=settings.subagent_parallel,
     )  # fmt: skip
