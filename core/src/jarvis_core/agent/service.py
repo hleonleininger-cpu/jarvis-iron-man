@@ -2,7 +2,7 @@
 
 import asyncio
 import os
-from collections.abc import AsyncGenerator, AsyncIterable
+from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Callable
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from datetime import datetime
@@ -12,6 +12,7 @@ import httpx2
 import structlog
 from openai import AsyncOpenAI
 from pydantic_ai import Agent
+from pydantic_ai.agent import AgentRunResult
 from pydantic_ai.exceptions import (
     ModelAPIError,
     ModelHTTPError,
@@ -33,6 +34,7 @@ from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import UsageLimits
 
+from jarvis_core.agent import planner
 from jarvis_core.agent.confirmation import ConfirmationBroker, ConfirmRequest
 from jarvis_core.agent.router import DEFAULT_TOOL_MATCH, FAST, choose_tier
 from jarvis_core.agent.sessions import SessionStore
@@ -420,6 +422,57 @@ class ChatService:
         self.hub.select_tools(selection.names if selection else None)
         return selection
 
+    async def _run_plan(
+        self,
+        request: planner.PlanRequest,
+        queue: asyncio.Queue[StreamEvent | BaseException | None],
+        on_events: Callable[[RunContext[object], AsyncIterable[AgentStreamEvent]], Awaitable[None]],
+        usage: list[int | None],
+    ) -> None:
+        """Aufgabenplaner (M1.3): Plan -> Schritte -> Selbstprüfung. Jeder Schritt ist ein eigener
+        Lauf mit eigenem Anfrage-Limit; Werkzeuge laufen wie sonst durch Policy und Rückfrage."""
+        total = 0
+
+        def count(result: AgentRunResult[str]) -> None:
+            nonlocal total
+            total += result.usage.total_tokens or 0
+            usage[0] = total or None
+
+        limits = UsageLimits(request_limit=MAX_MODEL_REQUESTS)
+        base = system_prompt(home=self.home, address=self.address)
+        if request.simulation:
+            self.hub.select_read_only()
+            base += "\n" + planner.SIMULATION_INSTRUCTIONS
+        planning: Agent[None, str] = Agent(self._model, instructions=planner.PLAN_INSTRUCTIONS)
+        plan_result = await planning.run(request.task, usage_limits=limits)
+        count(plan_result)
+        steps = planner.parse_steps(plan_result.output)
+        if not steps:  # kein brauchbarer Plan: den Auftrag als einen einzigen Schritt ausführen
+            queue.put_nowait(Notice("Kein Plan erkannt; der Auftrag läuft als ein Schritt."))
+            steps = [request.task]
+        queue.put_nowait(Progress("plan", "\n".join(f"{i}. {s}" for i, s in enumerate(steps, 1))))
+        done: list[str] = []
+        for index, step in enumerate(steps):
+            queue.put_nowait(Progress("step", f"{index + 1}/{len(steps)}: {step}"))
+            agent: Agent[None, str] = Agent(
+                self._model,
+                instructions=f"{base}\n{planner.STEP_INSTRUCTIONS}",
+                toolsets=self.hub.toolsets,
+            )
+            result = await agent.run(
+                planner.step_message(request.task, steps, done, index),
+                event_stream_handler=on_events,
+                usage_limits=limits,
+            )
+            count(result)
+            done.append(result.output)
+        checker: Agent[None, str] = Agent(self._model, instructions=planner.CHECK_INSTRUCTIONS)
+        check = await checker.run(planner.check_message(request.task, done), usage_limits=limits)
+        count(check)
+        queue.put_nowait(Progress("check", check.output.strip()))
+        if request.simulation:
+            queue.put_nowait(TextDelta("\n\n" + planner.SIMULATION_NOTE))
+
     async def _run(
         self,
         message: str,
@@ -457,6 +510,13 @@ class ChatService:
                 for failure in self.hub.failures:
                     queue.put_nowait(Notice(failure))
                 selection = await self._select_tools(message, session_id)
+                request = planner.parse_request(message)
+                if (
+                    request is not None
+                ):  # Plan oder Simulation (M1.3, M1.15): immer das starke Modell
+                    await self._run_plan(request, queue, on_events, usage)
+                    queue.put_nowait(None)
+                    return
                 model = self._route(selection, message, queue, routed)
                 # `instructions` statt `system_prompt`: gilt je Anfrage neu (aktuelles Datum) und
                 # landet nicht im gespeicherten Verlauf.

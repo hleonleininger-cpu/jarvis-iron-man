@@ -168,6 +168,10 @@ class McpHub:
 
         return [only_declared(server, ts) for server, ts in self._connected.items()]
 
+    def select_read_only(self) -> None:
+        """Nur lesende Werkzeuge anbieten (Simulationen ändern nichts)."""
+        self.select_tools(frozenset(i.name for i in self._infos if i.risk == RiskClass.READ))
+
     async def __aenter__(self) -> Self:
         if self._running is not None:
             # Ein Hub trägt genau eine laufende Anfrage; der Agent reiht Anfragen deshalb ein.
