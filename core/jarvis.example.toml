@@ -30,6 +30,15 @@ context_tokens = 8192
 # IRREVERSIBLE, EXTERNAL_COMMUNICATION, FINANCIAL. READ und WRITE_LOCAL laufen direkt, die
 # übrigen Schreibklassen nur nach Rückfrage, FINANCIAL nie.
 # command = "python" steht für den Interpreter des Cores (venv).
+# Cloud-Stufe (nur Gerüst, standardmäßig AUS, siehe ADR-021): `/cloud <Frage>` schickt NUR die Frage
+# nach ausdrücklicher Freigabe an einen Anbieter. Nie mit Kalender, Notizen, Gedächtnis oder Verlauf.
+# Schlüssel: `jarvis secrets set cloud_api_key`. Ohne diesen Abschnitt bleibt alles lokal.
+# [cloud]
+# enabled = false
+# provider = "Name des Anbieters"
+# model = "modellname"
+# base_url = "https://api.example.com/v1"
+
 [mcp_servers.weather]
 command = "python"
 args = ["-m", "mcp_servers.weather"]

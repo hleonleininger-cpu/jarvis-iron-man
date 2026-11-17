@@ -91,6 +91,30 @@ class McpServerConfig(BaseModel):
         return self
 
 
+class CloudConfig(BaseModel):
+    """Abschnitt `[cloud]` in jarvis.toml. Ohne Anbieter bleibt die Stufe unbenutzbar."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    provider: str | None = Field(default=None, max_length=40)  # nur Anzeigename
+    model: str | None = Field(default=None, max_length=80)
+    # OpenAI-kompatible Schnittstelle des Anbieters; nur verschlüsselt (https).
+    base_url: str | None = None
+
+    @field_validator("base_url")
+    @classmethod
+    def _https_only(cls, value: str | None) -> str | None:
+        if value is not None and not value.startswith("https://"):
+            raise ValueError("cloud.base_url muss mit https:// beginnen.")
+        return value.rstrip("/") if value else value
+
+    @property
+    def usable(self) -> bool:
+        """Eingeschaltet UND vollständig eingerichtet."""
+        return self.enabled and bool(self.provider and self.model and self.base_url)
+
+
 class ConfigFileMissing(Exception):
     """Die über JARVIS_CONFIG genannte Datei fehlt (deutsche Meldung)."""
 
@@ -129,6 +153,8 @@ class Settings(BaseSettings):
     home_location: str | None = Field(default=None, max_length=80)
     # Wie JARVIS den Nutzer anspricht (Masterauftrag: "Master").
     anrede: str = Field(default="Master", min_length=1, max_length=40)
+    # Cloud-Stufe (M1.6, ADR-021): ein abgeschaltetes Gerüst, standardmäßig aus und ohne Anbieter.
+    cloud: CloudConfig = CloudConfig()
     # Zugangstoken für /v1/* (ADR-011). None = automatisch: Pflicht, sobald host nicht lokal ist.
     require_api_token: bool | None = None
 

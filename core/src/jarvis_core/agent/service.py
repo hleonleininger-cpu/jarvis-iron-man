@@ -34,12 +34,13 @@ from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import UsageLimits
 
-from jarvis_core.agent import planner
+from jarvis_core.agent import cloud, planner
 from jarvis_core.agent.confirmation import ConfirmationBroker, ConfirmRequest
 from jarvis_core.agent.router import DEFAULT_TOOL_MATCH, FAST, choose_tier
 from jarvis_core.agent.sessions import SessionStore
 from jarvis_core.audit import AuditLog
 from jarvis_core.config import Settings
+from jarvis_core.config.settings import CloudConfig
 from jarvis_core.hardware import detect_hardware, recommend
 from jarvis_core.mcp_hub import McpHub, current_channel, current_confirmer, safe_tool_name
 from jarvis_core.mcp_hub.select import Selection, ToolSelector
@@ -238,7 +239,11 @@ class ChatService:
         selector: ToolSelector | None = None,
         fast: tuple[Model, str] | None = None,
         tool_match: float = DEFAULT_TOOL_MATCH,
+        cloud_config: CloudConfig | None = None,
+        cloud_model: Callable[[], Model | None] | None = None,
     ) -> None:
+        self._cloud = cloud_config or CloudConfig()
+        self._cloud_model = cloud_model  # baut das Cloud-Modell erst, wenn es gebraucht wird
         self.model_name = model_name
         self._selector = selector
         self._fast = fast  # (Modell, Name) für kurze Fragen ohne Werkzeugbedarf, sonst None
@@ -427,6 +432,62 @@ class ChatService:
             self.hub.select_tools(frozenset(i.name for i in infos) if read_only else None)
         return selection
 
+    def _audit_cloud(self, decision: str, status: str, name: str) -> None:
+        self._audit.record_tool_call(
+            channel=current_channel.get(), model=name, tool=cloud.CLOUD_TOOL,
+            risk="EXTERNAL_COMMUNICATION", decision=decision, status=status,
+        )  # fmt: skip
+
+    async def _run_cloud(
+        self,
+        question: str,
+        queue: asyncio.Queue[StreamEvent | BaseException | None],
+        usage: list[int | None],
+        routed: list[str],
+    ) -> None:
+        """Cloud-Stufe (M1.6, ADR-021): nur ausdrücklich, nur nach Freigabe dieser Frage und nur
+        mit der Frage selbst: keine Werkzeuge, kein Verlauf, keine persönlichen Angaben."""
+        config = self._cloud
+        name = f"{config.provider}/{config.model}" if config.usable else "cloud"
+        if not config.usable:
+            self._audit_cloud("DENY", "blocked", name)
+            queue.put_nowait(Notice(cloud.OFF_MESSAGE))
+            return
+        confirmer = current_confirmer.get()
+        if confirmer is None:
+            self._audit_cloud("DENY", "blocked", name)
+            queue.put_nowait(Notice("Die Freigabe ist hier nicht möglich; nichts wurde gesendet."))
+            return
+        if not question:
+            queue.put_nowait(Notice("Nach /cloud fehlt die Frage."))
+            return
+        preview, ask = cloud.approval_preview(config, question)
+        self._audit_cloud("CONFIRM", "pending", name)
+        if not await confirmer(cloud.CLOUD_TOOL, preview, ask):
+            self._audit_cloud("DENIED", "denied", name)
+            queue.put_nowait(Notice(cloud.DECLINED_MESSAGE))
+            return
+        model = self._cloud_model() if self._cloud_model else None
+        if model is None:
+            self._audit_cloud("CONFIRMED", "error", name)
+            queue.put_nowait(Notice("Kein Cloud-Schlüssel eingerichtet; nichts wurde gesendet."))
+            return
+        routed[0] = name
+        # Der Aufbau IST die Sperre: kein toolsets, keine message_history, feste Anweisung.
+        agent: Agent[None, str] = Agent(model, instructions=cloud.CLOUD_INSTRUCTIONS)
+        try:
+            result = await agent.run(question, usage_limits=UsageLimits(request_limit=1))
+        except asyncio.CancelledError:
+            self._audit_cloud("CONFIRMED", "aborted", name)
+            raise
+        except Exception:
+            self._audit_cloud("CONFIRMED", "error", name)
+            raise ChatError("Die Cloud-Anfrage ist fehlgeschlagen.") from None
+        self._audit_cloud("CONFIRMED", "ok", name)
+        usage[0] = result.usage.total_tokens or None
+        queue.put_nowait(Notice(f"Antwort aus der Cloud ({name}), nicht lokal."))
+        queue.put_nowait(TextDelta(result.output))
+
     async def _run_plan(
         self,
         request: planner.PlanRequest,
@@ -534,6 +595,12 @@ class ChatService:
                     )
 
         try:
+            cloud_question = cloud.parse_cloud_request(message)
+            if cloud_question is not None:  # braucht keine Werkzeug-Server
+                async with self._turn(queue):
+                    await self._run_cloud(cloud_question, queue, usage, routed)
+                queue.put_nowait(None)
+                return
             async with self._turn(queue), self.hub:
                 for failure in self.hub.failures:
                     queue.put_nowait(Notice(failure))
@@ -612,6 +679,25 @@ def _tool_selector(settings: Settings) -> ToolSelector | None:
     return ToolSelector(embedder, settings.tool_select_limit)
 
 
+def _cloud_model_factory(config: CloudConfig) -> Callable[[], Model | None]:
+    """Baut das Cloud-Modell erst bei Gebrauch; None, wenn kein Schlüssel im Schlüsselbund liegt."""
+
+    def build() -> Model | None:
+        from jarvis_core.secrets import SecretsError, read_secret_field
+
+        try:
+            key = read_secret_field(cloud.CLOUD_SECRET, "token")
+        except SecretsError:
+            return None
+        if not key or not config.base_url or not config.model:
+            return None
+        http = httpx2.AsyncClient(timeout=httpx2.Timeout(MODEL_TIMEOUT_SECONDS, connect=10.0))
+        client = AsyncOpenAI(base_url=config.base_url, api_key=key, http_client=http, max_retries=0)
+        return OpenAIChatModel(config.model, provider=OpenAIProvider(openai_client=client))
+
+    return build
+
+
 def build_service(
     settings: Settings,
     audit: AuditLog,
@@ -638,4 +724,5 @@ def build_service(
         home=settings.home_location, context_tokens=settings.context_tokens,
         address=settings.anrede, selector=selector or _tool_selector(settings),
         fast=fast, tool_match=settings.router_tool_match,
+        cloud_config=settings.cloud, cloud_model=_cloud_model_factory(settings.cloud),
     )  # fmt: skip

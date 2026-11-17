@@ -40,6 +40,10 @@ SECRETS: dict[str, SecretSpec] = {
     ),
     # Zugangstoken für die API (ADR-011); am besten mit `jarvis secrets generate api_token`.
     "api_token": SecretSpec("api_token", (SecretField("token", "API-Zugangstoken", hidden=True),)),
+    # Schlüssel des Cloud-Anbieters (M1.6, ADR-021); nur nötig, wenn [cloud] eingeschaltet ist.
+    "cloud_api_key": SecretSpec(
+        "cloud_api_key", (SecretField("token", "API-Schlüssel des Cloud-Anbieters", hidden=True),)
+    ),
 }
 GENERATABLE = ("api_token",)
 
