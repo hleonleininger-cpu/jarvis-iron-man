@@ -6,6 +6,9 @@ ollama_base_url = "http://127.0.0.1:11434/v1"
 # model = "qwen3.5:4b"       # ohne Eintrag gilt die Empfehlung von `jarvis doctor`
 data_dir = "data"
 # anrede = "Master"  # wie JARVIS dich anspricht (Standard: Master)
+# Werkzeugauswahl: nur die N passendsten Werkzeuge je Anfrage ans Modell geben (spart Kontext).
+# 0 = alle. Braucht "ollama pull nomic-embed-text"; ohne das Modell werden alle angeboten.
+# tool_select_limit = 12
 # home_location = "Dortmund"  # Wohnort: gilt, wenn eine Frage keinen Ort nennt (z. B. Wetter)
 log_level = "INFO"
 # Gesprächsverlauf je Sitzung (nur im Arbeitsspeicher). 0 Runden schaltet ihn ab.

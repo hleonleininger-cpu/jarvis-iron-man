@@ -116,6 +116,10 @@ class Settings(BaseSettings):
     # still von vorn, also zuerst die Systemanweisung. Der Verlauf wird daran angepasst.
     context_tokens: int = Field(default=4096, ge=2048, le=1_048_576)
     mcp_servers: dict[str, McpServerConfig] = {}
+    # Werkzeugauswahl (M1.4): so viele der passendsten Werkzeuge bekommt das Modell je Anfrage.
+    # 0 = alle anbieten. Braucht das Embedding-Modell von Ollama; ohne es werden alle angeboten.
+    tool_select_limit: int = Field(default=0, ge=0, le=100)
+    embed_model: str = Field(default="nomic-embed-text", min_length=1, max_length=80)
     # Wohnort für Fragen ohne Ortsangabe (z. B. "Wie ist das Wetter?"), etwa "Dortmund".
     home_location: str | None = Field(default=None, max_length=80)
     # Wie JARVIS den Nutzer anspricht (Masterauftrag: "Master").

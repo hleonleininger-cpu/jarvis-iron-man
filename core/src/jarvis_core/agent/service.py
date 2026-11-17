@@ -39,6 +39,7 @@ from jarvis_core.audit import AuditLog
 from jarvis_core.config import Settings
 from jarvis_core.hardware import detect_hardware, recommend
 from jarvis_core.mcp_hub import McpHub, current_channel, current_confirmer, safe_tool_name
+from jarvis_core.mcp_hub.select import ToolSelector
 
 # Kein Werbebanner von Pydantic AI auf stdout/stderr.
 os.environ.setdefault("PYDANTIC_AI_NO_BANNER", "1")
@@ -91,6 +92,7 @@ CONTEXT_WARNING = (
 # Höchstens so viele Anfragen warten hinter der laufenden; weitere werden sofort abgewiesen,
 # statt sich unbegrenzt anzustauen.
 MAX_WAITING = 3
+FOLLOW_UP_CHARS = 80  # kürzere Fragen gelten als Folgefrage zur vorigen
 EMERGENCY_STOP_MESSAGE = "Not-Aus: Die Anfrage wurde abgebrochen."
 EMERGENCY_STOP_TOOL = "emergency_stop"  # Name des Audit-Eintrags (kein Werkzeug des Modells)
 OVERLOADED_MESSAGE = "JARVIS ist gerade ausgelastet. Bitte gleich noch einmal versuchen."
@@ -222,8 +224,10 @@ class ChatService:
         home: str | None = None,
         context_tokens: int = 4096,
         address: str = DEFAULT_ADDRESS,
+        selector: ToolSelector | None = None,
     ) -> None:
         self.model_name = model_name
+        self._selector = selector
         self.home = home
         self.address = address
         self.context_tokens = context_tokens
@@ -373,6 +377,17 @@ class ChatService:
         finally:
             self._run_lock.release()
 
+    async def _select_tools(self, message: str, session_id: str | None) -> None:
+        """Werkzeugauswahl (M1.4). Eine kurze Folgefrage ("und morgen?") wird mit der Frage davor
+        bewertet, sonst fände sie das Werkzeug der ersten Frage nicht mehr."""
+        if self._selector is None:
+            return
+        query = message
+        if session_id and len(message) < FOLLOW_UP_CHARS:
+            query = f"{self.sessions.last_user_text(session_id)}\n{message}".strip()
+        selection = await self._selector.choose(self.hub.list_tools(), query)
+        self.hub.select_tools(selection.names if selection else None)
+
     async def _run(
         self,
         message: str,
@@ -408,6 +423,7 @@ class ChatService:
             async with self._turn(queue), self.hub:
                 for failure in self.hub.failures:
                     queue.put_nowait(Notice(failure))
+                await self._select_tools(message, session_id)
                 # `instructions` statt `system_prompt`: gilt je Anfrage neu (aktuelles Datum) und
                 # landet nicht im gespeicherten Verlauf.
                 instructions = system_prompt(home=self.home, address=self.address)
@@ -465,12 +481,23 @@ def _ollama_client(settings: Settings) -> AsyncOpenAI:
     )
 
 
+def _tool_selector(settings: Settings) -> ToolSelector | None:
+    """Werkzeugauswahl nur, wenn eingeschaltet (tool_select_limit > 0)."""
+    if settings.tool_select_limit <= 0:
+        return None
+    from mcp_servers.memory.embed import make_embedder  # lokal: nur diese eine Stelle braucht es
+
+    embedder = make_embedder(settings.ollama_base_url, settings.embed_model)
+    return ToolSelector(embedder, settings.tool_select_limit)
+
+
 def build_service(
     settings: Settings,
     audit: AuditLog,
     model: Model | None = None,
     model_name: str | None = None,
     hub: McpHub | None = None,
+    selector: ToolSelector | None = None,
 ) -> ChatService:
     name = model_name or resolve_model_name(settings)
     if model is None:
@@ -482,5 +509,5 @@ def build_service(
     return ChatService(
         model, name, settings.ollama_base_url, audit, hub, sessions=sessions,
         home=settings.home_location, context_tokens=settings.context_tokens,
-        address=settings.anrede,
+        address=settings.anrede, selector=selector or _tool_selector(settings),
     )  # fmt: skip

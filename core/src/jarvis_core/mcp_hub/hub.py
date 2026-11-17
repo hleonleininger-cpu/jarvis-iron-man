@@ -129,6 +129,8 @@ class McpHub:
         self._stop = asyncio.Event()
         self._connected: dict[str, MCPToolset[Any]] = {}
         self._infos: list[ToolInfo] = []
+        # Auswahl je Anfrage (M1.4): None = alle deklarierten und verbundenen Werkzeuge.
+        self._selected: frozenset[str] | None = None
         self.failures: list[str] = []
         self.tool_timeout = TOOL_TIMEOUT_SECONDS
 
@@ -139,8 +141,19 @@ class McpHub:
 
     @property
     def offered_tools(self) -> frozenset[str]:
-        """Werkzeuge, die dem Modell tatsächlich angeboten werden (deklariert und verbunden)."""
-        return frozenset(info.name for info in self._infos)
+        """Werkzeuge, die dem Modell angeboten werden (deklariert, verbunden, gewählt)."""
+        return frozenset(info.name for info in self._offered_infos())
+
+    def _offered_infos(self) -> list[ToolInfo]:
+        selected = self._selected
+        return [i for i in self._infos if selected is None or i.name in selected]
+
+    def select_tools(self, names: frozenset[str] | None) -> None:
+        """Beschränkt die angebotenen Werkzeuge für diese Anfrage (None = alle).
+
+        Ändert nur das Angebot an das Modell; `gated_call` prüft weiterhin jeden Aufruf.
+        """
+        self._selected = names
 
     @property
     def toolsets(self) -> list[AbstractToolset[Any]]:
@@ -148,7 +161,10 @@ class McpHub:
 
         def only_declared(server: str, toolset: MCPToolset[Any]) -> AbstractToolset[Any]:
             declared = frozenset(self._servers[server].tools)
-            return toolset.filtered(lambda _ctx, td: td.name in declared)
+            selected = self._selected
+            return toolset.filtered(
+                lambda _ctx, td: td.name in declared and (selected is None or td.name in selected)
+            )
 
         return [only_declared(server, ts) for server, ts in self._connected.items()]
 
@@ -158,6 +174,7 @@ class McpHub:
             raise RuntimeError("McpHub ist bereits aktiv.")
         self._running = []
         self._stop = asyncio.Event()
+        self._selected = None
         self.failures = []
         try:
             # Alle Server gleichzeitig starten (sonst summieren sich die Startzeiten je Anfrage).
@@ -237,6 +254,7 @@ class McpHub:
         running, self._running = self._running, None
         self._connected = {}
         self._infos = []
+        self._selected = None
         if running is None:
             return
         self._stop.set()
@@ -275,7 +293,7 @@ class McpHub:
     @property
     def prompt_chars(self) -> int:
         """Platz, den die angebotenen Werkzeugdefinitionen im Prompt belegen (Zeichen)."""
-        return sum(info.prompt_chars for info in self._infos)
+        return sum(info.prompt_chars for info in self._offered_infos())
 
     def list_tools(self) -> list[ToolInfo]:
         """Verfügbare Werkzeuge (nur nach `async with hub`)."""

@@ -14,7 +14,7 @@ from collections import OrderedDict
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 
-from pydantic_ai.messages import ModelMessage
+from pydantic_ai.messages import ModelMessage, ModelRequest, UserPromptPart
 
 DEFAULT_MAX_TURNS = 10
 DEFAULT_MAX_CHARS = 16_000
@@ -100,6 +100,15 @@ class SessionStore:
                 used += turn.chars
             turns = kept[::-1]
         return [message for turn in turns for message in turn.messages]
+
+    def last_user_text(self, session_id: str) -> str:
+        """Letzte Nutzerfrage der Sitzung (leer, wenn es keine gibt); für Folgefragen."""
+        for message in reversed(self.history(session_id)):
+            if isinstance(message, ModelRequest):
+                for part in message.parts:
+                    if isinstance(part, UserPromptPart) and isinstance(part.content, str):
+                        return part.content
+        return ""
 
     def append(self, session_id: str, messages: Sequence[ModelMessage]) -> None:
         """Hängt eine abgeschlossene Runde an und kürzt den Verlauf von vorn."""
