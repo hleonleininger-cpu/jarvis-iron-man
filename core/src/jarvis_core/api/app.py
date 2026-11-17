@@ -22,6 +22,7 @@ from jarvis_core.agent import (
     ChatService,
     ConfirmRequested,
     Notice,
+    Progress,
     Reminder,
     ReminderWatcher,
     TextDelta,
@@ -234,6 +235,8 @@ def create_app(
                             yield _sse("tool", {"name": name})
                         case Notice(message):
                             yield _sse("notice", {"message": message})
+                        case Progress(kind, text):
+                            yield _sse("progress", {"kind": kind, "text": text})
                         case ConfirmRequested(request_id, tool, preview, question):
                             yield _sse(
                                 "confirm",

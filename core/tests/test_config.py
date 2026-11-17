@@ -586,3 +586,15 @@ def test_memory_maintenance_command_runs_the_servers_own_flag(
     (tmp_path / "jarvis.toml").write_text('data_dir = "d"\n', encoding="utf-8")
     none = CliRunner().invoke(cli_main.app, ["memory-pflege"])
     assert none.exit_code == 1 and "Kein Gedächtnis-Server" in none.output
+
+
+def test_router_settings_default_to_off() -> None:
+    settings = Settings()
+    assert settings.model_fast is None and settings.tool_select_limit == 0
+
+
+def test_model_strong_is_alias_for_model() -> None:
+    from jarvis_core.agent import resolve_model_name
+
+    assert resolve_model_name(Settings(model="a")) == "a"
+    assert resolve_model_name(Settings(model="a", model_strong="b")) == "b"

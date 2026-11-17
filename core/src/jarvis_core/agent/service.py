@@ -34,12 +34,13 @@ from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import UsageLimits
 
 from jarvis_core.agent.confirmation import ConfirmationBroker, ConfirmRequest
+from jarvis_core.agent.router import DEFAULT_TOOL_MATCH, FAST, choose_tier
 from jarvis_core.agent.sessions import SessionStore
 from jarvis_core.audit import AuditLog
 from jarvis_core.config import Settings
 from jarvis_core.hardware import detect_hardware, recommend
 from jarvis_core.mcp_hub import McpHub, current_channel, current_confirmer, safe_tool_name
-from jarvis_core.mcp_hub.select import ToolSelector
+from jarvis_core.mcp_hub.select import Selection, ToolSelector
 
 # Kein Werbebanner von Pydantic AI auf stdout/stderr.
 os.environ.setdefault("PYDANTIC_AI_NO_BANNER", "1")
@@ -155,7 +156,15 @@ class ConfirmRequested:
     question: str
 
 
-StreamEvent = TextDelta | ToolUsed | Notice | ConfirmRequested
+@dataclass(frozen=True)
+class Progress:
+    """Fortschritt ohne Gesprächsinhalt: Modellwahl des Routers, Plan, Schritte, Selbstprüfung."""
+
+    kind: str  # "route", "plan", "step", "check"
+    text: str
+
+
+StreamEvent = TextDelta | ToolUsed | Notice | ConfirmRequested | Progress
 
 
 class ChatError(Exception):
@@ -164,8 +173,8 @@ class ChatError(Exception):
 
 def resolve_model_name(settings: Settings) -> str:
     """Konfiguriertes Modell, sonst die Empfehlung von jarvis doctor."""
-    if settings.model:
-        return settings.model
+    if settings.model_strong or settings.model:
+        return settings.model_strong or settings.model or ""
     return recommend(detect_hardware()).model
 
 
@@ -225,9 +234,13 @@ class ChatService:
         context_tokens: int = 4096,
         address: str = DEFAULT_ADDRESS,
         selector: ToolSelector | None = None,
+        fast: tuple[Model, str] | None = None,
+        tool_match: float = DEFAULT_TOOL_MATCH,
     ) -> None:
         self.model_name = model_name
         self._selector = selector
+        self._fast = fast  # (Modell, Name) für kurze Fragen ohne Werkzeugbedarf, sonst None
+        self._tool_match = tool_match
         self.home = home
         self.address = address
         self.context_tokens = context_tokens
@@ -295,6 +308,7 @@ class ChatService:
             return
         queue: asyncio.Queue[StreamEvent | BaseException | None] = asyncio.Queue()
         usage: list[int | None] = [None]
+        routed = [self.model_name]  # das tatsächlich genutzte Modell (Router), für das Audit
 
         def emit(request: ConfirmRequest) -> None:
             queue.put_nowait(
@@ -318,7 +332,7 @@ class ChatService:
         channel_token = current_channel.set(channel)
         confirmer_token = current_confirmer.set(confirmer)
         try:
-            task = asyncio.create_task(self._run(message, session_id, queue, usage))
+            task = asyncio.create_task(self._run(message, session_id, queue, usage, routed))
         finally:
             current_channel.reset(channel_token)
             current_confirmer.reset(confirmer_token)
@@ -353,10 +367,8 @@ class ChatService:
             with suppress(asyncio.CancelledError, Exception):
                 await task
             self._stopped.discard(task)
-            self._audit.record(
-                channel=channel, model=self.model_name, tokens=usage[0], status=status
-            )
-            log.info("chat_done", channel=channel, model=self.model_name, status=status)
+            self._audit.record(channel=channel, model=routed[0], tokens=usage[0], status=status)
+            log.info("chat_done", channel=channel, model=routed[0], status=status)
 
     @asynccontextmanager
     async def _turn(
@@ -377,16 +389,36 @@ class ChatService:
         finally:
             self._run_lock.release()
 
-    async def _select_tools(self, message: str, session_id: str | None) -> None:
+    def _route(
+        self,
+        selection: Selection | None,
+        message: str,
+        queue: asyncio.Queue[StreamEvent | BaseException | None],
+        routed: list[str],
+    ) -> Model:
+        """Modell-Router (M1.1). Gibt das Modell für diese Anfrage zurück und meldet die Wahl
+        (nur Stufe und Modellname, nie Inhalt)."""
+        if self._fast is None:
+            return self._model
+        tier = choose_tier(message, selection.best if selection else None, self._tool_match)
+        model, name = self._fast if tier == FAST else (self._model, self.model_name)
+        if tier == FAST:
+            self.hub.select_tools(frozenset())  # keine Werkzeuge nötig: Kontext sparen
+        routed[0] = name
+        queue.put_nowait(Progress("route", f"{tier}: {name}"))
+        return model
+
+    async def _select_tools(self, message: str, session_id: str | None) -> Selection | None:
         """Werkzeugauswahl (M1.4). Eine kurze Folgefrage ("und morgen?") wird mit der Frage davor
         bewertet, sonst fände sie das Werkzeug der ersten Frage nicht mehr."""
         if self._selector is None:
-            return
+            return None
         query = message
         if session_id and len(message) < FOLLOW_UP_CHARS:
             query = f"{self.sessions.last_user_text(session_id)}\n{message}".strip()
         selection = await self._selector.choose(self.hub.list_tools(), query)
         self.hub.select_tools(selection.names if selection else None)
+        return selection
 
     async def _run(
         self,
@@ -394,6 +426,7 @@ class ChatService:
         session_id: str | None,
         queue: asyncio.Queue[StreamEvent | BaseException | None],
         usage: list[int | None],
+        routed: list[str],
     ) -> None:
         started = False  # Leerraum vor dem ersten Wort (z. B. nach <think>-Block) weglassen
 
@@ -423,12 +456,13 @@ class ChatService:
             async with self._turn(queue), self.hub:
                 for failure in self.hub.failures:
                     queue.put_nowait(Notice(failure))
-                await self._select_tools(message, session_id)
+                selection = await self._select_tools(message, session_id)
+                model = self._route(selection, message, queue, routed)
                 # `instructions` statt `system_prompt`: gilt je Anfrage neu (aktuelles Datum) und
                 # landet nicht im gespeicherten Verlauf.
                 instructions = system_prompt(home=self.home, address=self.address)
                 agent: Agent[None, str] = Agent(
-                    self._model, instructions=instructions, toolsets=self.hub.toolsets
+                    model, instructions=instructions, toolsets=self.hub.toolsets
                 )
                 # Was neben Systemanweisung, Werkzeugen, Frage und Antwort-Reserve noch frei ist,
                 # bekommt der Verlauf (jüngste Runden zuerst).
@@ -482,8 +516,9 @@ def _ollama_client(settings: Settings) -> AsyncOpenAI:
 
 
 def _tool_selector(settings: Settings) -> ToolSelector | None:
-    """Werkzeugauswahl nur, wenn eingeschaltet (tool_select_limit > 0)."""
-    if settings.tool_select_limit <= 0:
+    """Werkzeugauswahl, wenn eingeschaltet (tool_select_limit > 0). Auch der Router braucht die
+    Bewertung der Werkzeuge; ohne Auswahl-Limit werden dann nur bewertet, nicht gekürzt."""
+    if settings.tool_select_limit <= 0 and not settings.model_fast:
         return None
     from mcp_servers.memory.embed import make_embedder  # lokal: nur diese eine Stelle braucht es
 
@@ -504,10 +539,17 @@ def build_service(
         model = OpenAIChatModel(
             name, provider=OpenAIProvider(openai_client=_ollama_client(settings))
         )
+    fast = None
+    if settings.model_fast:
+        fast_model = OpenAIChatModel(
+            settings.model_fast, provider=OpenAIProvider(openai_client=_ollama_client(settings))
+        )
+        fast = (fast_model, settings.model_fast)
     hub = hub or McpHub(settings.mcp_servers, audit, name, log_dir=settings.data_dir / "logs")
     sessions = SessionStore(settings.history_max_turns, settings.history_max_chars)
     return ChatService(
         model, name, settings.ollama_base_url, audit, hub, sessions=sessions,
         home=settings.home_location, context_tokens=settings.context_tokens,
         address=settings.anrede, selector=selector or _tool_selector(settings),
+        fast=fast, tool_match=settings.router_tool_match,
     )  # fmt: skip

@@ -106,6 +106,11 @@ class Settings(BaseSettings):
     port: int = Field(default=8765, ge=1, le=65535)
     ollama_base_url: str = "http://127.0.0.1:11434/v1"
     model: str | None = None
+    # Zwei Modelle (M1.1): kurze Fragen ohne Werkzeugbedarf gehen an `model_fast`, alles andere an
+    # `model_strong` (Alias für `model`). Ohne `model_fast` gibt es keinen Router.
+    model_fast: str | None = None
+    model_strong: str | None = None
+    router_tool_match: float = Field(default=0.6, gt=0.0, le=1.0)
     data_dir: Path = Path("data")
     log_level: str = "INFO"
     # Gesprächsverlauf je Sitzung (nur im Arbeitsspeicher, ADR-009). 0 Runden = kein Verlauf.

@@ -9,6 +9,10 @@ data_dir = "data"
 # Werkzeugauswahl: nur die N passendsten Werkzeuge je Anfrage ans Modell geben (spart Kontext).
 # 0 = alle. Braucht "ollama pull nomic-embed-text"; ohne das Modell werden alle angeboten.
 # tool_select_limit = 12
+# Zwei Modelle (Router): kurze Fragen ohne Werkzeugbedarf gehen an das schnelle Modell.
+# Braucht ebenfalls das Embedding-Modell; ohne model_fast bleibt alles beim Modell "model".
+# model_fast = "qwen3:4b"
+# model_strong = "qwen3:14b"
 # home_location = "Dortmund"  # Wohnort: gilt, wenn eine Frage keinen Ort nennt (z. B. Wetter)
 log_level = "INFO"
 # Gesprächsverlauf je Sitzung (nur im Arbeitsspeicher). 0 Runden schaltet ihn ab.

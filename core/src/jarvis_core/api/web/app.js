@@ -119,6 +119,10 @@ function handle(event, data, state) {
     case "notice":
       element("div", "info", data.message);
       break;
+    case "progress":
+      element("div", "info", data.kind + ": " + data.text);
+      state.answer = null;
+      break;
     case "confirm":
       confirmCard(data);
       state.answer = null;

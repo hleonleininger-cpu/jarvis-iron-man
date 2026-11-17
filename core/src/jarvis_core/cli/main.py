@@ -29,6 +29,7 @@ from jarvis_core.agent import (
     ConfirmationBroker,
     ConfirmRequested,
     Notice,
+    Progress,
     ReminderWatcher,
     TextDelta,
     ToolUsed,
@@ -453,6 +454,11 @@ async def _chat(service: ChatService, text: str, session_id: str | None = None) 
                 at_line_start = True
             case Notice(message):
                 typer.echo(f"Hinweis: {_printable(message)}", err=True)
+            case Progress(kind, text):
+                sys.stdout.write(
+                    f"{'' if at_line_start else chr(10)}[{kind}: {_printable(text)}]\n"
+                )
+                at_line_start = True
             case ConfirmRequested(request_id, _tool, preview, question):
                 sys.stdout.write(f"{'' if at_line_start else chr(10)}{_printable(preview)}\n")
                 at_line_start = True
