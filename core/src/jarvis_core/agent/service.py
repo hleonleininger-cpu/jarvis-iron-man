@@ -182,6 +182,10 @@ def resolve_model_name(settings: Settings) -> str:
 
 
 def _translate(exc: Exception, model_name: str, base_url: str) -> ChatError:
+    if isinstance(exc, BaseExceptionGroup):  # z. B. ein Sub-Agent ist gescheitert
+        inner: list[BaseException] = list(exc.exceptions)  # pyright: ignore[reportUnknownArgumentType, reportUnknownMemberType]
+        if inner and isinstance(inner[0], Exception):
+            return _translate(inner[0], model_name, base_url)
     if isinstance(exc, ChatError):  # schon nutzerlesbar (z. B. ausgelastet)
         return exc
     if isinstance(exc, ModelTimeoutError):
@@ -523,7 +527,8 @@ class ChatService:
             queue.put_nowait(Notice(cloud.OFF_MESSAGE))
             return
         confirmer = current_confirmer.get()
-        if confirmer is None:
+        if confirmer is None or current_channel.get() in cloud.NO_CLOUD_CHANNELS:
+            # Evals beantworten Rückfragen selbst: nie ein Cloud-Aufruf ohne Menschen.
             self._audit_cloud("DENY", "blocked", name)
             queue.put_nowait(Notice("Die Freigabe ist hier nicht möglich; nichts wurde gesendet."))
             return
@@ -532,7 +537,12 @@ class ChatService:
             return
         preview, ask = cloud.approval_preview(config, question)
         self._audit_cloud("CONFIRM", "pending", name)
-        if not await confirmer(cloud.CLOUD_TOOL, preview, ask):
+        try:
+            approved = await confirmer(cloud.CLOUD_TOOL, preview, ask)
+        except asyncio.CancelledError:  # Not-Aus während der Freigabe
+            self._audit_cloud("DENIED", "aborted", name)
+            raise
+        if not approved:
             self._audit_cloud("DENIED", "denied", name)
             queue.put_nowait(Notice(cloud.DECLINED_MESSAGE))
             return
@@ -552,6 +562,12 @@ class ChatService:
         except Exception:
             self._audit_cloud("CONFIRMED", "error", name)
             raise ChatError("Die Cloud-Anfrage ist fehlgeschlagen.") from None
+        finally:
+            client = getattr(model, "client", None)  # Verbindung des Cloud-Clients schließen
+            close = getattr(client, "close", None)
+            if close is not None:
+                with suppress(Exception):
+                    await close()
         self._audit_cloud("CONFIRMED", "ok", name)
         usage[0] = result.usage.total_tokens or None
         queue.put_nowait(Notice(f"Antwort aus der Cloud ({name}), nicht lokal."))
@@ -674,6 +690,10 @@ class ChatService:
                 tool_event(event)
 
         try:
+            if subagents.parse_team_request(message) == "":  # vor dem Start der Server
+                queue.put_nowait(Notice("Nach /team fehlt der Auftrag."))
+                queue.put_nowait(None)
+                return
             cloud_question = cloud.parse_cloud_request(message)
             if cloud_question is not None:  # braucht keine Werkzeug-Server
                 async with self._turn(queue):
@@ -775,7 +795,11 @@ def _cloud_model_factory(config: CloudConfig) -> Callable[[], Model | None]:
             return None
         if not key or not config.base_url or not config.model:
             return None
-        http = httpx2.AsyncClient(timeout=httpx2.Timeout(MODEL_TIMEOUT_SECONDS, connect=10.0))
+        # trust_env=False: kein .netrc und keine Proxy-Umgebung; nur der Schlüssel aus dem
+        # Schlüsselbund geht an den Anbieter.
+        http = httpx2.AsyncClient(
+            trust_env=False, timeout=httpx2.Timeout(MODEL_TIMEOUT_SECONDS, connect=10.0)
+        )
         client = AsyncOpenAI(base_url=config.base_url, api_key=key, http_client=http, max_retries=0)
         return OpenAIChatModel(config.model, provider=OpenAIProvider(openai_client=client))
 

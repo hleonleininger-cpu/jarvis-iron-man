@@ -16,6 +16,8 @@ from jarvis_core.config.settings import CloudConfig
 
 CLOUD_TOOL = "cloud_model"  # Name des Audit-Eintrags (kein Werkzeug des Modells)
 CLOUD_PREFIX = "/cloud"
+# Kanäle, die Rückfragen selbst beantworten (Evals): dort nie ein Cloud-Aufruf.
+NO_CLOUD_CHANNELS = frozenset({"eval"})
 CLOUD_SECRET = "cloud_api_key"  # Name im Schlüsselbund; Feld "token"
 
 # Die einzige Anweisung, die eine Cloud-Anfrage trägt. Absichtlich ohne Datum, Ort, Anrede.

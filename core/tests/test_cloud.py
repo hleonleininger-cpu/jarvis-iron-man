@@ -189,3 +189,49 @@ async def test_normal_chat_never_reaches_the_cloud(tmp_path: Path) -> None:
     spy = Spy()
     await _ask(_service(_settings(tmp_path, ON), spy.build()), "Wie ist das Wetter?")
     assert spy.calls == 0
+
+
+async def test_eval_channel_never_reaches_the_cloud(tmp_path: Path) -> None:
+    settings = _settings(tmp_path, ON)
+    spy = Spy()
+    service = _service(settings, spy.build())
+    async for event in service.stream("/cloud Frage", channel="eval"):
+        if isinstance(event, ConfirmRequested):
+            service.broker.resolve(event.id, True)
+    assert spy.calls == 0
+    assert _cloud_rows(settings) == [("EXTERNAL_COMMUNICATION", "DENY", "blocked")]
+
+
+async def test_emergency_stop_during_approval_is_audited(tmp_path: Path) -> None:
+    import asyncio
+
+    settings = _settings(tmp_path, ON)
+    spy = Spy()
+    service = _service(settings, spy.build())
+    waiting = asyncio.Event()
+
+    async def consume() -> list[StreamEvent]:
+        out: list[StreamEvent] = []
+        async for event in service.stream("/cloud Frage", channel="api"):
+            out.append(event)
+            if isinstance(event, ConfirmRequested):
+                waiting.set()  # niemand antwortet
+        return out
+
+    task = asyncio.create_task(consume())
+    await asyncio.wait_for(waiting.wait(), 5)
+    service.emergency_stop("api")
+    await asyncio.wait_for(task, 5)
+    assert spy.calls == 0
+    assert [r[1:] for r in _cloud_rows(settings)] == [("CONFIRM", "pending"), ("DENIED", "aborted")]
+
+
+async def test_approval_timeout_counts_as_no(tmp_path: Path) -> None:
+    settings = _settings(tmp_path, ON)
+    spy = Spy()
+    service = _service(settings, spy.build())
+    service.broker.timeout = 0.05
+    events = [e async for e in service.stream("/cloud Frage", channel="api")]
+    assert spy.calls == 0
+    assert any(isinstance(e, Notice) for e in events)
+    assert _cloud_rows(settings)[-1][1:] == ("DENIED", "denied")

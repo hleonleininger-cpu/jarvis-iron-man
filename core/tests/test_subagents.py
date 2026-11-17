@@ -91,7 +91,8 @@ async def test_run_all_failure_cancels_the_rest() -> None:
 class Team:
     """Modell-Attrappe: Zerlegung, Sub-Agent (ruft das Wetterwerkzeug) und Zusammenfassung."""
 
-    def __init__(self, split: str = SPLIT, delay: float = 0.0) -> None:
+    def __init__(self, split: str = SPLIT, delay: float = 0.0, fail_sub: bool = False) -> None:
+        self.fail_sub = fail_sub
         self.split = split
         self.delay = delay
         self.sub_seen: list[str] = []  # Nutzertext + Verlauf je Sub-Agent-Lauf
@@ -105,6 +106,8 @@ class Team:
             return self.split
         if "Fasse die Berichte" in text:
             return "Zusammenfassung"
+        if self.fail_sub:
+            raise OSError("weg")
         returned = any(
             isinstance(p, ToolReturnPart) for m in messages for p in getattr(m, "parts", [])
         )
@@ -208,7 +211,7 @@ async def test_subagents_get_their_own_tool_subset(tmp_path: Path) -> None:
     _, service = _service(tmp_path, team, selector=selector)
     await _collect(service, "/team Wetter und Termin")
     assert team.sub_tools[0] == {"get_weather"}
-    assert len(team.sub_tools[0]) == 1 and len(team.sub_tools[1]) == 1
+    assert team.sub_tools[1] == {"create_event"}
 
 
 async def test_subagents_run_one_after_another_by_default(tmp_path: Path) -> None:
@@ -262,3 +265,25 @@ async def test_emergency_stop_cancels_running_subagents(tmp_path: Path) -> None:
     assert any(isinstance(e, Notice) and e.message == EMERGENCY_STOP_MESSAGE for e in events)
     with sqlite3.connect(settings.audit_db_path) as conn:
         assert ("cli", "aborted") in conn.execute("SELECT channel, status FROM audit")
+
+
+async def test_failing_subagent_gives_a_readable_message(tmp_path: Path) -> None:
+    from jarvis_core.agent import ChatError
+
+    _, service = _service(tmp_path, Team(fail_sub=True))
+    with pytest.raises(ChatError, match="Ollama"):
+        await _collect(service, "/team zwei Teile")
+
+
+async def test_empty_team_starts_no_servers(tmp_path: Path) -> None:
+    team = Team()
+    _, service = _service(tmp_path, team)
+    events = await _collect(service, "/team")
+    assert any(isinstance(e, Notice) and "Auftrag" in e.message for e in events)
+
+
+async def test_local_write_confirmation_is_reset_after_team(tmp_path: Path) -> None:
+    team = Team()
+    _, service = _service(tmp_path, team)
+    await _collect(service, "/team Wetter und Notiz")
+    assert service.hub.confirm_local_writes is False
