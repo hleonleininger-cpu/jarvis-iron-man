@@ -12,6 +12,7 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
 from jarvis_core.agent import (
     ChatError,
     ChatService,
+    ConfirmRequested,
     Notice,
     Progress,
     StreamEvent,
@@ -30,6 +31,7 @@ from jarvis_core.agent.service import EMERGENCY_STOP_MESSAGE, MAX_MODEL_REQUESTS
 from jarvis_core.audit import AuditLog
 from jarvis_core.config import Settings
 from jarvis_core.config.settings import McpServerConfig
+from jarvis_core.mcp_hub.hub import DENY_MESSAGE, NO_SIMULATION
 from jarvis_core.policy import RiskClass
 
 pytestmark = pytest.mark.anyio
@@ -42,9 +44,9 @@ def test_parse_request() -> None:
     assert parse_request("/PLAN x") == PlanRequest("x", simulation=False)
     assert parse_request("/plan") is None
     assert parse_request("/planen nein") is None
-    assert parse_request("Was passiert, wenn ich früher aufstehe?") == PlanRequest(
-        "Was passiert, wenn ich früher aufstehe?", simulation=True
-    )
+    # Eine gewöhnliche Wissensfrage startet keinen Plan mit bis zu 50 Modellaufrufen.
+    assert parse_request("Was passiert, wenn man Wasser einfriert?") is None
+    assert parse_request("/simulationen x") is None
     assert parse_request("/simulation Lernplan 2 Wochen") == PlanRequest(
         "Lernplan 2 Wochen", simulation=True
     )
@@ -166,7 +168,10 @@ async def test_simulation_offers_only_read_tools_and_labels_result(tmp_path: Pat
     script = Script("1. Termine lesen", calls_per_step=1)
     settings, service = _service(tmp_path, script.model())
     events = [
-        e async for e in service.stream("Was passiert, wenn ich Montag frei nehme?", channel="cli")
+        e
+        async for e in service.stream(
+            "/simulation Was passiert, wenn ich Montag frei nehme?", channel="cli"
+        )
     ]
     assert script.offered and all(names == {"get_weather"} for names in script.offered)
     text = "".join(e.text for e in events if isinstance(e, TextDelta))
@@ -201,3 +206,44 @@ async def test_emergency_stop_cancels_a_plan(tmp_path: Path) -> None:
     assert any(isinstance(e, Notice) and e.message == EMERGENCY_STOP_MESSAGE for e in events)
     with sqlite3.connect(settings.audit_db_path) as conn:
         assert ("api", "aborted") in conn.execute("SELECT channel, status FROM audit")
+
+
+async def test_simulation_cannot_call_write_tools(tmp_path: Path) -> None:
+    """Auch wenn das Modell ein nicht angebotenes Werkzeug aufruft: nichts wird ausgeführt."""
+    _, service = _service(tmp_path, Script("1. Schreiben", calls_per_step=0).model())
+    async with service.hub:
+        service.hub.select_tools(frozenset({"get_weather"}))
+
+        async def call_tool(_name: str, _args: dict[str, object]) -> object:
+            raise AssertionError("darf nicht ausgeführt werden")
+
+        result = await service.hub.gated_call("weather", call_tool, "create_event", {})  # pyright: ignore[reportArgumentType]
+        assert result == DENY_MESSAGE
+
+
+async def test_plan_asks_before_local_writes(tmp_path: Path) -> None:
+    """Im Plan braucht auch WRITE_LOCAL eine Rückfrage (Fremdinhalt aus früheren Schritten)."""
+    cfg = McpServerConfig(
+        command="python", args=[FAKE_SERVER], tools={"get_weather": RiskClass.WRITE_LOCAL}
+    )
+    settings = Settings(data_dir=tmp_path / "data", mcp_servers={"weather": cfg})
+    script = Script("1. Eintrag", calls_per_step=1)
+    service = build_service(settings, AuditLog(settings.audit_db_path), script.model(), "test")
+    confirms = 0
+    async for event in service.stream("/plan lokal schreiben", channel="cli"):
+        if isinstance(event, ConfirmRequested):
+            confirms += 1
+            service.broker.resolve(event.id, True)
+    assert confirms == 1
+    # Ohne Plan bleibt WRITE_LOCAL ohne Rückfrage.
+    plain = Script("", calls_per_step=1)
+    service = build_service(settings, AuditLog(settings.audit_db_path), plain.model(), "test")
+    events = [e async for e in service.stream("Eintrag", channel="cli")]
+    assert not any(isinstance(e, ConfirmRequested) for e in events)
+
+
+async def test_simulation_leaves_web_search_out(tmp_path: Path) -> None:
+    assert "web_search" in NO_SIMULATION
+    _, service = _service(tmp_path, Script("").model())
+    async with service.hub:
+        assert {i.name for i in service.hub.read_only_infos()} == {"get_weather"}

@@ -404,22 +404,27 @@ class ChatService:
             return self._model
         tier = choose_tier(message, selection.best if selection else None, self._tool_match)
         model, name = self._fast if tier == FAST else (self._model, self.model_name)
-        if tier == FAST:
-            self.hub.select_tools(frozenset())  # keine Werkzeuge nötig: Kontext sparen
         routed[0] = name
         queue.put_nowait(Progress("route", f"{tier}: {name}"))
         return model
 
-    async def _select_tools(self, message: str, session_id: str | None) -> Selection | None:
+    async def _select_tools(
+        self, message: str, session_id: str | None, read_only: bool = False
+    ) -> Selection | None:
         """Werkzeugauswahl (M1.4). Eine kurze Folgefrage ("und morgen?") wird mit der Frage davor
-        bewertet, sonst fände sie das Werkzeug der ersten Frage nicht mehr."""
-        if self._selector is None:
-            return None
-        query = message
-        if session_id and len(message) < FOLLOW_UP_CHARS:
-            query = f"{self.sessions.last_user_text(session_id)}\n{message}".strip()
-        selection = await self._selector.choose(self.hub.list_tools(), query)
-        self.hub.select_tools(selection.names if selection else None)
+        bewertet, sonst fände sie das Werkzeug der ersten Frage nicht mehr. `read_only`
+        (Simulationen): nur unter den lesenden Werkzeugen wählen."""
+        infos = self.hub.read_only_infos() if read_only else self.hub.list_tools()
+        selection = None
+        if self._selector is not None:
+            query = message
+            if session_id and len(message) < FOLLOW_UP_CHARS:
+                query = f"{self.sessions.last_user_text(session_id)}\n{message}".strip()
+            selection = await self._selector.choose(infos, query)
+        if selection is not None:
+            self.hub.select_tools(selection.names)
+        else:  # ohne Bewertung: alles anbieten, bei Simulationen alles Lesende
+            self.hub.select_tools(frozenset(i.name for i in infos) if read_only else None)
         return selection
 
     async def _run_plan(
@@ -441,8 +446,9 @@ class ChatService:
         limits = UsageLimits(request_limit=MAX_MODEL_REQUESTS)
         base = system_prompt(home=self.home, address=self.address)
         if request.simulation:
-            self.hub.select_read_only()
             base += "\n" + planner.SIMULATION_INSTRUCTIONS
+        # Ergebnisse früherer Schritte können Fremdinhalt tragen: auch lokales Schreiben fragt nach.
+        self.hub.confirm_local_writes = True
         planning: Agent[None, str] = Agent(self._model, instructions=planner.PLAN_INSTRUCTIONS)
         plan_result = await planning.run(request.task, usage_limits=limits)
         count(plan_result)
@@ -454,24 +460,46 @@ class ChatService:
         done: list[str] = []
         for index, step in enumerate(steps):
             queue.put_nowait(Progress("step", f"{index + 1}/{len(steps)}: {step}"))
+            # Werkzeuge je Schritt neu wählen: der Schritt braucht oft andere als der Gesamtauftrag.
+            await self._select_tools(f"{request.task}\n{step}", None, request.simulation)
+            instructions = f"{base}\n{planner.STEP_INSTRUCTIONS}"
+            max_result = self._result_budget(instructions, request.task, steps, queue, index == 0)
             agent: Agent[None, str] = Agent(
-                self._model,
-                instructions=f"{base}\n{planner.STEP_INSTRUCTIONS}",
-                toolsets=self.hub.toolsets,
+                self._model, instructions=instructions, toolsets=self.hub.toolsets
             )
             result = await agent.run(
-                planner.step_message(request.task, steps, done, index),
+                planner.step_message(request.task, steps, done, index, max_result),
                 event_stream_handler=on_events,
                 usage_limits=limits,
             )
             count(result)
             done.append(result.output)
         checker: Agent[None, str] = Agent(self._model, instructions=planner.CHECK_INSTRUCTIONS)
-        check = await checker.run(planner.check_message(request.task, done), usage_limits=limits)
+        check = await checker.run(
+            planner.check_message(request.task, done, planner.MAX_RESULT_CHARS // 2),
+            usage_limits=limits,
+        )
         count(check)
         queue.put_nowait(Progress("check", check.output.strip()))
         if request.simulation:
             queue.put_nowait(TextDelta("\n\n" + planner.SIMULATION_NOTE))
+
+    def _result_budget(
+        self,
+        instructions: str,
+        task: str,
+        steps: list[str],
+        queue: asyncio.Queue[StreamEvent | BaseException | None],
+        warn: bool,
+    ) -> int:
+        """Zeichen je Ergebnis früherer Schritte, damit ein Schritt ins Kontextfenster passt
+        (sonst kürzt Ollama still von vorn und verliert zuerst die Anweisungen)."""
+        free = (self.context_tokens - ANSWER_RESERVE_TOKENS) * CHARS_PER_TOKEN - (
+            len(instructions) + self.hub.prompt_chars + len(task) + sum(map(len, steps))
+        )
+        if free < 0 and warn:
+            queue.put_nowait(Notice(CONTEXT_WARNING.format(tokens=self.context_tokens)))
+        return max(100, min(planner.MAX_RESULT_CHARS, free // (planner.MAX_STEPS + 1)))
 
     async def _run(
         self,
@@ -509,14 +537,12 @@ class ChatService:
             async with self._turn(queue), self.hub:
                 for failure in self.hub.failures:
                     queue.put_nowait(Notice(failure))
-                selection = await self._select_tools(message, session_id)
                 request = planner.parse_request(message)
-                if (
-                    request is not None
-                ):  # Plan oder Simulation (M1.3, M1.15): immer das starke Modell
+                if request is not None:  # Plan oder Simulation (M1.3, M1.15): starkes Modell
                     await self._run_plan(request, queue, on_events, usage)
                     queue.put_nowait(None)
                     return
+                selection = await self._select_tools(message, session_id)
                 model = self._route(selection, message, queue, routed)
                 # `instructions` statt `system_prompt`: gilt je Anfrage neu (aktuelles Datum) und
                 # landet nicht im gespeicherten Verlauf.

@@ -37,6 +37,8 @@ _MAX_PREVIEW_LENGTH = 300
 # Ein vom Modell erfundener Werkzeugname ist Modellausgabe und könnte Gesprächsinhalt tragen.
 _PLAIN_NAME = re.compile(r"[A-Za-z0-9_.-]{1,80}")
 INVALID_TOOL_NAME = "<ungültiger Name>"
+# Werkzeuge, die in Simulationen nie angeboten werden: ihre Suchbegriffe gehen ins Netz.
+NO_SIMULATION = frozenset({"web_search"})
 TOOL_TIMEOUT_MESSAGE = "Das Werkzeug hat nicht rechtzeitig geantwortet. Es liegt kein Ergebnis vor."
 
 
@@ -131,6 +133,9 @@ class McpHub:
         self._infos: list[ToolInfo] = []
         # Auswahl je Anfrage (M1.4): None = alle deklarierten und verbundenen Werkzeuge.
         self._selected: frozenset[str] | None = None
+        # Planläufe (M1.3): auch lokales Schreiben (Notizen, Gedächtnis) braucht Rückfrage, weil
+        # Werkzeugergebnisse früherer Schritte Fremdinhalt tragen können.
+        self.confirm_local_writes = False
         self.failures: list[str] = []
         self.tool_timeout = TOOL_TIMEOUT_SECONDS
 
@@ -168,9 +173,10 @@ class McpHub:
 
         return [only_declared(server, ts) for server, ts in self._connected.items()]
 
-    def select_read_only(self) -> None:
-        """Nur lesende Werkzeuge anbieten (Simulationen ändern nichts)."""
-        self.select_tools(frozenset(i.name for i in self._infos if i.risk == RiskClass.READ))
+    def read_only_infos(self) -> list[ToolInfo]:
+        """Lesende Werkzeuge ohne Netzzugriff nach außen mit privaten Suchbegriffen (Simulationen
+        ändern nichts und schicken keine privaten Daten in eine Suche)."""
+        return [i for i in self._infos if i.risk == RiskClass.READ and i.name not in NO_SIMULATION]
 
     async def __aenter__(self) -> Self:
         if self._running is not None:
@@ -179,6 +185,7 @@ class McpHub:
         self._running = []
         self._stop = asyncio.Event()
         self._selected = None
+        self.confirm_local_writes = False
         self.failures = []
         try:
             # Alle Server gleichzeitig starten (sonst summieren sich die Startzeiten je Anfrage).
@@ -259,6 +266,7 @@ class McpHub:
         self._connected = {}
         self._infos = []
         self._selected = None
+        self.confirm_local_writes = False
         if running is None:
             return
         self._stop.set()
@@ -333,10 +341,19 @@ class McpHub:
     ) -> Any:
         risk = self._risk(server, name)
         channel = current_channel.get()
-        if risk is None:  # nicht deklariert -> nie ausführen
-            self._record(channel, name, "UNKNOWN", Decision.DENY, "blocked")
+        if risk is None or (self._selected is not None and name not in self._selected):
+            # nicht deklariert oder für diese Anfrage nicht angeboten -> nie ausführen
+            self._record(
+                channel, name, "UNKNOWN" if risk is None else risk, Decision.DENY, "blocked"
+            )
             return DENY_MESSAGE
         decision = decide(risk, PolicyContext(channel=channel))
+        if (
+            decision is Decision.ALLOW
+            and risk is RiskClass.WRITE_LOCAL
+            and self.confirm_local_writes
+        ):
+            decision = Decision.CONFIRM
         if decision is Decision.DENY:
             self._record(channel, name, risk, decision, "blocked")
             return DENY_MESSAGE

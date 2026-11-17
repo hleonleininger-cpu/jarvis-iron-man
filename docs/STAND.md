@@ -11,6 +11,7 @@ Was er kann:
 - Websuche: DuckDuckGo, ohne Konto. Nur der Suchbegriff geht raus.
 - Ideen, Aufträge, Entwürfe: lokal, für Nebeneinkünfte. Aufträge mit Frist, Betrag und Summen, Entwürfe als Textdateien.
 - Gedächtnis (M1, in Arbeit): JARVIS merkt sich Ausdrückliches über Neustarts hinweg (Stichwortsuche), vergisst nach Rückfrage und führt ein Tagesjournal. Anrede "Master", Optionen mit Risiko, Kennzeichnung der Herkunft von Aussagen.
+- Router und Planer (M1, Block C): Werkzeugauswahl per Embedding (`tool_select_limit`), zwei Modelle (`model_fast`/`model_strong`), `/plan <Auftrag>` mit Schrittliste und Selbstprüfung, `/simulation <Frage>` mit nur lesenden Werkzeugen. Alles aus, bis es in jarvis.toml eingeschaltet wird.
 - Notion: lesen, und neue Einträge anlegen mit Rückfrage. Ändern und Löschen gibt es im Code nicht.
 - Not-Aus: roter Knopf und Strg+. in der Web-Oberfläche, `jarvis stop` in der Eingabeaufforderung. Bricht alle laufenden und wartenden Anfragen, offene Rückfragen und Werkzeuge ab; ein hängender Server wird beendet.
 - Autostart: `jarvis autostart an` startet JARVIS bei jeder Windows-Anmeldung.

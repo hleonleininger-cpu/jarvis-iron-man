@@ -19,10 +19,10 @@ Markierungen:
 - [~] M0.10 Ollama-Start mit OLLAMA_CONTEXT_LENGTH=8192 automatisch sicherstellen oder beim Start prüfen und warnen (gebaut: `jarvis serve` und `jarvis chat` prüfen beim Start und warnen. Beleg: core/tests/test_config.py. Ollama wird nicht von JARVIS gestartet)
 
 ## M1 – Gehirn und Gedächtnis
-- [ ] M1.1 Modell-Router: kleines Modell für Schnelles, großes für Schweres
+- [~] M1.1 Modell-Router: kleines Modell für Schnelles, großes für Schweres (gebaut: `model_fast`/`model_strong` in jarvis.toml, Regel in agent/router.py, Wahl als Stream-Ereignis und im Audit (nur Modellname). Ohne `model_fast` keine Änderung. Beleg: core/tests/test_router.py, ADR-020. Schwelle nur mit echtem Embedding-Modell prüfbar)
 - [ ] M1.2 Orchestrator mit Sub-Agenten für parallele Aufgaben
-- [ ] M1.3 Aufgabenplaner: zerlegt mehrstufige Aufträge, arbeitet sie ab, prüft das Ergebnis selbst
-- [ ] M1.4 Werkzeugauswahl per Embedding, damit viele Werkzeuge kleine Modelle nicht überfordern
+- [~] M1.3 Aufgabenplaner: zerlegt mehrstufige Aufträge, arbeitet sie ab, prüft das Ergebnis selbst (gebaut: `/plan <Auftrag>` in Chat, Web und CLI; Plan, Schritte und Selbstprüfung als Fortschritt im Stream; Not-Aus, Anfrage-Limit und Rückfragen je Schritt. Beleg: agent/planner.py, core/tests/test_planner.py, ADR-020. Wie gut kleine Modelle Pläne schreiben, nur mit echtem Modell prüfbar)
+- [~] M1.4 Werkzeugauswahl per Embedding, damit viele Werkzeuge kleine Modelle nicht überfordern (gebaut: `tool_select_limit` in jarvis.toml, mcp_hub/select.py; Policy und Rückfrage unverändert, Ausweichweg auf alle Werkzeuge. Beleg: core/tests/test_tool_select.py, ADR-020)
 - [~] M1.5 Kern läuft vollständig lokal
 - [ ] M1.6 Cloud-Stufe nur nach Freigabe pro Aufgabe und nie mit privaten Daten (bisher gibt es keine Cloud-Modelle)
 - [~] M1.7 Langzeitgedächtnis (SQLite + sqlite-vec + Markdown). Heute liegt der Gesprächsverlauf nur im Arbeitsspeicher (gebaut: SQLite-Speicher mit remember/recall/list_memories/forget, Suche, ab M1.8 semantisch mit sqlite-vec. Beleg: docs/adr/ADR-019-langzeitgedaechtnis.md, core/tests/test_memory_server.py)
@@ -33,7 +33,7 @@ Markierungen:
 - [~] M1.12 Gedächtnispflege: Veraltetes aufräumen, Dateien indexieren (`jarvis memory-pflege` und beim Start von `jarvis serve`: Dubletten, fehlende Embeddings, Vault/Notizen. Beleg: core/tests/test_memory_server.py, test_config.py)
 - [~] M1.13 Persona: Anrede "Master", trockener Humor, höflicher Widerspruch, Warnung bei schlechten Ideen (gebaut: Systemprompt PERSONA in agent/service.py, Anrede einstellbar über `anrede` in jarvis.toml; Test tests/test_agent_tools.py; Wirkung mit echtem Modell nur von Master prüfbar; Eval persona-address) (gebaut: Systemprompt PERSONA in agent/service.py, Anrede einstellbar über `anrede` in jarvis.toml; Test tests/test_agent_tools.py; Wirkung mit echtem Modell nur von Master prüfbar; Eval persona-address)
 - [~] M1.14 Optionen mit Einschätzung: bei Entscheidungen zwei bis drei Wege samt Risiko (Systemprompt, agent/service.py; Wirkung mit echtem Modell nur von Master prüfbar; Eval persona-options)
-- [ ] M1.15 Simulationen: "Was passiert, wenn …" für Lern- und Wochenpläne
+- [~] M1.15 Simulationen: "Was passiert, wenn …" für Lern- und Wochenpläne (gebaut: `/simulation <Frage>`, nur lesende Werkzeuge, Ergebnis als Einschätzung gekennzeichnet. Beleg: core/tests/test_planner.py, ADR-020)
 - [~] M1.16 Ehrlichkeit: unterscheidet Live-Daten, Gespeichertes und eigene Schlüsse, erfindet nichts (gebaut: Systemprompt HONESTY trennt aktuelle Daten, 'gespeichert' und 'meine Einschätzung'; Wirkung mit echtem Modell nur von Master prüfbar; Eval honesty-unknown)
 
 ## M2 – Stimme

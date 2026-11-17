@@ -83,3 +83,13 @@ async def test_small_talk_is_routed_fast_without_tools(tmp_path: Path) -> None:
     assert not any(isinstance(e, ToolUsed) for e in events)
     assert "".join(e.text for e in events if isinstance(e, TextDelta)) == "Hallo, Master."
     assert _models(settings) == ["klein"]
+
+
+async def test_fast_model_still_gets_the_tools(tmp_path: Path) -> None:
+    """Eine falsch als "kein Werkzeug" eingestufte Frage darf nicht werkzeuglos beantwortet werden."""
+    _, service = _service(tmp_path, fast=True)
+    fast = TestModel(call_tools=[], custom_output_text="ok")
+    service._fast = (fast, "klein")  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
+    [e async for e in service.stream("Hallo", channel="cli")]
+    assert fast.last_model_request_parameters is not None
+    assert {t.name for t in fast.last_model_request_parameters.function_tools} == {"get_weather"}
