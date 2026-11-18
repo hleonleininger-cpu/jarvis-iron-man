@@ -96,6 +96,12 @@ CONTEXT_WARNING = (
 # Höchstens so viele Anfragen warten hinter der laufenden; weitere werden sofort abgewiesen,
 # statt sich unbegrenzt anzustauen.
 MAX_WAITING = 3
+# Zusatz im Systemprompt für den Kanal "voice": die Antwort wird vorgelesen.
+VOICE_STYLE = (
+    "Deine Antwort wird vorgelesen: höchstens drei kurze Sätze, keine Listen, kein Markdown, "
+    "keine Links, Zahlen und Uhrzeiten so schreiben, wie man sie spricht. Gibt es mehr zu sagen, "
+    "biete an, es aufzuschreiben."
+)
 FOLLOW_UP_CHARS = 80  # kürzere Fragen gelten als Folgefrage zur vorigen
 EMERGENCY_STOP_MESSAGE = "Not-Aus: Die Anfrage wurde abgebrochen."
 EMERGENCY_STOP_TOOL = "emergency_stop"  # Name des Audit-Eintrags (kein Werkzeug des Modells)
@@ -157,6 +163,7 @@ class ConfirmRequested:
     tool: str
     preview: str
     question: str
+    risk: str = ""
 
 
 @dataclass(frozen=True)
@@ -272,6 +279,18 @@ class ChatService:
         self._stopped: set[asyncio.Task[None]] = set()
         self.stop_count = 0  # zählt Not-Aus-Auslösungen (siehe `stream`, Parameter accepted_at)
 
+    def _prompt(self) -> str:
+        """Systemanweisung der Anfrage; über Sprache gelten zusätzlich die Sprech-Regeln."""
+        text = system_prompt(home=self.home, address=self.address)
+        return f"{text}\n{VOICE_STYLE}" if current_channel.get() == "voice" else text
+
+    def record_event(self, channel: str, tool: str, risk: str, decision: str, status: str) -> None:
+        """Ein Ereignis ohne Inhalt ins Audit (z. B. Diktiermodus an/aus im Sprachclient)."""
+        self._audit.record_tool_call(
+            channel=channel, model=self.model_name, tool=tool, risk=risk,
+            decision=decision, status=status,
+        )  # fmt: skip
+
     def emergency_stop(self, channel: str = "system") -> int:
         """Not-Aus (ADR-018): bricht ALLE laufenden und wartenden Anfragen sofort ab, beantwortet
         offene Rückfragen mit Nein und beendet damit auch die Werkzeug-Server der Anfrage.
@@ -325,11 +344,14 @@ class ChatService:
 
         def emit(request: ConfirmRequest) -> None:
             queue.put_nowait(
-                ConfirmRequested(request.id, request.tool, request.preview, request.question)
+                ConfirmRequested(
+                    request.id, request.tool, request.preview, request.question, request.risk
+                )
             )
 
         async def confirmer(tool: str, preview: str, question: str) -> bool:
-            answer = await self.broker.ask(tool, preview, question, emit)
+            risk = "EXTERNAL_COMMUNICATION" if tool == cloud.CLOUD_TOOL else self.hub.risk_of(tool)
+            answer = await self.broker.ask(tool, preview, question, emit, risk)
             # Feste Meldung, unabhängig davon, was das Modell danach sagt.
             if answer is None:
                 queue.put_nowait(
@@ -480,7 +502,7 @@ class ChatService:
         for names in subsets:
             union = None if names is None or union is None else union | names
         self.hub.select_tools(union)
-        base = system_prompt(home=self.home, address=self.address)
+        base = self._prompt()
 
         async def run_one(index: int, sub: subagents.SubTask) -> str:
             queue.put_nowait(Progress("agent", f"{index + 1}/{len(subtasks)} startet: {sub.title}"))
@@ -590,7 +612,7 @@ class ChatService:
             usage[0] = total or None
 
         limits = UsageLimits(request_limit=MAX_MODEL_REQUESTS)
-        base = system_prompt(home=self.home, address=self.address)
+        base = self._prompt()
         if request.simulation:
             base += "\n" + planner.SIMULATION_INSTRUCTIONS
         # Ergebnisse früherer Schritte können Fremdinhalt tragen: auch lokales Schreiben fragt nach.
@@ -717,7 +739,7 @@ class ChatService:
                 model = self._route(selection, message, queue, routed)
                 # `instructions` statt `system_prompt`: gilt je Anfrage neu (aktuelles Datum) und
                 # landet nicht im gespeicherten Verlauf.
-                instructions = system_prompt(home=self.home, address=self.address)
+                instructions = self._prompt()
                 agent: Agent[None, str] = Agent(
                     model, instructions=instructions, toolsets=self.hub.toolsets
                 )

@@ -39,6 +39,15 @@ context_tokens = 8192
 # model = "modellname"
 # base_url = "https://api.example.com/v1"
 
+# Sprachclient (M2, ADR-023; Befehl `jarvis voice ...`, Pakete mit `uv sync --extra voice`).
+# Standardmäßig aus. Unterbrechen per Stimme ("voice") nur mit Kopfhörern sinnvoll.
+# [voice]
+# enabled = true
+# language = "auto"        # auto, de oder en
+# follow_up_seconds = 8    # Folgefrage ohne Wake Word
+# barge_in = "key"         # off, key (Tastenkürzel) oder voice
+# confirm_by_voice = false # nur WRITE_REVERSIBLE und nur mit Sprecherprüfung
+
 [mcp_servers.weather]
 command = "python"
 args = ["-m", "mcp_servers.weather"]

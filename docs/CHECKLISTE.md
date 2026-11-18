@@ -40,14 +40,14 @@ Markierungen:
 - [ ] M2.1 Wake Word "Hey Jarvis", lokal (openWakeWord)
 - [ ] M2.2 Spracheingabe lokal (faster-whisper)
 - [ ] M2.3 Sprachausgabe lokal (Piper), britischer Butler-Ton, keine Kopie einer echten Stimme
-- [ ] M2.4 Sprechpausen-Erkennung (Silero VAD, Smart Turn) über Pipecat
-- [ ] M2.5 Unterbrechen mitten im Satz
-- [ ] M2.6 Folgefragen ohne erneutes Wake Word
+- [ ] M2.4 Sprechpausen-Erkennung (Silero VAD, Smart Turn) über Pipecat (OFFEN: wartet auf Masters Entscheidung, ob Pipecat-Bausteine oder direktes ONNX, siehe docs/PLAN-M2.md Abschnitt 10; bis dahin nur ein Platzhalter für das Satzende)
+- [~] M2.5 Unterbrechen mitten im Satz (gebaut: Gesprächslogik im Paket jarvis_voice, getestet mit Attrappen in core/tests/test_voice_session.py; am echten Mikrofon erst mit Block B prüfbar. ADR-023)
+- [~] M2.6 Folgefragen ohne erneutes Wake Word (gebaut: Gesprächslogik im Paket jarvis_voice, getestet mit Attrappen in core/tests/test_voice_session.py; am echten Mikrofon erst mit Block B prüfbar. ADR-023)
 - [ ] M2.7 Deutsch und Englisch automatisch
-- [ ] M2.8 Echo-Schutz: reagiert nicht auf die eigene Stimme
+- [~] M2.8 Echo-Schutz: reagiert nicht auf die eigene Stimme (gebaut: Stufe 1, halbduplex mit Pegelvergleich; echte Echounterdrückung ist Folgearbeit, bei Lautsprechern kann Unterbrechen per Stimme unzuverlässig sein; Beleg: test_voice_parts.py, test_voice_session.py; ADR-023)
 - [ ] M2.9 Stimmerkennung: hört nur auf Master
 - [ ] M2.10 Wake Word mitten im Satz, versteht das kurze Gespräch davor (nur lokal, nur wenige Sekunden)
-- [ ] M2.11 Schlafmodus ("Gute Nacht, Jarvis") und Flüstermodus
+- [~] M2.11 Schlafmodus ("Gute Nacht, Jarvis") und Flüstermodus (gebaut: Gesprächslogik im Paket jarvis_voice, getestet mit Attrappen in core/tests/test_voice_session.py; am echten Mikrofon erst mit Block B prüfbar. ADR-023)
 - [ ] M2.12 Diktiermodus in jedes Textfeld
 - [ ] M2.13 Start per Tastenkürzel oder Doppelklatschen
 

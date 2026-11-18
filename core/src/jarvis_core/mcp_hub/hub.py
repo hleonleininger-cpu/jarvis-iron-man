@@ -144,6 +144,13 @@ class McpHub:
         cfg = self._servers.get(server)
         return cfg.tools.get(tool) if cfg is not None else None
 
+    def risk_of(self, tool: str) -> str:
+        """Risikoklasse eines deklarierten Werkzeugs aus jarvis.toml; leer, wenn unbekannt."""
+        for cfg in self._servers.values():
+            if tool in cfg.tools:
+                return str(cfg.tools[tool])
+        return ""
+
     @property
     def offered_tools(self) -> frozenset[str]:
         """Werkzeuge, die dem Modell angeboten werden (deklariert, verbunden, gewählt)."""

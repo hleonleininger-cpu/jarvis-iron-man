@@ -13,6 +13,7 @@ Was er kann:
 - Gedächtnis (M1, in Arbeit): JARVIS merkt sich Ausdrückliches über Neustarts hinweg (Stichwortsuche), vergisst nach Rückfrage und führt ein Tagesjournal. Anrede "Master", Optionen mit Risiko, Kennzeichnung der Herkunft von Aussagen.
 - Router und Planer (M1, Block C): Werkzeugauswahl per Embedding (`tool_select_limit`), zwei Modelle (`model_fast`/`model_strong`), `/plan <Auftrag>` mit Schrittliste und Selbstprüfung, `/simulation <Frage>` mit nur lesenden Werkzeugen. Alles aus, bis es in jarvis.toml eingeschaltet wird.
 - Sub-Agenten und Cloud-Stufe (M1, Block D): `/team <Auftrag>` zerlegt in unabhängige Teilaufgaben mit eigenem Kontext und Werkzeug-Teilset. Die Cloud-Stufe ist nur ein abgeschaltetes Gerüst (`/cloud`, Freigabe je Frage, nie mit privaten Daten); es gibt keinen Anbieter und keinen Schlüssel.
+- Stimme (M2, Block A): Gesprächslogik des Sprachclients (Paket `jarvis_voice`, `jarvis voice status|text`): Folgefragen, Unterbrechen, Schlaf- und Flüstermodus, Echo-Schutz Stufe 1, Rückfragen am Handy über `/v1/events`. Mikrofon, Wake Word, Spracherkennung und Sprachausgabe folgen mit Block B und sind nur an Masters PC prüfbar.
 - Notion: lesen, und neue Einträge anlegen mit Rückfrage. Ändern und Löschen gibt es im Code nicht.
 - Not-Aus: roter Knopf und Strg+. in der Web-Oberfläche, `jarvis stop` in der Eingabeaufforderung. Bricht alle laufenden und wartenden Anfragen, offene Rückfragen und Werkzeuge ab; ein hängender Server wird beendet.
 - Autostart: `jarvis autostart an` startet JARVIS bei jeder Windows-Anmeldung.

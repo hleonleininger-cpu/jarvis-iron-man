@@ -1,0 +1,43 @@
+# ADR-023: Sprachclient
+
+**Status:** akzeptiert (Block A; Engines und Zusätze folgen). Plan: `docs/PLAN-M2.md`.
+
+## Kontext
+M2 (Stimme) soll "Hey Jarvis" freihändig, mit Unterbrechen und Folgefragen bieten, lokal und
+ohne Kosten. Der Core ist ein Server; Mikrofon und Lautsprecher gehören auf den PC des Nutzers.
+
+## Entscheidung
+- **Dünner Client:** Das Paket `jarvis_voice` (Befehl `jarvis voice ...`) spricht nur über die
+  HTTP-Schnittstelle mit dem Core (`/v1/chat`, `/v1/confirm`, `/v1/stop`). Die Core-Adresse muss
+  wie `ollama_base_url` auf diesen Rechner, das Heimnetz oder das Tailnet zeigen.
+- **Austauschbare Teile:** Wake Word, Spracherkennung, Sprachausgabe, VAD, Satzende, Sprecher,
+  Audio-Ein-/Ausgabe sind Protokolle (`protocols.py`). Die Gesprächslogik (`session.py`) kennt nur
+  diese und ist mit Attrappen vollständig testbar; echte Engines kommen als Adapter.
+- **Optionale Pakete:** Die schweren Sprachpakete stehen in der Gruppe `voice`
+  (`uv sync --extra voice`), nicht im Kern. Die Windows-CI prüft, dass sie installierbar sind.
+- **Kanal `voice`:** `/v1/chat` nimmt `voice: true`. Dann gilt der Audit-Kanal `voice`, und der
+  Systemprompt verlangt kurze, vorlesbare Antworten. Der Kanal `voice` ist von der Cloud-Stufe
+  ausgeschlossen (fremdes Audio kann Befehle tragen).
+- **Rückfragen:** Das Ereignis `confirm` trägt die Risikoklasse. Eine Zusage mit `via: "voice"`
+  nimmt der Core nur bei `WRITE_REVERSIBLE` an (sonst 403); ein Nein ist über jeden Weg erlaubt.
+  Der Client bestätigt per Stimme nur mit eingeschaltetem `confirm_by_voice`, laufender
+  Sprecherprüfung und der festen Phrase "Ja, bestätigt" im Zeitfenster. Alles andere bleibt auf dem
+  Bildschirm oder am Handy offen: offene Rückfragen kommen über `/v1/events` an alle verbundenen
+  Clients (neue Ereignisse `confirm` und `confirm_done`).
+- **Mikrofon sichtbar und abschaltbar:** Der Client zeigt jeden Zustand (Konsole), im Schlafmodus
+  ("Gute Nacht") wird der Mikrofon-Strom geschlossen, nicht nur ignoriert; nur das Tastenkürzel
+  weckt. "Stopp" und der Not-Aus des Cores beenden das Sprechen.
+- **Datenschutz:** Aufnahmen bleiben im Arbeitsspeicher, nichts davon wird auf die Platte
+  geschrieben. Audit und Logs enthalten nie Transkripte, nur Zustände und Zeiten. Der Diktiermodus
+  (Block C) meldet nur Start und Ende an `POST /v1/voice/event`.
+- **Unterbrechen:** Standard ist nur per Tastenkürzel oder "Stopp". Unterbrechen per Stimme
+  (`barge_in = "voice"`) ist für Kopfhörer gedacht; der Echo-Schutz (Stufe 1, halbduplex) verlangt,
+  dass Sprache deutlich lauter ist als die eigene Wiedergabe. Echte Echounterdrückung ist Folgearbeit.
+- **Platzhalter statt M2.4-Engine:** Bis Master die Pipecat-Frage entschieden hat, erkennt ein
+  einfacher Pegel-Erkenner das Satzende. Er ersetzt M2.4 nicht.
+
+## Folgen
+- Der Core ändert sich nur im Rahmen dieser Datei (Kanal, Risikoklasse, `/v1/events`); ohne
+  Sprachclient verhält er sich wie bisher.
+- Lizenzen der Engines (Piper GPL-3, openWakeWord-Modelle CC BY-NC-SA, Stimmen) werden mit Block B
+  in diesem ADR ergänzt; nur privater, lokaler Gebrauch.

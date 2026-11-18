@@ -3,7 +3,7 @@
 import ipaddress
 import os
 from pathlib import Path
-from typing import Self
+from typing import Literal, Self
 from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -115,6 +115,45 @@ class CloudConfig(BaseModel):
         return self.enabled and bool(self.provider and self.model and self.base_url)
 
 
+class VoiceConfig(BaseModel):
+    """Abschnitt `[voice]` in jarvis.toml (M2, ADR-023). Der Sprachclient ist standardmäßig aus."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    # Adresse des Cores; wie ollama_base_url nur eigener Rechner, Heimnetz oder Tailnet.
+    core_url: str = "http://127.0.0.1:8765"
+    language: Literal["auto", "de", "en"] = "auto"
+    # Sprechpausen: so lange Stille beendet einen Satz (nur der Platzhalter-Erkenner; M2.4).
+    end_silence_seconds: float = Field(default=0.8, ge=0.2, le=3.0)
+    listen_timeout_seconds: float = Field(default=6.0, ge=1.0, le=30.0)
+    max_utterance_seconds: float = Field(default=30.0, ge=5.0, le=120.0)
+    # Folgefragen ohne Wake Word: so lange bleibt das Mikrofon nach der Antwort offen.
+    follow_up_seconds: float = Field(default=8.0, ge=0.0, le=60.0)
+    # Unterbrechen: "off" gar nicht, "key" nur per Tastenkürzel, "voice" per Stimme (Kopfhörer).
+    barge_in: Literal["off", "key", "voice"] = "key"
+    # Per Stimme bestätigen (nur WRITE_REVERSIBLE, nur mit Sprecherprüfung; ADR-023).
+    confirm_by_voice: bool = False
+    # Geräte (Name oder Teil davon); None = Standardgerät.
+    mic_device: str | None = None
+    speaker_device: str | None = None
+    models_dir: Path = Path("voice")
+    stt_model: str = "base"
+    tts_voice_de: str = "de_DE-thorsten-medium"
+    tts_voice_en: str = "en_GB-northern_english_male-medium"
+
+    @field_validator("core_url")
+    @classmethod
+    def _local_core(cls, value: str) -> str:
+        if not value.startswith(("http://", "https://")):
+            raise ValueError("voice.core_url muss mit http:// oder https:// beginnen.")
+        if not is_private_host(urlsplit(value).hostname or ""):
+            raise ValueError(
+                "voice.core_url muss auf diesen Rechner, das Heimnetz oder das Tailnet zeigen."
+            )
+        return value.rstrip("/")
+
+
 class ConfigFileMissing(Exception):
     """Die über JARVIS_CONFIG genannte Datei fehlt (deutsche Meldung)."""
 
@@ -157,6 +196,8 @@ class Settings(BaseSettings):
     anrede: str = Field(default="Master", min_length=1, max_length=40)
     # Cloud-Stufe (M1.6, ADR-021): ein abgeschaltetes Gerüst, standardmäßig aus und ohne Anbieter.
     cloud: CloudConfig = CloudConfig()
+    # Sprachclient (M2, ADR-023): standardmäßig aus.
+    voice: VoiceConfig = VoiceConfig()
     # Zugangstoken für /v1/* (ADR-011). None = automatisch: Pflicht, sobald host nicht lokal ist.
     require_api_token: bool | None = None
 

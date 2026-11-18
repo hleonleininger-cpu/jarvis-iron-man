@@ -76,8 +76,12 @@ async function call(method, path, body, signal) {
   return response;
 }
 
+const openCards = new Map();  // Rückfrage-ID -> Karte (Anfrage-Strom und /v1/events zeigen dieselbe nur einmal)
+
 function confirmCard(data) {
+  if (openCards.has(data.id)) return;
   const card = element("div", "confirm");
+  openCards.set(data.id, card);
   const text = document.createElement("p");
   text.textContent = data.preview + "\n\n" + data.question;
   const actions = document.createElement("div");
@@ -95,6 +99,17 @@ function confirmCard(data) {
     actions.appendChild(button);
   }
   card.append(text, actions);
+}
+
+function closeCard(data) {
+  const card = openCards.get(data.id);
+  openCards.delete(data.id);
+  if (card && !card.querySelector("button:disabled")) {  // noch unbeantwortet: erledigt anderswo
+    for (const b of card.querySelectorAll("button")) b.disabled = true;
+    const note = document.createElement("p");
+    note.textContent = data.approved === null ? "(Zeit abgelaufen)" : "(anderswo beantwortet)";
+    card.appendChild(note);
+  }
 }
 
 function handle(event, data, state) {
@@ -206,6 +221,8 @@ async function listenReminders() {
       await readEvents(response, (event, data) => {
         if (event === "ready") active = data.erinnerungen;
         else if (event === "reminder") showReminder(data);
+        else if (event === "confirm") confirmCard(data);  // Rückfrage von einem anderen Gerät
+        else if (event === "confirm_done") closeCard(data);
       });
       if (!active) return;  // keine Erinnerungen konfiguriert
     } catch (_) { /* Server weg oder neu gestartet */ }

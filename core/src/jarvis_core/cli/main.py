@@ -96,6 +96,24 @@ app.add_typer(evals_app, name="evals")
 secrets_app = typer.Typer(help="Zugangsdaten im OS-Schlüsselbund", no_args_is_help=True)
 app.add_typer(secrets_app, name="secrets")
 app.add_typer(tools_app, name="tools")
+voice_app = typer.Typer(help="Sprachsteuerung (M2)", no_args_is_help=True)
+app.add_typer(voice_app, name="voice")
+
+
+@voice_app.command("status")
+def voice_status() -> None:
+    """Zeigt Einstellungen, Erreichbarkeit des Cores und die installierten Sprachpakete."""
+    from jarvis_voice import cli as voice_cli
+
+    voice_cli.status(_settings(INTERACTIVE_LOG_LEVEL))
+
+
+@voice_app.command("text")
+def voice_text() -> None:
+    """Gesprächslogik ohne Mikrofon: eingetippte Zeilen gelten als gesprochen (zum Ausprobieren)."""
+    from jarvis_voice import cli as voice_cli
+
+    voice_cli.text_mode(_settings(INTERACTIVE_LOG_LEVEL))
 
 
 # Interaktive Befehle melden Fehler selbst in Klartext; Warnungen als JSON-Zeile wären doppelt.
@@ -459,7 +477,7 @@ async def _chat(service: ChatService, text: str, session_id: str | None = None) 
                     f"{'' if at_line_start else chr(10)}[{kind}: {_printable(text)}]\n"
                 )
                 at_line_start = True
-            case ConfirmRequested(request_id, _tool, preview, question):
+            case ConfirmRequested(request_id, _tool, preview, question, _risk):
                 sys.stdout.write(f"{'' if at_line_start else chr(10)}{_printable(preview)}\n")
                 at_line_start = True
                 service.broker.resolve(request_id, _ask_yes_no(_printable(question)))

@@ -8,6 +8,7 @@ import json
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
+from typing import Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.responses import Response, StreamingResponse
@@ -30,12 +31,15 @@ from jarvis_core.agent import (
     build_service,
     is_valid_session_id,
 )
+from jarvis_core.agent.confirmation import ConfirmDone, ConfirmRequest
 from jarvis_core.audit import AuditLog
 from jarvis_core.config import Settings
 
 
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=20_000)
+    # Anfrage per Sprache (Kanal "voice", Antwort wird vorgelesen).
+    voice: bool = False
     # Ohne Angabe beginnt ein neues Gespräch; die ID steht im `done`-Ereignis.
     session_id: str | None = Field(default=None, pattern=SESSION_ID_PATTERN)
 
@@ -49,6 +53,15 @@ class ChatRequest(BaseModel):
 
 class ConfirmAnswer(BaseModel):
     approve: bool
+    # Woher die Antwort kommt. Per Stimme wird nur bei WRITE_REVERSIBLE bestätigt (ADR-023);
+    # ein Nein ist über jeden Weg erlaubt.
+    via: Literal["voice"] | None = None
+
+
+class VoiceEvent(BaseModel):
+    """Ereignis des Sprachclients fürs Audit: nur die Art, nie Inhalte."""
+
+    event: Literal["dictation_start", "dictation_end"]
 
 
 # Lebenszeichen während Funkstille (z. B. Rückfrage offen): Clients und Proxys trennen sonst
@@ -167,6 +180,7 @@ def create_app(
                     await task
 
     app = FastAPI(title="JARVIS Core", version=__version__, lifespan=lifespan)
+    app.state.service = service  # für Tests und Werkzeuge, die den laufenden Service brauchen
     # Nur Anfragen an die eigene Adresse annehmen: sonst könnte eine fremde Webseite per
     # DNS-Rebinding im Browser des Nutzers mit dem Core sprechen (ADR-003).
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts(settings.host))
@@ -222,7 +236,10 @@ def create_app(
 
         async def events() -> AsyncIterator[str]:
             stream = service.stream(
-                request.message, channel="api", session_id=session_id, accepted_at=accepted_at
+                request.message,
+                channel="voice" if request.voice else "api",
+                session_id=session_id,
+                accepted_at=accepted_at,
             )
             try:
                 async for event in with_keepalive(stream, keepalive_seconds):
@@ -237,11 +254,11 @@ def create_app(
                             yield _sse("notice", {"message": message})
                         case Progress(kind, text):
                             yield _sse("progress", {"kind": kind, "text": text})
-                        case ConfirmRequested(request_id, tool, preview, question):
+                        case ConfirmRequested(request_id, tool, preview, question, risk):
                             yield _sse(
                                 "confirm",
                                 {"id": request_id, "tool": tool, "preview": preview,
-                                 "question": question},
+                                 "question": question, "risk": risk},
                             )  # fmt: skip
             except ChatError as exc:
                 yield _sse("error", {"message": str(exc)})
@@ -254,6 +271,13 @@ def create_app(
 
     @app.post("/v1/confirm/{request_id}", dependencies=guarded)
     async def confirm(request_id: str, answer: ConfirmAnswer) -> dict[str, str]:  # pyright: ignore[reportUnusedFunction]
+        if answer.approve and answer.via == "voice":
+            risk = service.broker.risk_of(request_id)
+            if risk is not None and risk != "WRITE_REVERSIBLE":
+                raise HTTPException(
+                    status_code=403,
+                    detail="Das lässt sich nicht per Stimme bestätigen, bitte am Bildschirm.",
+                )
         if not service.broker.resolve(request_id, answer.approve):
             raise HTTPException(status_code=404, detail="Unbekannte oder bereits beantwortete ID.")
         return {"status": "ok"}
@@ -263,24 +287,60 @@ def create_app(
         """Not-Aus (ADR-018): bricht alle laufenden und wartenden Anfragen ab."""
         return {"status": "ok", "abgebrochen": service.emergency_stop("api")}
 
+    @app.post("/v1/voice/event", dependencies=guarded)
+    async def voice_event(item: VoiceEvent) -> dict[str, str]:  # pyright: ignore[reportUnusedFunction]
+        """Audit-Eintrag für Dinge, die der Sprachclient ohne Anfrage tut (Diktiermodus)."""
+        service.record_event("voice", f"voice_{item.event}", "WRITE_LOCAL", "ALLOW", "ok")
+        return {"status": "ok"}
+
     @app.get("/v1/events", dependencies=guarded)
     async def events_stream() -> StreamingResponse:  # pyright: ignore[reportUnusedFunction]
-        """Dauerhafter Stream für Meldungen ohne Anfrage (Erinnerungen, ADR-013)."""
+        """Dauerhafter Stream für Meldungen ohne Anfrage: Erinnerungen (ADR-013) und Rückfragen,
+        damit eine offene Rückfrage auch auf einem anderen Gerät (Handy) beantwortet werden kann."""
 
-        async def reminders(queue: asyncio.Queue[Reminder]) -> AsyncGenerator[Reminder]:
-            while True:
-                yield await queue.get()
+        async def merged(
+            reminder_queue: asyncio.Queue[Reminder],
+            confirm_queue: asyncio.Queue[ConfirmRequest | ConfirmDone],
+        ) -> AsyncGenerator[Reminder | ConfirmRequest | ConfirmDone]:
+            waiting_reminder = asyncio.ensure_future(reminder_queue.get())
+            waiting_confirm = asyncio.ensure_future(confirm_queue.get())
+            try:
+                while True:
+                    await asyncio.wait(
+                        {waiting_reminder, waiting_confirm}, return_when=asyncio.FIRST_COMPLETED
+                    )
+                    if waiting_reminder.done():
+                        yield waiting_reminder.result()
+                        waiting_reminder = asyncio.ensure_future(reminder_queue.get())
+                    if waiting_confirm.done():
+                        yield waiting_confirm.result()
+                        waiting_confirm = asyncio.ensure_future(confirm_queue.get())
+            finally:
+                waiting_reminder.cancel()
+                waiting_confirm.cancel()
 
         async def events() -> AsyncIterator[str]:
             yield _sse("ready", {"erinnerungen": watcher.enabled})
-            with watcher.listen() as queue:
-                async for item in with_keepalive(reminders(queue), keepalive_seconds):
+            with watcher.listen() as reminder_queue, service.broker.listen() as confirm_queue:
+                for request in service.broker.open_requests():  # schon offene Rückfragen
+                    confirm_queue.put_nowait(request)
+                async for item in with_keepalive(
+                    merged(reminder_queue, confirm_queue), keepalive_seconds
+                ):
                     if item is None:
                         yield KEEPALIVE
-                    else:
+                    elif isinstance(item, Reminder):
                         yield _sse(
                             "reminder", {"id": item.id, "text": item.text, "zeitpunkt": item.when}
                         )
+                    elif isinstance(item, ConfirmRequest):
+                        yield _sse(
+                            "confirm",
+                            {"id": item.id, "tool": item.tool, "preview": item.preview,
+                             "question": item.question, "risk": item.risk},
+                        )  # fmt: skip
+                    else:
+                        yield _sse("confirm_done", {"id": item.id, "approved": item.approved})
 
         return StreamingResponse(events(), media_type="text/event-stream", headers=SSE_HEADERS)
 
