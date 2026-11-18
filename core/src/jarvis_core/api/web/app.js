@@ -217,14 +217,11 @@ async function listenReminders() {
       }
       if (!response.ok || !response.body) throw new Error("HTTP " + response.status);
       delay = 2000;
-      let active = true;
       await readEvents(response, (event, data) => {
-        if (event === "ready") active = data.erinnerungen;
-        else if (event === "reminder") showReminder(data);
+        if (event === "reminder") showReminder(data);
         else if (event === "confirm") confirmCard(data);  // Rückfrage von einem anderen Gerät
         else if (event === "confirm_done") closeCard(data);
       });
-      if (!active) return;  // keine Erinnerungen konfiguriert
     } catch (_) { /* Server weg oder neu gestartet */ }
     await sleep(delay);
     delay = Math.min(delay * 2, 60000);

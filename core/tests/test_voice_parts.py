@@ -61,7 +61,7 @@ def test_speakable_drops_markdown_and_links() -> None:
     [
         ("Stopp!", Command.STOP),
         ("Jarvis, stopp.", Command.STOP),
-        ("Not-Aus", Command.STOP),
+        ("Not-Aus", Command.EMERGENCY),
         ("Gute Nacht, Jarvis", Command.SLEEP),
         ("Flüstere", Command.WHISPER_ON),
         ("Normal sprechen", Command.WHISPER_OFF),

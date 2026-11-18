@@ -7,7 +7,8 @@ from enum import StrEnum
 
 
 class Command(StrEnum):
-    STOP = "stop"
+    STOP = "stop"  # nur Sprechen und eigene Anfrage beenden
+    EMERGENCY = "emergency"  # Not-Aus des Cores: stoppt alles, auch andere Geräte
     SLEEP = "sleep"
     WHISPER_ON = "whisper_on"
     WHISPER_OFF = "whisper_off"
@@ -18,7 +19,8 @@ class Command(StrEnum):
 
 
 _PHRASES: dict[Command, tuple[str, ...]] = {
-    Command.STOP: ("stopp", "stop", "not aus", "notaus", "halt", "sei still"),
+    Command.STOP: ("stopp", "stop", "halt", "sei still"),
+    Command.EMERGENCY: ("not aus", "notaus", "emergency stop"),
     Command.SLEEP: ("gute nacht", "gute nacht jarvis", "good night"),
     Command.WHISPER_ON: ("flüstere", "flüstern an", "flüstermodus an", "whisper mode on"),
     Command.WHISPER_OFF: (

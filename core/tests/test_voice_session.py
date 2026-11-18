@@ -263,8 +263,15 @@ async def test_fixed_language_overrides_detection() -> None:
 async def test_stop_phrase_interrupts_and_asks_nothing() -> None:
     rig = Rig(stt=FakeStt(("Stopp", "de")))
     await rig.say_something()
-    assert rig.core.asked == [] and rig.core.stops == 1 and rig.sink.stops >= 1
+    # "Stopp" beendet nur das Sprechen und die eigene Anfrage, nicht den Not-Aus des Cores.
+    assert rig.core.asked == [] and rig.core.stops == 0 and rig.sink.stops >= 1
     assert rig.session.state is State.WAITING
+
+
+async def test_emergency_phrase_triggers_the_core_stop() -> None:
+    rig = Rig(stt=FakeStt(("Not-Aus", "de")))
+    await rig.say_something()
+    assert rig.core.stops == 1 and rig.session.state is State.WAITING
 
 
 async def test_good_night_closes_the_microphone_until_woken() -> None:
@@ -320,7 +327,7 @@ async def test_voice_barge_in_stops_speaking_and_listens() -> None:
     rig = await _speaking_rig("voice")
     await rig.frames(*([LOUD] * 5))  # Master spricht deutlich lauter als die Wiedergabe
     await rig.session.wait_idle()
-    assert rig.sink.stops >= 1 and rig.core.stops == 1
+    assert rig.sink.stops == 1 and rig.core.stops == 0  # ein einziges Unterbrechen, lokal
     assert rig.session.state is State.LISTENING
 
 
@@ -335,7 +342,7 @@ async def test_barge_in_by_key_only_by_default() -> None:
     await rig.frames(*([LOUD] * 8))
     assert rig.sink.stops == 0 and rig.session.state is State.SPEAKING
     await rig.session.interrupt()  # Tastenkürzel
-    assert rig.sink.stops == 1 and rig.core.stops == 1 and rig.session.state is State.WAITING
+    assert rig.sink.stops == 1 and rig.core.stops == 0 and rig.session.state is State.WAITING
 
 
 async def test_wake_word_is_ignored_while_speaking() -> None:
@@ -438,7 +445,18 @@ async def test_other_voices_are_ignored_when_the_speaker_check_is_on() -> None:
     assert rig.core.asked == []
 
 
-async def test_no_audio_or_transcript_is_written_to_disk(tmp_path: Path) -> None:
+async def test_no_audio_or_transcript_is_written_to_disk(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import builtins
+
+    real_open = builtins.open
+
+    def guarded_open(file: object, mode: str = "r", *args: object, **kwargs: object) -> object:
+        assert not any(flag in mode for flag in "wax+"), f"Schreibzugriff auf {file!r}"
+        return real_open(file, mode, *args, **kwargs)  # type: ignore[call-overload]
+
+    monkeypatch.setattr(builtins, "open", guarded_open)
     before = set(os.listdir(tmp_path))
     rig = Rig(
         stt=FakeStt(("Streng geheime Frage", "de")),
@@ -457,3 +475,86 @@ async def test_latency_stages_are_recorded_without_content() -> None:
     assert set(stages) == {"aufnahme", "erkennung", "erster_text", "erster_ton"}
     assert set(rig.session.latency()) == set(stages)
     assert all("Frage" not in repr(v) for v in stages.values())
+
+
+# ---------------------------------------------------------------- Prüfrunde-Funde (Block A)
+async def test_external_emergency_stop_does_not_leave_the_session_stuck() -> None:
+    from jarvis_voice.protocols import CoreNotice
+
+    core = FakeCore([CoreNotice("Not-Aus: Die Anfrage wurde abgebrochen.")])
+    rig = Rig(stt=FakeStt(("Frage", "de")), core=core)
+    await rig.say_something()
+    assert rig.session.state is State.WAITING  # nicht in DENKT hängen geblieben
+    await rig.frames(WAKE)
+    assert rig.session.state is State.LISTENING  # ein neues Wake Word wirkt wieder
+
+
+async def test_confirm_state_stops_listening_after_one_utterance() -> None:
+    rig = await _confirm_flow("WRITE_REVERSIBLE", ("Ja, bestätigt", "de"), speaker=Speaker())
+    assert rig.stt.calls == 2  # eine Frage und eine Antwort, nicht eine je stillem Frame
+
+
+async def test_repeated_loud_frames_interrupt_only_once() -> None:
+    rig = await _speaking_rig("voice")
+    await rig.frames(*([LOUD] * 30))
+    await rig.session.wait_idle()
+    assert rig.sink.stops == 1
+
+
+async def test_foreign_voice_or_empty_recognition_opens_no_follow_up_window() -> None:
+    for stt, speaker in [(FakeStt(("", None)), None), (FakeStt(("Hallo", "de")), Speaker(False))]:
+        rig = Rig(stt=stt, speaker=speaker)
+        await rig.say_something()
+        assert rig.session.state is State.WAITING
+
+
+async def test_hotkey_interrupt_keeps_the_sleep_state() -> None:
+    rig = Rig()
+    rig.session.sleep()
+    await rig.session.interrupt()
+    assert rig.session.state is State.SLEEP
+
+
+async def test_failed_voice_confirmation_is_reported() -> None:
+    class Refusing(FakeCore):
+        async def confirm(self, request_id: str, approve: bool, by_voice: bool) -> bool:
+            del request_id, approve, by_voice
+            return False  # z. B. 403 oder schon beantwortet
+
+    config = VoiceConfig(confirm_by_voice=True, end_silence_seconds=0.2, follow_up_seconds=0.0)
+    rig = Rig(
+        stt=FakeStt(("Trag ein", "de"), ("Ja, bestätigt", "de")),
+        core=Refusing(_confirm("WRITE_REVERSIBLE")),
+        config=config,
+        speaker=Speaker(),
+    )
+    await rig.frames(WAKE)
+    await rig.frames(*([SPEECH] * 5 + [QUIET] * 8))
+    for _ in range(50):
+        await asyncio.sleep(0)
+        if rig.session.state is State.CONFIRM:
+            break
+    await rig.frames(*([SPEECH] * 5 + [QUIET] * 8))
+    await rig.session.wait_idle()
+    assert MESSAGES["de"]["screen"] in [t for t, _l, _w in rig.tts.said]
+
+
+async def test_recognition_failure_does_not_get_stuck() -> None:
+    class Broken(FakeStt):
+        async def transcribe(self, pcm: bytes) -> Transcript:
+            raise OSError("Modell weg")
+
+    rig = Rig(stt=Broken())
+    await rig.say_something()
+    assert rig.session.state is State.WAITING
+
+
+async def test_turn_history_is_bounded() -> None:
+    rig = Rig()
+    from jarvis_voice.session import MAX_TURNS, Turn
+
+    rig.session.turns.extend(Turn(wake_at=0.0) for _ in range(MAX_TURNS + 20))
+    rig.session._turn = Turn(wake_at=1.0)  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
+    rig.session.parts.core = FakeCore(answer("Antwort kommt jetzt."))
+    await rig.session.handle_text("Frage")
+    assert len(rig.session.turns) <= MAX_TURNS

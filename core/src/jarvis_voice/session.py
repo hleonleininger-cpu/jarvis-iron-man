@@ -35,18 +35,17 @@ from jarvis_voice.protocols import (
 )
 from jarvis_voice.sentences import SentenceChunker
 
+MAX_TURNS = 50  # so viele Zeitmessungen bleiben für `jarvis voice bench` im Speicher
 BARGE_IN_FRAMES = 4  # so viele Sprach-Frames in Folge (ca. 130 ms) unterbrechen die Ausgabe
 CONFIRM_SECONDS = 10.0  # Zeitfenster für "Ja, bestätigt"
 WHISPER_MAX_SENTENCES = 2
 MESSAGES = {
     "de": {
-        "unclear": "Das habe ich nicht verstanden.",
         "screen": "Bitte am Bildschirm oder am Handy bestätigen.",
         "sleep": "Gute Nacht.",
         "core_down": "Der Kern ist nicht erreichbar.",
     },
     "en": {
-        "unclear": "I did not understand that.",
         "screen": "Please confirm on the screen or on your phone.",
         "sleep": "Good night.",
         "core_down": "The core is not reachable.",
@@ -114,7 +113,6 @@ class VoiceSession:
         self._speech_frames = 0
         self._echo = EchoGuard()
         self._reply: asyncio.Task[None] | None = None
-        self._worker: asyncio.Task[None] | None = None
         self._turn: Turn | None = None
         self._language = "de"
         self._answer: asyncio.Future[bool | None] | None = None
@@ -203,7 +201,8 @@ class VoiceSession:
 
     def _timeout(self) -> None:
         if self._answer is not None and not self._answer.done():
-            self._answer.set_result(None)  # keine Sprachantwort: Bestätigung bleibt offen
+            self._set(State.THINKING)  # nicht weiter zuhören; die Bestätigung bleibt offen
+            self._answer.set_result(None)
             return
         self._to_waiting()
 
@@ -213,8 +212,11 @@ class VoiceSession:
         if self._turn is not None:
             self._turn.utterance_end = now
         self.parts.indicator.cue("listen_done")
-        if self.state is not State.CONFIRM:
-            self._set(State.THINKING)
+        self._heard = False
+        self.parts.turn.reset()
+        self._set(
+            State.THINKING
+        )  # auch bei CONFIRM: nach einer Äußerung wird nicht weiter zugehört
         self._spawn(self._process(pcm))
 
     def _maybe_barge_in(self, frame: bytes, now: float) -> None:
@@ -224,16 +226,31 @@ class VoiceSession:
         user = self.parts.vad.is_speech(frame) and self._echo.is_user_speech(frame, now)
         self._speech_frames = self._speech_frames + 1 if user else 0
         if self._speech_frames >= BARGE_IN_FRAMES:
-            self._spawn(self.interrupt(listen_again=True, seed=frame))
+            # Zustand sofort umsetzen, damit nur EIN Unterbrechen startet.
+            self._begin_listening(State.LISTENING, self.config.listen_timeout_seconds)
+            self._buffer += frame
+            self._heard = True
+            self._spawn(self._cut_off())
 
     # ---------------------------------------------------------------------- Äußerungen
     def _spawn(self, coro: Coroutine[Any, Any, None]) -> None:
         task = asyncio.ensure_future(coro)
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
-        self._worker = task
 
     async def _process(self, pcm: bytes) -> None:
+        try:
+            await self._recognize_and_answer(pcm)
+        except asyncio.CancelledError:
+            raise
+        except (
+            Exception
+        ):  # Erkennung oder Ausgabe gescheitert: nicht in DENKT/SPRICHT hängen bleiben
+            if self._answer is not None and not self._answer.done():
+                self._answer.set_result(None)
+            self._to_waiting()
+
+    async def _recognize_and_answer(self, pcm: bytes) -> None:
         transcript = await self.parts.stt.transcribe(pcm)
         if self._turn is not None:
             self._turn.transcribed = self.clock()
@@ -248,8 +265,8 @@ class VoiceSession:
         if self._answer is not None and not self._answer.done():
             self._resolve_answer(text)
             return
-        if not text:
-            self._after_reply()
+        if not text:  # nichts oder eine fremde Stimme: kein neues Folgefragen-Fenster öffnen
+            self._to_waiting()
             return
         await self.handle_text(text)
 
@@ -269,8 +286,8 @@ class VoiceSession:
 
     async def _run_command(self, command: Command) -> None:
         match command:
-            case Command.STOP:
-                await self.interrupt(listen_again=False)
+            case Command.STOP | Command.EMERGENCY:
+                await self.interrupt(listen_again=False, emergency=command is Command.EMERGENCY)
             case Command.SLEEP:
                 await self.interrupt(listen_again=False)
                 await self._say(MESSAGES[self._language]["sleep"])
@@ -290,6 +307,7 @@ class VoiceSession:
         self._set(State.THINKING)
         chunker = SentenceChunker()
         spoken = 0
+        aborted = False
         try:
             async for event in self.parts.core.ask(text, self.session_id):
                 if isinstance(event, CoreDelta):
@@ -304,16 +322,22 @@ class VoiceSession:
                 elif isinstance(event, CoreError):
                     await self._say(MESSAGES[self._language]["core_down"])
                 elif "Not-Aus" in event.message:  # CoreNotice: Abbruch durch den Not-Aus
-                    return
-            for sentence in chunker.flush():
-                spoken = await self._say_limited(sentence, spoken)
+                    aborted = True
+                    break
+            if not aborted:
+                for sentence in chunker.flush():
+                    spoken = await self._say_limited(sentence, spoken)
         except asyncio.CancelledError:
             raise
         finally:
             if self._turn is not None:
                 self.turns.append(self._turn)
+                del self.turns[:-MAX_TURNS]
                 self._turn = None
-        self._after_reply()
+        if aborted:  # Not-Aus von außen (Web, `jarvis stop`): nicht weiter zuhören
+            self._to_waiting()
+        else:
+            self._after_reply()
 
     async def _say_limited(self, sentence: str, spoken: int) -> int:
         if self.whisper and spoken >= WHISPER_MAX_SENTENCES:
@@ -359,7 +383,8 @@ class VoiceSession:
         if answer is None:
             await self._say(MESSAGES[self._language]["screen"])
             return
-        await self.parts.core.confirm(event.id, answer, by_voice=True)
+        if not await self.parts.core.confirm(event.id, answer, by_voice=True):
+            await self._say(MESSAGES[self._language]["screen"])  # abgelehnt oder schon erledigt
 
     def _resolve_answer(self, text: str) -> None:
         command = parse_command(text) if text else None
@@ -372,20 +397,28 @@ class VoiceSession:
             self._answer.set_result(answer)
 
     # -------------------------------------------------------------------- Steuerung
-    async def interrupt(self, listen_again: bool = False, seed: bytes = b"") -> None:
-        """Unterbrechen (Stimme, Tastenkürzel, "Stopp"): Ausgabe verstummt sofort, die laufende
-        Core-Anfrage wird beendet (Not-Aus des Cores für diese Anfrage)."""
-        self.parts.sink.stop()
-        if self._reply is not None and not self._reply.done():
-            self._reply.cancel()
-        await self.parts.core.stop()
-        self._speech_frames = 0
+    async def interrupt(self, listen_again: bool = False, emergency: bool = False) -> None:
+        """Unterbrechen (Tastenkürzel, "Stopp"): Ausgabe verstummt sofort und die eigene
+        Anfrage wird beendet (der Strom wird geschlossen, der Core bricht sie dann ab). Den
+        Not-Aus des Cores, der ALLE Anfragen aller Geräte abbricht, löst nur die Phrase "Not-Aus"
+        aus (`emergency=True`)."""
+        if self.state is State.SLEEP:  # das Mikrofon ist zu: am Zustand nichts ändern
+            self.parts.sink.stop()
+            return
+        await self._cut_off(emergency)
         if listen_again:
             self._begin_listening(State.LISTENING, self.config.listen_timeout_seconds)
-            self._buffer += seed
-            self._heard = True
         else:
             self._to_waiting()
+
+    async def _cut_off(self, emergency: bool = False) -> None:
+        self.parts.sink.stop()
+        reply = self._reply
+        if reply is not None and not reply.done() and reply is not asyncio.current_task():
+            reply.cancel()
+        if emergency:
+            await self.parts.core.stop()
+        self._speech_frames = 0
 
     def sleep(self) -> None:
         """Mikrofon ganz schließen (Schlafmodus, harte Stummschaltung). Nur `wake()` weckt."""

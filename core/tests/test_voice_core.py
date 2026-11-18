@@ -210,3 +210,35 @@ def test_events_stream_shows_open_confirmations_to_other_clients(tmp_path: Path)
     assert "confirm" in kinds and kinds[-1] == "confirm_done"
     confirm = next(data for kind, data in seen if kind == "confirm")
     assert confirm["id"] == request.id and confirm["risk"] == "WRITE_REVERSIBLE"
+
+
+def test_voice_approval_is_refused_for_unknown_risk_and_cloud_questions(tmp_path: Path) -> None:
+    client, _s, broker = _client(tmp_path, RiskClass.WRITE_REVERSIBLE)
+    import asyncio as aio
+
+    async def ask(tool: str) -> None:
+        await broker.ask(tool, "p", "q", lambda _r: None, risk="")
+
+    loop = aio.new_event_loop()
+    task = loop.create_task(ask("cloud_model"))
+    loop.run_until_complete(aio.sleep(0.05))
+    request = broker.open_requests()[0]
+    answer = client.post(f"/v1/confirm/{request.id}", json={"approve": True, "via": "voice"})
+    assert answer.status_code == 403  # leere Risikoklasse: nie per Stimme
+    task.cancel()
+    loop.run_until_complete(aio.gather(task, return_exceptions=True))
+    loop.close()
+
+
+def test_events_and_voice_event_need_the_token(tmp_path: Path) -> None:
+    settings = _settings(tmp_path).model_copy(update={"require_api_token": True})
+    app = create_app(settings, TestModel(call_tools=[]), "t", api_token="geheim")
+    client = TestClient(app, base_url="http://127.0.0.1")
+    assert client.get("/v1/events").status_code == 401
+    assert client.post("/v1/voice/event", json={"event": "dictation_start"}).status_code == 401
+    ok = client.post(
+        "/v1/voice/event",
+        json={"event": "dictation_start"},
+        headers={"Authorization": "Bearer geheim"},
+    )
+    assert ok.status_code == 200

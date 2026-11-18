@@ -250,3 +250,15 @@ nicht bauen, Master vorlegen) ist mit Masterauftrag §4 vereinbar. Ergänzungen:
    Not-Aus), damit die Web-Oberfläche alte Fragen entfernt.
 4. *Platzhalter für das Satzende:* Bis zur Pipecat-Entscheidung gibt es einen klar benannten
    `SilenceTurnDetector` (nur numpy, Satzende = Stille). Er zählt nicht als M2.4.
+
+## 12. Prüfrunde 3 (Opus, Block A): Funde und Korrekturen
+Behoben: Not-Aus von außen ließ die Sitzung auf DENKT hängen; in CONFIRM wurde jeder stille Frame zur
+Äußerung; mehrfaches Auslösen des Unterbrechens; Rückfragen am Handy kamen nach einer Trennung nicht
+mehr an (Web); fremde Stimmen öffneten ein neues Folgefragen-Fenster; Hotkey im Schlaf; Ausfälle der
+Erkennung/Ausgabe; unbegrenzte Zeitmessungen.
+**Geändert gegenüber Abschnitt 10.10:** "Unterbrechen" beendet nur das Sprechen und die eigene
+Anfrage (der Strom wird geschlossen). Den Not-Aus des Cores, der alle Geräte trifft, löst nur die
+Phrase "Not-Aus" aus. Mit Lautsprechern (`barge_in = "key"`) unterbricht das Tastenkürzel; die
+Phrase "Stopp" wirkt, sobald das Mikrofon zuhört (nach dem Wake Word oder in der Folgefragen-Zeit).
+Während JARVIS spricht, hört der Client bei `key` nichts mit (Echo-Schutz); wer per Stimme
+unterbrechen will, nutzt Kopfhörer und `barge_in = "voice"`.

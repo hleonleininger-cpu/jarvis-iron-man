@@ -30,7 +30,9 @@ ohne Kosten. Der Core ist ein Server; Mikrofon und Lautsprecher gehören auf den
 - **Datenschutz:** Aufnahmen bleiben im Arbeitsspeicher, nichts davon wird auf die Platte
   geschrieben. Audit und Logs enthalten nie Transkripte, nur Zustände und Zeiten. Der Diktiermodus
   (Block C) meldet nur Start und Ende an `POST /v1/voice/event`.
-- **Unterbrechen:** Standard ist nur per Tastenkürzel oder "Stopp". Unterbrechen per Stimme
+- **Unterbrechen:** Es beendet nur das Sprechen und die eigene Anfrage (Strom schließen), nie den
+  Not-Aus des Cores; den löst nur die Phrase "Not-Aus" aus. Standard ist nur das Tastenkürzel;
+  "Stopp" wirkt, sobald das Mikrofon zuhört. Unterbrechen per Stimme
   (`barge_in = "voice"`) ist für Kopfhörer gedacht; der Echo-Schutz (Stufe 1, halbduplex) verlangt,
   dass Sprache deutlich lauter ist als die eigene Wiedergabe. Echte Echounterdrückung ist Folgearbeit.
 - **Platzhalter statt M2.4-Engine:** Bis Master die Pipecat-Frage entschieden hat, erkennt ein
