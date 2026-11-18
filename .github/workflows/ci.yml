@@ -31,3 +31,6 @@ jobs:
       - uses: astral-sh/setup-uv@v5
       - run: uv sync --locked
       - run: uv run pytest -m "not live"
+      # Sprachpakete (M2) müssen unter Windows installierbar und importierbar sein.
+      - run: uv sync --locked --extra voice
+      - run: uv run python -c "import numpy, sounddevice, onnxruntime, faster_whisper, piper, sherpa_onnx, pynput, openwakeword"
