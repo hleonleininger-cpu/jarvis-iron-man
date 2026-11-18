@@ -236,3 +236,17 @@ Empfehlung: Option 1 testen, falls `LocalSmartTurnAnalyzerV3` ohne torch läuft,
 
 **Bauumfang der heutigen Nacht (ohne die offene Pipecat-Entscheidung):** Block A ohne die
 Engine von M2.4, danach Block B und C in den folgenden Nächten.
+
+## 11. Prüfrunde 2 (Opus): Urteil "BAUEN" für Block A, mit vier Ergänzungen
+Die elf Funde aus Runde 1 sind eingearbeitet; die Behandlung der Pipecat-Frage (Engine von M2.4
+nicht bauen, Master vorlegen) ist mit Masterauftrag §4 vereinbar. Ergänzungen:
+1. *Sprachbestätigung wird im Core durchgesetzt:* Das `confirm`-Ereignis trägt die Risikoklasse.
+   Der Core nimmt eine Zusage aus dem Kanal `voice` nur bei `WRITE_REVERSIBLE` an und lehnt
+   alles andere ab (Test); der Client verlässt sich nicht allein auf sich selbst.
+2. *Diktat-Audit:* Ein kleiner Core-Endpunkt `POST /v1/voice/event` (nur Ereignisart
+   "dictation_start"/"dictation_end" und Zeit, nie Inhalt) schreibt ins vorhandene Audit-Log. Kein
+   zweites Audit-System im Client.
+3. *Rückfrage erledigt:* `/v1/events` meldet auch "Rückfrage erledigt" (Antwort, Zeitablauf,
+   Not-Aus), damit die Web-Oberfläche alte Fragen entfernt.
+4. *Platzhalter für das Satzende:* Bis zur Pipecat-Entscheidung gibt es einen klar benannten
+   `SilenceTurnDetector` (nur numpy, Satzende = Stille). Er zählt nicht als M2.4.
