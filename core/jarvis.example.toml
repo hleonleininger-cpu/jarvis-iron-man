@@ -47,6 +47,10 @@ context_tokens = 8192
 # follow_up_seconds = 8    # Folgefrage ohne Wake Word
 # barge_in = "key"         # off, key (Tastenkürzel) oder voice
 # confirm_by_voice = false # nur WRITE_REVERSIBLE und nur mit Sprecherprüfung
+# wake_threshold = 0.5     # Wake Word: niedriger = empfindlicher
+# stt_device = "cpu"       # "cuda" nur mit NVIDIA-Karte, CUDA 12 und cuDNN 9
+# mic_device = "Headset"   # Teil des Gerätenamens; `jarvis voice doctor` listet sie
+# speaker_device = "Headset"
 
 [mcp_servers.weather]
 command = "python"

@@ -45,3 +45,16 @@ ohne Kosten. Der Core ist ein Server; Mikrofon und Lautsprecher gehören auf den
   Sprachclient verhält er sich wie bisher.
 - Lizenzen der Engines (Piper GPL-3, openWakeWord-Modelle CC BY-NC-SA, Stimmen) werden mit Block B
   in diesem ADR ergänzt; nur privater, lokaler Gebrauch.
+
+## Ergänzung Block B (Engines)
+- **Modelle:** `models.toml` nennt URL, Größe und SHA-256 je Datei (am 19.11.2026 aus den
+  Originalquellen gemessen). `jarvis voice setup` ist der einzige Netzzugriff; die Engines bekommen nur
+  lokale Pfade (`HF_HUB_OFFLINE=1`, `local_files_only=True`). Eine geänderte Datei am Ursprung wird
+  verworfen, nicht still übernommen.
+- **Engines:** openWakeWord (nur Windows, ONNX), faster-whisper, Piper, Silero-VAD, Smart Turn v3.2,
+  alle über onnxruntime/CTranslate2 ohne PyTorch. Sie sitzen hinter den Protokollen; ein Austausch
+  berührt die Gesprächslogik nicht.
+- **Lizenzen:** Siehe `docs/STIMMEN.md`. Piper ist GPL-3 (nur lokal, der Code wird nicht
+  weitergegeben); die Wake-Word-Modelle sind CC BY-NC-SA (privat).
+- **Messung:** `jarvis voice bench` misst nur Zeiten. Ziel auf dem CPU-Profil: höchstens 6 Sekunden
+  vom Satzende bis zum ersten Ton.

@@ -139,6 +139,10 @@ class VoiceConfig(BaseModel):
     speaker_device: str | None = None
     models_dir: Path = Path("voice")
     stt_model: str = "base"
+    # Spracherkennung auf "cpu" oder der NVIDIA-Grafikkarte ("cuda", braucht CUDA 12 und cuDNN 9).
+    stt_device: Literal["cpu", "cuda"] = "cpu"
+    # Ab diesem Wert (0 bis 1) gilt das Wake Word als erkannt; niedriger = empfindlicher.
+    wake_threshold: float = Field(default=0.5, ge=0.05, le=0.99)
     tts_voice_de: str = "de_DE-thorsten-medium"
     tts_voice_en: str = "en_GB-northern_english_male-medium"
 

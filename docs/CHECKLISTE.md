@@ -37,10 +37,10 @@ Markierungen:
 - [~] M1.16 Ehrlichkeit: unterscheidet Live-Daten, Gespeichertes und eigene Schlüsse, erfindet nichts (gebaut: Systemprompt HONESTY trennt aktuelle Daten, 'gespeichert' und 'meine Einschätzung'; Wirkung mit echtem Modell nur von Master prüfbar; Eval honesty-unknown)
 
 ## M2 – Stimme
-- [ ] M2.1 Wake Word "Hey Jarvis", lokal (openWakeWord)
-- [ ] M2.2 Spracheingabe lokal (faster-whisper)
-- [ ] M2.3 Sprachausgabe lokal (Piper), britischer Butler-Ton, keine Kopie einer echten Stimme
-- [ ] M2.4 Sprechpausen-Erkennung (Silero VAD, Smart Turn) über Pipecat (Master hat am 19.11. entschieden: direkt per ONNX ohne Pipecat, ADR-023; Engine kommt mit Block B, bis dahin nur ein Platzhalter für das Satzende)
+- [~] M2.1 Wake Word "Hey Jarvis", lokal (openWakeWord) (gebaut: Adapter für openWakeWord mit dem Modell hey_jarvis (ONNX), `wake_threshold` einstellbar; getestet mit echtem Modell auf Linux (lädt, rechnet, löst bei normaler Sprache nicht aus) und mit Attrappen; Trefferquote bei echter Stimme nur am PC prüfbar. Beleg: engines/wake_openwakeword.py, tests/test_voice_engines.py, docs/STIMMEN.md)
+- [~] M2.2 Spracheingabe lokal (faster-whisper) (gebaut: faster-whisper base/int8, nur lokale Modellordner, Deutsch/Englisch automatisch; getestet mit echtem Modell: erkennt eigene Stimme in beiden Sprachen, ca. 0,4 x Echtzeit auf CPU; Mikrofon-Qualität nur am PC prüfbar. Beleg: engines/whisper.py, tests/test_voice_engines.py)
+- [~] M2.3 Sprachausgabe lokal (Piper), britischer Butler-Ton, keine Kopie einer echten Stimme (gebaut: Piper mit en_GB-northern_english_male und de_DE-thorsten, Flüsterstufe, erstes Stück nach ca. 0,1 s; ob der Ton für dich passt, hörst nur du. Beleg: engines/piper_tts.py, docs/STIMMEN.md)
+- [~] M2.4 Sprechpausen-Erkennung (Silero VAD, Smart Turn) über Pipecat (gebaut nach Masters Entscheidung vom 19.11. ohne Pipecat: Silero-VAD und Smart Turn v3.2 direkt als ONNX, ohne PyTorch; getestet mit echten Modellen (Sprache/Stille sauber getrennt, Satzende endet spätestens durch Stille); ob das Smart-Turn-Urteil bei echter Sprache stimmt, nur am PC prüfbar. Beleg: engines/silero.py, engines/smart_turn.py, ADR-023)
 - [~] M2.5 Unterbrechen mitten im Satz (gebaut: Gesprächslogik im Paket jarvis_voice, getestet mit Attrappen in core/tests/test_voice_session.py; am echten Mikrofon erst mit Block B prüfbar. ADR-023)
 - [~] M2.6 Folgefragen ohne erneutes Wake Word (gebaut: Gesprächslogik im Paket jarvis_voice, getestet mit Attrappen in core/tests/test_voice_session.py; am echten Mikrofon erst mit Block B prüfbar. ADR-023)
 - [ ] M2.7 Deutsch und Englisch automatisch

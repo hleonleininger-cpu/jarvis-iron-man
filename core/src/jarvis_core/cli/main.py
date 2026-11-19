@@ -108,6 +108,43 @@ def voice_status() -> None:
     voice_cli.status(_settings(INTERACTIVE_LOG_LEVEL))
 
 
+@voice_app.command("setup")
+def voice_setup(
+    nur: list[str] = typer.Option([], "--nur", help="nur diese Modellgruppen (z. B. whisper_base)"),
+    ja: bool = typer.Option(False, "--ja", help="ohne Rückfrage laden"),
+) -> None:
+    """Lädt die Sprachmodelle ausdrücklich herunter und prüft sie (einziger Netzzugriff)."""
+    from jarvis_voice import cli as voice_cli
+
+    voice_cli.setup_command(_settings(INTERACTIVE_LOG_LEVEL), nur, ja)
+
+
+@voice_app.command("doctor")
+def voice_doctor(
+    tief: bool = typer.Option(False, "--tief", help="auch alle Prüfsummen neu berechnen"),
+) -> None:
+    """Prüft Pakete, Modelle, Audiogeräte und macht eine Funktionsprobe."""
+    from jarvis_voice import cli as voice_cli
+
+    voice_cli.doctor_command(_settings(INTERACTIVE_LOG_LEVEL), tief)
+
+
+@voice_app.command("bench")
+def voice_bench(runs: int = typer.Option(3, "--runs", min=1, max=20)) -> None:
+    """Misst die Antwortzeit je Stufe (nur Zeiten, keine Inhalte)."""
+    from jarvis_voice import cli as voice_cli
+
+    voice_cli.bench_command(_settings(INTERACTIVE_LOG_LEVEL), runs)
+
+
+@voice_app.command("run")
+def voice_run() -> None:
+    """Startet die Sprachsteuerung mit Mikrofon und Lautsprecher (Strg+C beendet)."""
+    from jarvis_voice import run as voice_run_module
+
+    voice_run_module.main(_settings(INTERACTIVE_LOG_LEVEL))
+
+
 @voice_app.command("text")
 def voice_text() -> None:
     """Gesprächslogik ohne Mikrofon: eingetippte Zeilen gelten als gesprochen (zum Ausprobieren)."""

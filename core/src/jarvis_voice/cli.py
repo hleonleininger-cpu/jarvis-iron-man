@@ -2,7 +2,6 @@
 geladen; der Core läuft ohne sie. Block A: `status` und `text` (Gesprächslogik ohne Mikrofon)."""
 
 import asyncio
-import contextlib
 import importlib.util
 import sys
 from collections.abc import AsyncIterator
@@ -11,8 +10,7 @@ import httpx2
 import typer
 
 from jarvis_core.config import Settings
-from jarvis_core.secrets import SecretsError, read_secret_field
-from jarvis_voice.core_client import HttpCoreClient
+from jarvis_voice.cli_parts import ConsoleIndicator, NoSource, NullSink, core_client
 from jarvis_voice.protocols import State
 from jarvis_voice.session import Parts, VoiceSession
 from jarvis_voice.turn import EnergyVad, SilenceTurnDetector
@@ -30,16 +28,6 @@ PACKAGES = {
 }
 
 
-class ConsoleIndicator:
-    """Zeigt jeden Zustandswechsel in der Konsole (Mikrofon-Anzeige, Masterauftrag §6)."""
-
-    def show(self, state: State) -> None:
-        typer.echo(f"● {state.value}", err=True)
-
-    def cue(self, name: str) -> None:
-        del name  # Hinweistöne kommen mit der Audio-Ausgabe (Block B)
-
-
 class PrintTts:
     """Textmodus: statt zu sprechen wird der Satz ausgegeben."""
 
@@ -50,26 +38,6 @@ class PrintTts:
         typer.echo(f"JARVIS [{language}]{suffix}: {text}")
         return
         yield b"", 0  # macht daraus einen Generator
-
-
-class NullSink:
-    async def play(self, pcm: bytes, sample_rate: int) -> None:
-        del pcm, sample_rate
-
-    def stop(self) -> None:
-        pass
-
-
-class NoSource:
-    async def open(self) -> None:
-        pass
-
-    def close(self) -> None:
-        pass
-
-    async def frames(self) -> AsyncIterator[bytes]:
-        return
-        yield b""
 
 
 class NeverWake:
@@ -88,13 +56,6 @@ class TextStt:
 
 def installed_packages() -> dict[str, bool]:
     return {name: importlib.util.find_spec(name) is not None for name in PACKAGES}
-
-
-def core_client(settings: Settings) -> HttpCoreClient:
-    token: str | None = None
-    with contextlib.suppress(SecretsError):
-        token = read_secret_field("api_token", "token")
-    return HttpCoreClient(settings.voice.core_url, token)
 
 
 def status(settings: Settings) -> None:
@@ -148,3 +109,55 @@ def text_mode(settings: Settings) -> None:
             await session.shutdown()
 
     asyncio.run(loop())
+
+
+def setup_command(settings: Settings, only: list[str], yes: bool) -> None:
+    from jarvis_voice.run import models_dir
+    from jarvis_voice.setup import DEFAULT_KEYS, run_setup
+
+    keys = tuple(only) if only else DEFAULT_KEYS
+    ok = run_setup(
+        models_dir(settings), keys, typer.echo,
+        (lambda _q: True) if yes else (lambda q: typer.confirm(q, default=False)),
+    )  # fmt: skip
+    if not ok:
+        raise typer.Exit(1)
+
+
+def doctor_command(settings: Settings, deep: bool) -> None:
+    from jarvis_voice.doctor import run_doctor
+
+    checks = run_doctor(settings, deep)
+    for check in checks:
+        typer.echo(f"{'OK    ' if check.ok else 'FEHLT '} {check.name}: {check.detail}")
+    if not all(c.ok for c in checks):
+        raise typer.Exit(1)
+
+
+def bench_command(settings: Settings, runs: int) -> None:
+    from jarvis_voice.doctor import TARGET_FIRST_SOUND_SECONDS, estimate_first_sound, measure
+    from jarvis_voice.engines import MissingPackage
+    from jarvis_voice.models import ModelError
+
+    try:
+        stages = measure(settings, runs)
+    except (ModelError, MissingPackage, ValueError) as exc:
+        typer.echo(f"Fehler: {exc}", err=True)
+        raise typer.Exit(1) from None
+    for name, value in stages.items():
+        typer.echo(f"{name:24} {value * 1000:9.1f} ms")
+    total = estimate_first_sound(stages)
+    seconds = stages.get("stt_aufnahme_sekunden", 0.0)
+    if seconds:
+        typer.echo(f"Erkennung: {stages.get('stt_je_aufnahme', 0.0) / seconds:.2f} x Echtzeit")
+    if "core_erster_text" not in stages:
+        typer.echo(
+            "Hinweis: Der Core war nicht erreichbar (jarvis serve?). Die Zeit bis zum ersten Satz "
+            "des Modells fehlt in der Schätzung; mit einem lokalen Modell kommen typisch 2 bis "
+            "8 Sekunden dazu."
+        )
+    verdict = "erreicht" if total <= TARGET_FIRST_SOUND_SECONDS else "NICHT erreicht"
+    typer.echo(
+        f"Geschätzt vom Satzende bis zum ersten Ton: {total:.1f} s "
+        f"(Ziel auf CPU: höchstens {TARGET_FIRST_SOUND_SECONDS:.0f} s) - {verdict}"
+    )
