@@ -40,7 +40,7 @@ Markierungen:
 - [ ] M2.1 Wake Word "Hey Jarvis", lokal (openWakeWord)
 - [ ] M2.2 Spracheingabe lokal (faster-whisper)
 - [ ] M2.3 Sprachausgabe lokal (Piper), britischer Butler-Ton, keine Kopie einer echten Stimme
-- [ ] M2.4 Sprechpausen-Erkennung (Silero VAD, Smart Turn) über Pipecat (OFFEN: wartet auf Masters Entscheidung, ob Pipecat-Bausteine oder direktes ONNX, siehe docs/PLAN-M2.md Abschnitt 10; bis dahin nur ein Platzhalter für das Satzende)
+- [ ] M2.4 Sprechpausen-Erkennung (Silero VAD, Smart Turn) über Pipecat (Master hat am 19.11. entschieden: direkt per ONNX ohne Pipecat, ADR-023; Engine kommt mit Block B, bis dahin nur ein Platzhalter für das Satzende)
 - [~] M2.5 Unterbrechen mitten im Satz (gebaut: Gesprächslogik im Paket jarvis_voice, getestet mit Attrappen in core/tests/test_voice_session.py; am echten Mikrofon erst mit Block B prüfbar. ADR-023)
 - [~] M2.6 Folgefragen ohne erneutes Wake Word (gebaut: Gesprächslogik im Paket jarvis_voice, getestet mit Attrappen in core/tests/test_voice_session.py; am echten Mikrofon erst mit Block B prüfbar. ADR-023)
 - [ ] M2.7 Deutsch und Englisch automatisch

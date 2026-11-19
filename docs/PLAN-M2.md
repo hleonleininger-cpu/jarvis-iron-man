@@ -262,3 +262,13 @@ Phrase "Not-Aus" aus. Mit Lautsprechern (`barge_in = "key"`) unterbricht das Tas
 Phrase "Stopp" wirkt, sobald das Mikrofon zuhört (nach dem Wake Word oder in der Folgefragen-Zeit).
 Während JARVIS spricht, hört der Client bei `key` nichts mit (Echo-Schutz); wer per Stimme
 unterbrechen will, nutzt Kopfhörer und `barge_in = "voice"`.
+
+## 13. Entscheidungen von Master (19.11., Besprechung 7:15)
+- **M2.4 schlank per ONNX, ohne Pipecat:** Silero-VAD und Smart Turn laufen direkt mit onnxruntime
+  (kein PyTorch, kein Pipecat). Die Abweichung vom Wortlaut der Checkliste ist damit von Master
+  entschieden und in ADR-023 festgehalten. Die Engine von M2.4 wird in Block B gebaut.
+- **Hardware unbekannt:** Standard ist das CPU-Profil (Spracherkennung `base`, int8); `jarvis voice
+  doctor` erkennt die Hardware am PC und schlägt bei NVIDIA-GPU das größere Modell vor.
+- **Ausgabe je nach Situation:** `barge_in` bleibt umschaltbar, Standard Tastenkürzel; mit
+  Kopfhörern empfohlen `voice`.
+- **Test durch Master:** erst nach M2 (M0, M1 und M2 gemeinsam), sobald Block B steht.

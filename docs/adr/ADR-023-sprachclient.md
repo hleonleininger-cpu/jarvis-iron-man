@@ -35,8 +35,10 @@ ohne Kosten. Der Core ist ein Server; Mikrofon und Lautsprecher gehören auf den
   "Stopp" wirkt, sobald das Mikrofon zuhört. Unterbrechen per Stimme
   (`barge_in = "voice"`) ist für Kopfhörer gedacht; der Echo-Schutz (Stufe 1, halbduplex) verlangt,
   dass Sprache deutlich lauter ist als die eigene Wiedergabe. Echte Echounterdrückung ist Folgearbeit.
-- **Platzhalter statt M2.4-Engine:** Bis Master die Pipecat-Frage entschieden hat, erkennt ein
-  einfacher Pegel-Erkenner das Satzende. Er ersetzt M2.4 nicht.
+- **Kein Pipecat (Entscheidung von Master, 19.11.):** Silero-VAD und Smart Turn (M2.4) laufen direkt
+  mit onnxruntime, ohne Pipecat und ohne PyTorch; Pipecat ist ein Cloud-Pipeline-Framework mit
+  vielen Pflichtpaketen. Bis die Engine gebaut ist, erkennt ein einfacher Pegel-Erkenner das
+  Satzende (`SilenceTurnDetector`); er ersetzt M2.4 nicht.
 
 ## Folgen
 - Der Core ändert sich nur im Rahmen dieser Datei (Kanal, Risikoklasse, `/v1/events`); ohne
