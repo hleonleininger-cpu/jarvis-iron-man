@@ -18,8 +18,7 @@ class FasterWhisperStt:
         self, model_dir: Path, device: str = "cpu", compute_type: str = "int8",
         language: str | None = None,
     ) -> None:  # fmt: skip
-        # Im Betrieb nie nach Hugging Face greifen: nur der lokale Ordner zählt.
-        os.environ["HF_HUB_OFFLINE"] = "1"
+        os.environ["HF_HUB_OFFLINE"] = "1"  # (auch beim Import von jarvis_voice.engines gesetzt)
         self._np = need("numpy", "Signalverarbeitung")
         self._module = need("faster_whisper", "Spracherkennung")
         self._dir = model_dir
@@ -49,6 +48,16 @@ class FasterWhisperStt:
             audio, language=self.language, beam_size=1, vad_filter=False,
             condition_on_previous_text=False,
         )  # fmt: skip
+        if self.language is None and info.language not in ("de", "en"):
+            # Whisper kennt 99 Sprachen und rät bei kurzen Äußerungen gern falsch (z. B.
+            # Niederländisch): nur Deutsch und Englisch zählen, also mit der wahrscheinlicheren
+            # von beiden noch einmal.
+            probabilities = dict(getattr(info, "all_language_probs", None) or [])
+            best = max(("de", "en"), key=lambda code: probabilities.get(code, 0.0))
+            segments, info = model.transcribe(  # type: ignore[attr-defined]
+                audio, language=best, beam_size=1, vad_filter=False,
+                condition_on_previous_text=False,
+            )  # fmt: skip
         text = " ".join(segment.text.strip() for segment in segments).strip()
         language = info.language if info.language_probability >= MIN_LANGUAGE_PROBABILITY else None
         return Transcript(text, language if language in ("de", "en") else None)

@@ -5,6 +5,7 @@ Größe und SHA-256 aus `models.toml` geprüft; im Betrieb bekommen die Engines 
 """
 
 import hashlib
+import http.client
 import tomllib
 import urllib.request
 from collections.abc import Callable
@@ -111,12 +112,14 @@ def download(
             partial.open("wb") as out,
         ):
             while block := response.read(CHUNK):
+                size += len(block)
+                if size > file.bytes:  # mehr als erwartet: abbrechen, nicht die Platte füllen
+                    raise OSError("Datei ist größer als in models.toml angegeben")
                 out.write(block)
                 digest.update(block)
-                size += len(block)
                 if progress is not None:
                     progress(size, file.bytes)
-    except OSError as exc:
+    except (OSError, http.client.HTTPException) as exc:
         partial.unlink(missing_ok=True)
         raise ModelError(
             f"Download von {file.name} fehlgeschlagen ({type(exc).__name__})."

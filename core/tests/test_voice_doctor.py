@@ -70,10 +70,21 @@ def test_cli_run_and_bench_explain_missing_models(
 ) -> None:
     config = tmp_path / "jarvis.toml"
     config.write_text(
-        f'data_dir = "{tmp_path / "data"}"\n[voice]\nmodels_dir = "{tmp_path / "x"}"\n'
+        f'data_dir = "{tmp_path / "data"}"\n[voice]\nenabled = true\n'
+        f'models_dir = "{tmp_path / "x"}"\n'
     )
     monkeypatch.setenv("JARVIS_CONFIG", str(config))
     for command in ("run", "bench"):
         result = CliRunner().invoke(cli_main.app, ["voice", command])
         assert result.exit_code == 1, command
         assert "jarvis voice setup" in result.output, command
+
+
+def test_run_refuses_when_voice_is_switched_off(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = tmp_path / "jarvis.toml"
+    config.write_text(f'data_dir = "{tmp_path / "data"}"\n')
+    monkeypatch.setenv("JARVIS_CONFIG", str(config))
+    result = CliRunner().invoke(cli_main.app, ["voice", "run"])
+    assert result.exit_code == 1 and "enabled = true" in result.output

@@ -3,6 +3,7 @@
 Strom geöffnet ist: `close()` schließt ihn wirklich (Schlafmodus, harte Stummschaltung)."""
 
 import asyncio
+import contextlib
 import threading
 from typing import Any
 
@@ -21,11 +22,24 @@ def find_device(sd: Any, name: str | None, kind: str) -> int | None:
         return None
     key = f"max_{kind}_channels"
     devices: list[dict[str, Any]] = list(sd.query_devices())
-    for index, device in enumerate(devices):
-        if device[key] > 0 and name.casefold() in str(device["name"]).casefold():
-            return index
+    matches = [
+        index
+        for index, device in enumerate(devices)
+        if device[key] > 0 and name.casefold() in str(device["name"]).casefold()
+    ]
+    if matches:
+        # Unter Windows gibt es dasselbe Gerät mehrfach (MME, WASAPI, ...). MME rechnet Abtastraten
+        # selbst um; WASAPI und WDM-KS verlangen die Rate des Geräts. Deshalb MME zuerst.
+        return next((i for i in matches if _is_mme(sd, devices[i])), matches[0])
     names = ", ".join(str(d["name"]) for d in devices if d[key] > 0)
     raise ValueError(f"Kein {kind}-Gerät mit '{name}'. Vorhanden: {names or 'keines'}.")
+
+
+def _is_mme(sd: Any, device: dict[str, Any]) -> bool:
+    try:
+        return "MME" in str(sd.query_hostapis(device["hostapi"])["name"])
+    except Exception:  # Attrappen oder alte PortAudio-Versionen ohne Host-API-Angabe
+        return False
 
 
 def list_devices(sd: Any) -> list[tuple[int, str, int, int]]:
@@ -34,6 +48,30 @@ def list_devices(sd: Any) -> list[tuple[int, str, int, int]]:
         (i, str(d["name"]), int(d["max_input_channels"]), int(d["max_output_channels"]))
         for i, d in enumerate(sd.query_devices())
     ]
+
+
+class _Converting:
+    """Ausgabestrom mit Umrechnung der Abtastrate (lineare Interpolation reicht für Sprache)."""
+
+    def __init__(self, stream: Any, rate_in: int, rate_out: int, np: Any) -> None:
+        self._stream, self._in, self._out, self._np = stream, rate_in, rate_out, np
+
+    @property
+    def active(self) -> bool:
+        return bool(self._stream.active)
+
+    def start(self) -> None:
+        self._stream.start()
+
+    def abort(self) -> None:
+        self._stream.abort()
+
+    def write(self, samples: Any) -> None:
+        np = self._np
+        data = samples[:, 0].astype(np.float32)
+        count = max(1, int(len(data) * self._out / self._in))
+        out = np.interp(np.linspace(0, len(data) - 1, count), np.arange(len(data)), data)
+        self._stream.write(out.astype(np.int16).reshape(-1, 1))
 
 
 class SoundDeviceSource:
@@ -92,13 +130,27 @@ class SoundDeviceSink:
         self._streams: dict[int, Any] = {}
         self._generation = 0
         self._write_lock = threading.Lock()  # PortAudio-Streams vertragen keine zwei Schreiber
+        self._beeps: set[asyncio.Task[None]] = set()
 
     def _stream(self, rate: int) -> Any:
         stream = self._streams.get(rate)
         if stream is None:
-            stream = self._sd.OutputStream(
-                samplerate=rate, channels=1, dtype="int16", device=self._device
-            )
+            try:
+                stream = self._sd.OutputStream(
+                    samplerate=rate, channels=1, dtype="int16", device=self._device
+                )
+                stream.start()
+            except Exception:  # das Gerät kann diese Rate nicht: mit seiner eigenen Rate spielen
+                native = int(self._sd.query_devices(self._device, "output")["default_samplerate"])
+                stream = _Converting(
+                    self._sd.OutputStream(
+                        samplerate=native, channels=1, dtype="int16", device=self._device
+                    ),
+                    rate,
+                    native,
+                    self._np,
+                )
+                stream.start()
             self._streams[rate] = stream
         if not stream.active:
             stream.start()
@@ -110,7 +162,12 @@ class SoundDeviceSink:
             for start in range(0, len(samples), BLOCK_FRAMES):
                 if generation != self._generation:
                     return  # inzwischen gestoppt
-                stream.write(samples[start : start + BLOCK_FRAMES])
+                try:
+                    stream.write(samples[start : start + BLOCK_FRAMES])
+                except Exception:
+                    if generation != self._generation:
+                        return  # Stopp kam mitten im Schreiben: der Fehler gehört dazu
+                    raise
 
     async def play(self, pcm: bytes, sample_rate: int) -> None:
         generation = self._generation
@@ -121,11 +178,18 @@ class SoundDeviceSink:
         """Sofort verstummen: laufende Schreibvorgänge enden, gepufferter Ton wird verworfen."""
         self._generation += 1
         for stream in self._streams.values():
-            if stream.active:
-                stream.abort()
+            with contextlib.suppress(Exception):  # schon zu: das Ziel (Ruhe) ist erreicht
+                if stream.active:
+                    stream.abort()
 
     def beep(self, name: str) -> None:
         """Kurzer Hinweiston, ohne zu warten (Aufwachen, Aufnahme beendet, Folgefrage offen)."""
         freq, seconds = CUES.get(name, (700.0, 0.05))
         pcm = tone(freq, seconds, sample_rate=SAMPLE_RATE, level=0.25)
-        asyncio.ensure_future(self.play(pcm, SAMPLE_RATE))  # noqa: RUF006
+        task = asyncio.ensure_future(self._quiet_play(pcm))
+        self._beeps.add(task)
+        task.add_done_callback(self._beeps.discard)
+
+    async def _quiet_play(self, pcm: bytes) -> None:
+        with contextlib.suppress(Exception):  # ein misslungener Hinweiston darf nichts stören
+            await self.play(pcm, SAMPLE_RATE)

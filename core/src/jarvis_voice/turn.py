@@ -15,6 +15,9 @@ class EnergyVad:
     def is_speech(self, frame: bytes) -> bool:
         return rms(frame) >= self.threshold
 
+    def reset(self) -> None:
+        pass
+
 
 class SilenceTurnDetector:
     """Satzende = Sprache war da, danach `end_silence` Sekunden Stille."""

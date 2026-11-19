@@ -14,7 +14,8 @@ Alle Befehle im Ordner `core` auf deinem Windows-PC, in der Eingabeaufforderung.
    Steht bei "Eingabegerät" etwas Falsches, trage in `jarvis.toml` unter `[voice]`
    `mic_device = "Teil des Gerätenamens"` und `speaker_device = "..."` ein.
 4. **Antwortzeit messen:** `uv run jarvis voice bench`
-   Das gibt die Zeiten je Stufe aus und schätzt die Zeit bis zum ersten Ton. Ziel auf einem Rechner
+   Das gibt die Zeiten je Stufe aus und schätzt die Zeit bis zum ersten Ton. Dabei stellt es dem
+   Core einmal die Frage "Sag kurz Hallo." (neue Sitzung, sie bleibt nur im Arbeitsspeicher). Ziel auf einem Rechner
    ohne Grafikkarte: höchstens 6 Sekunden. Bitte schick mir die Zahlen (nur Zeiten, keine Inhalte).
 5. **Ohne Mikrofon ausprobieren:** `uv run jarvis voice text`
    Eingetippte Zeilen gelten als gesprochen; so siehst du, wie kurz JARVIS für die Stimme antwortet.
@@ -23,11 +24,16 @@ Alle Befehle im Ordner `core` auf deinem Windows-PC, in der Eingabeaufforderung.
    - "Hey Jarvis" sagen: ein kurzer Ton, dann sprechen. Nach der Antwort bleibt das Mikrofon
      8 Sekunden offen (Folgefrage ohne Wake Word).
    - "Stopp" beendet das Sprechen. "Not-Aus" löst den Not-Aus des ganzen Cores aus.
-   - "Gute Nacht, Jarvis" schließt das Mikrofon ganz. "Flüstere" macht Antworten leise und kurz,
+   - "Gute Nacht, Jarvis" schließt das Mikrofon ganz. Aufwecken geht erst mit dem Tastenkürzel
+     (kommt in Block C); bis dahin hilft nur Strg+C und `uv run jarvis voice run` neu starten. "Flüstere" macht Antworten leise und kurz,
      "Normal sprechen" stellt es zurück.
    - Strg+C beendet den Sprachclient.
 7. **Mit Kopfhörern** kannst du in `[voice]` `barge_in = "voice"` setzen: dann unterbricht deine
-   Stimme JARVIS mitten im Satz. Mit Lautsprechern bleibt es bei `key` (Tastenkürzel folgt in Block C).
+   Stimme JARVIS mitten im Satz. Mit Lautsprechern bleibt es bei `key`: Unterbrechen per Tastenkürzel kommt in Block C; bis dahin
+hilft "Stopp", sobald das Mikrofon zuhört.
+8. **Andere Stimme:** Dateien im Piper-Format (`.onnx` und `.onnx.json`) in den Modellordner legen und
+   in `[voice]` unter `tts_voice_en` bzw. `tts_voice_de` den Dateinamen ohne `.onnx` eintragen.
+   Fehlt die Datei, sagt JARVIS es mit dem Hinweis auf `jarvis voice setup`.
 
 **Was ich von dir wissen will:** Reagiert das Wake Word zuverlässig? Erkennt er dich richtig
 (Deutsch und Englisch)? Klingt die Stimme brauchbar? Wie lang ist die Pause bis zur Antwort

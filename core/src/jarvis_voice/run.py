@@ -6,10 +6,10 @@ import sys
 from pathlib import Path
 
 from jarvis_core.config import Settings
-from jarvis_voice.cli_parts import ConsoleIndicator, NoSource, NullSink, core_client
+from jarvis_voice.cli_parts import ConsoleIndicator, NeverWake, NoSource, NullSink, core_client
 from jarvis_voice.engines import MissingPackage
 from jarvis_voice.models import ModelError, load_registry, model_path
-from jarvis_voice.protocols import AudioSink, AudioSource
+from jarvis_voice.protocols import AudioSink, AudioSource, WakeWordDetector
 from jarvis_voice.session import Parts, VoiceSession
 
 
@@ -46,7 +46,8 @@ def build_parts(settings: Settings, with_audio: bool = True) -> Parts:
         whisper_dir = model_path(directory, registry[whisper_key])
     else:  # eigenes Modell: Ordner models_dir/whisper-<name> (CTranslate2-Format)
         whisper_dir = directory / f"whisper-{config.stt_model}"
-        if not (whisper_dir / "model.bin").is_file():
+        needed = ("model.bin", "config.json", "tokenizer.json", "vocabulary.txt")
+        if not all((whisper_dir / name).is_file() for name in needed):
             raise ModelError(f"Das Modell '{config.stt_model}' liegt nicht in {whisper_dir}.")
     wake = registry["wake_word"]
     if with_audio:
@@ -56,15 +57,21 @@ def build_parts(settings: Settings, with_audio: bool = True) -> Parts:
         sink: AudioSink = SoundDeviceSink(config.speaker_device)
     else:  # Funktionsprobe und Messung brauchen keine Audiogeräte
         source, sink = NoSource(), NullSink()
-    return Parts(
-        source=source,
-        sink=sink,
-        wake=OpenWakeWordDetector(
+    try:
+        detector: WakeWordDetector = OpenWakeWordDetector(
             model_path(directory, wake, "hey_jarvis_v0.1.onnx"),
             model_path(directory, wake, "melspectrogram.onnx"),
             model_path(directory, wake, "embedding_model.onnx"),
             config.wake_threshold,
-        ),
+        )
+    except MissingPackage:
+        if with_audio:
+            raise
+        detector = NeverWake()  # nur Funktionsprobe/Messung auf Systemen ohne das Wake-Word-Paket
+    return Parts(
+        source=source,
+        sink=sink,
+        wake=detector,
         vad=SileroVad(model_path(directory, registry["silero_vad"], "silero_vad.onnx")),
         turn=SmartTurnDetector(
             model_path(directory, registry["smart_turn"], "smart-turn-v3.2-cpu.onnx"),
@@ -89,6 +96,10 @@ def build_parts(settings: Settings, with_audio: bool = True) -> Parts:
 
 async def run(settings: Settings, echo: object) -> None:
     del echo
+    if not settings.voice.enabled:
+        raise ValueError(
+            "Der Sprachclient ist aus. In jarvis.toml unter [voice] enabled = true setzen."
+        )
     parts = build_parts(settings)
     session = VoiceSession(parts, settings.voice)
     # Modelle vorab laden, damit die erste Antwort nicht auf das Laden warten muss.

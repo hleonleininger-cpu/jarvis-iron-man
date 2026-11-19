@@ -10,7 +10,7 @@ import httpx2
 import typer
 
 from jarvis_core.config import Settings
-from jarvis_voice.cli_parts import ConsoleIndicator, NoSource, NullSink, core_client
+from jarvis_voice.cli_parts import ConsoleIndicator, NeverWake, NoSource, NullSink, core_client
 from jarvis_voice.protocols import State
 from jarvis_voice.session import Parts, VoiceSession
 from jarvis_voice.turn import EnergyVad, SilenceTurnDetector
@@ -38,15 +38,6 @@ class PrintTts:
         typer.echo(f"JARVIS [{language}]{suffix}: {text}")
         return
         yield b"", 0  # macht daraus einen Generator
-
-
-class NeverWake:
-    def process(self, frame: bytes) -> bool:
-        del frame
-        return False
-
-    def reset(self) -> None:
-        pass
 
 
 class TextStt:

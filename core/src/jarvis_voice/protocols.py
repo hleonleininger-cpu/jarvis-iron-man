@@ -87,6 +87,7 @@ class WakeWordDetector(Protocol):
 
 class VoiceActivity(Protocol):
     def is_speech(self, frame: bytes) -> bool: ...
+    def reset(self) -> None: ...  # Zustand zwischen zwei Äußerungen löschen
 
 
 class TurnDetector(Protocol):

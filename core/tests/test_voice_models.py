@@ -154,3 +154,49 @@ def test_setup_cli_reports_failure_with_exit_code(
     monkeypatch.setattr("jarvis_voice.run.models_dir", fixed_dir)
     result = CliRunner().invoke(cli_main.app, ["voice", "setup", "--nur", "demo", "--ja"])
     assert result.exit_code == 1 and "FEHLER" in result.output
+
+
+def test_download_stops_when_the_stream_is_larger_than_announced(
+    tmp_path: Path, server: str
+) -> None:
+    entry = load_registry(registry_text(server, size=100))["demo"]
+    with pytest.raises(ModelError):
+        fetch(tmp_path, entry)
+    assert not list((tmp_path / "demo").glob("*"))  # nichts liegen geblieben
+
+
+def test_incomplete_read_is_reported_not_raised(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import http.client
+    import urllib.request
+
+    class Broken:
+        def __enter__(self) -> "Broken":
+            return self
+
+        def __exit__(self, *_a: object) -> None:
+            return None
+
+        def read(self, _n: int) -> bytes:
+            raise http.client.IncompleteRead(b"x")
+
+    class Opener(urllib.request.OpenerDirector):
+        def open(self, *_a: object, **_k: object) -> Broken:  # type: ignore[override]
+            return Broken()
+
+    entry = load_registry(registry_text("http://127.0.0.1:1"))["demo"]
+    with pytest.raises(ModelError, match="Download"):
+        fetch(tmp_path, entry, opener=Opener())
+    assert not list((tmp_path / "demo").glob("*"))
+
+
+def test_setup_plan_notices_same_size_wrong_content(
+    tmp_path: Path, server: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    registry = load_registry(registry_text(server))
+    monkeypatch.setattr(voice_setup, "load_registry", lambda: registry)
+    (tmp_path / "demo").mkdir()
+    (tmp_path / "demo" / "m.bin").write_bytes(b"X" * len(PAYLOAD))
+    ((_entry, missing),) = voice_setup.plan(tmp_path, ("demo",))
+    assert missing  # wird erkannt und vor dem Laden angezeigt, nicht still ersetzt

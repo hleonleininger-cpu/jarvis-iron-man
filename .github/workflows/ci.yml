@@ -34,3 +34,4 @@ jobs:
       # Sprachpakete (M2) müssen unter Windows installierbar und importierbar sein.
       - run: uv sync --locked --extra voice
       - run: uv run python -c "import numpy, sounddevice, onnxruntime, faster_whisper, piper, sherpa_onnx, pynput, openwakeword"
+      - run: uv run pytest -m "not live" tests/test_voice_engines.py tests/test_voice_doctor.py tests/test_voice_models.py tests/test_voice_session.py

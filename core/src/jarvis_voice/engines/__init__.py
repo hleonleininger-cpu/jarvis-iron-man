@@ -3,7 +3,11 @@
 geladen und stehen nur in der Gruppe `voice`; fehlen sie, kommt eine verständliche Meldung."""
 
 import importlib
+import os
 from types import ModuleType
+
+# Im Betrieb nie nach Hugging Face greifen; muss vor dem ersten Import von faster-whisper stehen.
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
 
 
 class MissingPackage(Exception):

@@ -97,7 +97,8 @@ def device_checks(settings: Settings) -> list[Check]:
 
 
 def function_checks(settings: Settings) -> list[Check]:
-    """Echte Funktionsprobe mit den Modellen: sprechen, erkennen, Sprache/Stille, Wake Word."""
+    """Funktionsprobe mit den Modellen: laden, sprechen, die eigene Stimme erkennen, Sprache/Stille.
+    Wake Word und Satzende werden hier nur geladen; ihre Güte zeigt erst echte Sprache am PC."""
     from jarvis_voice.run import build_parts
 
     try:

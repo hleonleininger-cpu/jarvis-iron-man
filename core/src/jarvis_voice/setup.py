@@ -5,7 +5,8 @@ from pathlib import Path
 
 from jarvis_voice.models import ModelEntry, ModelError, fetch, load_registry, verify
 
-# Ohne Auswahl: alles, was die Standardeinstellung braucht. Das Wake-Word-Modell nur unter Windows.
+# Ohne Auswahl: alles, was die Standardeinstellung braucht (das Wake-Word-Paket gibt es nur unter
+# Windows; die Modelldateien lädt `setup` auf jedem System).
 DEFAULT_KEYS = ("silero_vad", "smart_turn", "wake_word", "whisper_base", "piper_en", "piper_de")
 
 
@@ -21,7 +22,7 @@ def plan(models_dir: Path, keys: tuple[str, ...] = DEFAULT_KEYS) -> list[tuple[M
         raise ModelError(
             f"Unbekanntes Modell: {', '.join(unknown)}. Bekannt: {', '.join(registry)}."
         )
-    return [(registry[k], bool(verify(models_dir, registry[k]))) for k in keys]
+    return [(registry[k], bool(verify(models_dir, registry[k], deep=True))) for k in keys]
 
 
 def run_setup(

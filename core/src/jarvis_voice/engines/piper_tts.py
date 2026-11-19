@@ -23,6 +23,12 @@ class PiperTts:
 
     def _voice(self, language: str) -> object:
         path = self._paths.get(language) or next(iter(self._paths.values()))
+        if not path.is_file():
+            from jarvis_voice.models import ModelError
+
+            raise ModelError(
+                f"Die Stimme {path.name} fehlt in {path.parent}. Laden mit: jarvis voice setup"
+            )
         with self._lock:
             if str(path) not in self._voices:
                 self._voices[str(path)] = self._module.PiperVoice.load(

@@ -279,12 +279,14 @@ async def test_tts_speaks_both_languages_and_whisper_is_quieter(parts: Any) -> N
 
 @needs_models
 async def test_stt_recognizes_own_voice_and_the_language(parts: Any) -> None:
-    german = await parts.stt.transcribe(await _speech(parts, "Wie wird das Wetter morgen?", "de"))
-    english = await parts.stt.transcribe(
-        await _speech(parts, "What is the weather tomorrow?", "en")
+    german = await parts.stt.transcribe(
+        await _speech(parts, "Wie wird das Wetter morgen in Dortmund?", "de")
     )
-    assert "wetter" in german.text.casefold() and german.language == "de"
-    assert "weather" in english.text.casefold() and english.language == "en"
+    english = await parts.stt.transcribe(
+        await _speech(parts, "What is the weather like tomorrow in London?", "en")
+    )
+    assert "morgen" in german.text.casefold() and german.language == "de"
+    assert "tomorrow" in english.text.casefold() and english.language == "en"
 
 
 @needs_models
@@ -347,3 +349,125 @@ def test_bench_reports_stages_and_estimate() -> None:
         stages
     )
     assert 0 < estimate_first_sound(stages) < 60
+
+
+# ------------------------------------------------ Prüfrunde-Funde (Block B)
+async def test_stop_during_write_swallows_the_portaudio_error(fake_sd: FakeSd) -> None:
+    sink = SoundDeviceSink()
+    pcm = np.zeros(audio_sounddevice.BLOCK_FRAMES * 4, dtype=np.int16).tobytes()
+    await sink.play(pcm, 16_000)
+    stream = fake_sd.outputs[0]
+
+    def stop_then_fail() -> None:
+        sink.stop()
+        raise OSError("PortAudioError: Stream is stopped")
+
+    stream.on_write = stop_then_fail
+    await sink.play(pcm, 16_000)  # darf nicht werfen: der Stopp ist der Grund
+    stream.on_write = None
+
+    def fail_for_real() -> None:
+        raise OSError("Gerät weg")
+
+    stream.on_write = fail_for_real
+    with pytest.raises(OSError, match="Gerät weg"):
+        await sink.play(pcm, 16_000)  # ein echter Fehler bleibt sichtbar
+
+
+async def test_failed_beep_does_not_leave_an_unretrieved_task(fake_sd: FakeSd) -> None:
+    sink = SoundDeviceSink()
+    sink.beep("wake")
+    await asyncio.sleep(0.05)
+    fake_sd.outputs[0].on_write = lambda: (_ for _ in ()).throw(OSError("weg"))
+    sink.beep("wake")
+    await asyncio.sleep(0.05)
+    assert not sink._beeps  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_sink_falls_back_to_the_device_rate_when_the_rate_is_refused(
+    fake_sd: FakeSd,
+) -> None:
+    created: list[int] = []
+    original = fake_sd.OutputStream
+
+    def picky(**kwargs: Any) -> FakeStream:
+        created.append(kwargs["samplerate"])
+        if kwargs["samplerate"] == 22_050:
+            raise OSError("Invalid sample rate")
+        return original(**kwargs)
+
+    fake_sd.OutputStream = picky  # type: ignore[method-assign]
+    fake_sd.query_devices = lambda *a, **k: (  # type: ignore[method-assign]
+        {"default_samplerate": 48_000.0} if a else FakeSd.query_devices(fake_sd)
+    )
+    sink = SoundDeviceSink()
+    pcm = np.zeros(audio_sounddevice.BLOCK_FRAMES, dtype=np.int16).tobytes()
+    await sink.play(pcm, 22_050)
+    assert created == [22_050, 48_000]
+    written = fake_sd.outputs[-1].written
+    assert written and written[0] == int(audio_sounddevice.BLOCK_FRAMES * 48_000 / 22_050)
+
+
+def test_device_lookup_prefers_mme(fake_sd: FakeSd) -> None:
+    devices = [
+        {"name": "Headset (WASAPI)", "max_input_channels": 1, "hostapi": 1},
+        {"name": "Headset (MME)", "max_input_channels": 1, "hostapi": 0},
+    ]
+    fake_sd.query_devices = lambda *a, **k: devices  # type: ignore[method-assign]
+    fake_sd.query_hostapis = lambda i: {"name": ["MME", "Windows WASAPI"][i]}  # type: ignore[attr-defined]
+    assert find_device(fake_sd, "Headset", "input") == 1
+
+
+def test_whisper_reruns_with_de_or_en_when_whisper_guesses_another_language(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from jarvis_voice.engines import whisper as module
+
+    calls: list[str | None] = []
+
+    class Info:
+        def __init__(self, language: str, probs: list[tuple[str, float]]) -> None:
+            self.language = language
+            self.language_probability = 0.9
+            self.all_language_probs = probs
+
+    class Segment:
+        def __init__(self, text: str) -> None:
+            self.text = text
+
+    class FakeModel:
+        def __init__(self, *_a: Any, **_k: Any) -> None:
+            pass
+
+        def transcribe(self, _audio: Any, language: str | None = None, **_k: Any) -> Any:
+            calls.append(language)
+            if language is None:
+                return [Segment("falscher Text")], Info(
+                    "nl", [("nl", 0.6), ("de", 0.3), ("en", 0.1)]
+                )
+            return [Segment("Hallo Welt")], Info(language, [])
+
+    fake = types.SimpleNamespace(WhisperModel=FakeModel)
+    real_need = engines.need
+
+    def need(name: str, why: str) -> Any:
+        return fake if name == "faster_whisper" else real_need(name, why)
+
+    monkeypatch.setattr(module, "need", need)
+    stt = module.FasterWhisperStt(Path("x"))
+    result = stt._run(bytes(3200))  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
+    assert calls == [None, "de"] and result.text == "Hallo Welt" and result.language == "de"
+
+
+def test_hf_offline_is_set_before_any_engine_import() -> None:
+    assert os.environ.get("HF_HUB_OFFLINE") == "1"
+
+
+def test_piper_reports_a_missing_voice_file_in_german(tmp_path: Path) -> None:
+    pytest.importorskip("piper")
+    from jarvis_voice.engines.piper_tts import PiperTts
+    from jarvis_voice.models import ModelError
+
+    tts = PiperTts({"de": tmp_path / "gibt-es-nicht.onnx"})
+    with pytest.raises(ModelError, match="jarvis voice setup"):
+        tts.warm_up("de")

@@ -131,6 +131,7 @@ class VoiceSession:
         self._heard = False
         self._speech_frames = 0
         self.parts.turn.reset()
+        self.parts.vad.reset()
         self._deadline = self.clock() + timeout
         self._set(state)
 

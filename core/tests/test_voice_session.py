@@ -558,3 +558,16 @@ async def test_turn_history_is_bounded() -> None:
     rig.session.parts.core = FakeCore(answer("Antwort kommt jetzt."))
     await rig.session.handle_text("Frage")
     assert len(rig.session.turns) <= MAX_TURNS
+
+
+async def test_vad_state_is_reset_for_every_new_utterance() -> None:
+    resets: list[int] = []
+
+    class CountingVad(EnergyVad):
+        def reset(self) -> None:
+            resets.append(1)
+
+    rig = Rig(stt=FakeStt(("Frage", "de")), core=FakeCore(answer("Antwort kommt jetzt.")))
+    rig.session.parts.vad = CountingVad()
+    await rig.say_something()
+    assert len(resets) >= 2  # nach dem Wake Word und für die Folgefrage

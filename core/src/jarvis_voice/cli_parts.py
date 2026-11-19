@@ -46,3 +46,12 @@ class NoSource:
     async def frames(self) -> AsyncIterator[bytes]:
         return
         yield b""
+
+
+class NeverWake:
+    def process(self, frame: bytes) -> bool:
+        del frame
+        return False
+
+    def reset(self) -> None:
+        pass
