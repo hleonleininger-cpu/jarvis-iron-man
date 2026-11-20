@@ -65,6 +65,12 @@ def status(settings: Settings) -> None:
         typer.echo(f"Core: erreichbar ({reply.status_code})")
     except httpx2.HTTPError:
         typer.echo("Core: nicht erreichbar (läuft `jarvis serve`?)")
+    from jarvis_voice.speaker import profile_path
+
+    typer.echo(
+        f"Sprecherprüfung: {'an' if config.speaker_check else 'aus'}, Profil "
+        f"{'vorhanden' if profile_path(settings.data_dir).is_file() else 'nicht angelernt'}"
+    )
     typer.echo("Pakete (uv sync --extra voice):")
     for name, present in installed_packages().items():
         typer.echo(f"  {'ja  ' if present else 'fehlt'} {name}: {PACKAGES[name]}")
@@ -152,3 +158,74 @@ def bench_command(settings: Settings, runs: int) -> None:
         f"Geschätzt vom Satzende bis zum ersten Ton: {total:.1f} s "
         f"(Ziel auf CPU: höchstens {TARGET_FIRST_SOUND_SECONDS:.0f} s) - {verdict}"
     )
+
+
+SPEAKER_PROMPTS = (
+    "Heute ist ein guter Tag, um etwas Neues zu lernen.",
+    "Bitte lies mir die Nachrichten von heute Morgen vor.",
+    "Der schnelle braune Fuchs springt über den faulen Hund.",
+    "Wie wird das Wetter morgen in Dortmund und am Wochenende?",
+    "Stelle bitte einen Wecker für sieben Uhr dreißig.",
+)
+ENROLL_SECONDS = 7.0
+
+
+def speaker_enroll_command(settings: Settings) -> None:
+    """Nimmt Masters Stimme auf (5 Sätze) und speichert NUR den Vektor, nie das Audio."""
+    from jarvis_voice.engines.speaker_sherpa import SherpaEmbedder
+    from jarvis_voice.models import ModelError, load_registry, model_path
+    from jarvis_voice.run import models_dir
+    from jarvis_voice.speaker import ProfileError, average, cosine, profile_path, save_profile
+
+    directory = models_dir(settings)
+    try:
+        model = model_path(
+            directory, load_registry()["speaker_titanet"], "nemo_en_titanet_small.onnx"
+        )
+    except ModelError:
+        typer.echo("Das Sprechermodell fehlt. Laden mit: jarvis voice setup --nur speaker_titanet")
+        raise typer.Exit(1) from None
+    embedder = SherpaEmbedder(model)
+
+    async def record_all() -> list[bytes]:
+        from jarvis_voice.engines.audio_sounddevice import SoundDeviceSource
+
+        source = SoundDeviceSource(settings.voice.mic_device)
+        clips: list[bytes] = []
+        for index, sentence in enumerate(SPEAKER_PROMPTS, 1):
+            typer.echo(f'\n{index}/{len(SPEAKER_PROMPTS)}: Lies in Ruhe vor:\n  "{sentence}"')
+            await asyncio.to_thread(input, "Enter drücken, dann sprechen ... ")
+            await source.open()
+            audio = bytearray()
+            typer.echo(f"● NIMMT AUF ({ENROLL_SECONDS:.0f} s) ...")
+            end = asyncio.get_running_loop().time() + ENROLL_SECONDS
+            async for frame in source.frames():
+                audio += frame
+                if asyncio.get_running_loop().time() >= end:
+                    break
+            source.close()
+            clips.append(bytes(audio))
+        return clips
+
+    clips = asyncio.run(record_all())
+    vectors = [embedder.embed(clip) for clip in clips]
+    try:
+        profile = average(vectors)
+    except ProfileError as exc:
+        typer.echo(f"Fehler: {exc}", err=True)
+        raise typer.Exit(1) from None
+    scores = [cosine(v, profile) for v in vectors]
+    save_profile(profile_path(settings.data_dir), profile, embedder.model_name)
+    typer.echo(
+        f"Gespeichert (nur der Vektor, kein Audio). Ähnlichkeit deiner Aufnahmen zum Profil: "
+        f"kleinste {min(scores):.2f}, Mittel {sum(scores) / len(scores):.2f}. "
+        f"Die Schwelle (speaker_threshold, jetzt {settings.voice.speaker_threshold:.2f}) sollte "
+        f"darunter liegen; einschalten mit speaker_check = true."
+    )
+
+
+def speaker_forget_command(settings: Settings) -> None:
+    from jarvis_voice.speaker import delete_profile, profile_path
+
+    gone = delete_profile(profile_path(settings.data_dir))
+    typer.echo("Sprecherprofil gelöscht." if gone else "Es gab kein Sprecherprofil.")

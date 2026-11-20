@@ -13,7 +13,7 @@ bekannten Stimme (Masterauftrag §7).
 | Sprachausgabe | Piper (`piper-tts`) | **GPL-3.0** | nur lokaler Gebrauch; der JARVIS-Code wird nicht mit Piper weitergegeben |
 | Stimme Englisch | `en_GB-northern_english_male-medium` | CC BY-SA 4.0 | britischer Sprecher, kein "Butler" im engeren Sinn; Namensnennung hier |
 | Stimme Deutsch | `de_DE-thorsten-medium` | CC0 | |
-| Sprecherkennung (Block C) | sherpa-onnx | Apache-2.0 | Lizenz des Sprecher-Modells wird vor dem Einbau geprüft |
+| Sprecherprüfung (optional) | sherpa-onnx mit NeMo TitaNet small (`nemo_en_titanet_small.onnx`) | Code Apache-2.0; Modell CC BY-4.0 laut NVIDIA NGC (Angabe nicht vor Ort geprüft) | Namensnennung: NVIDIA NeMo TitaNet; nur der Stimm-Vektor wird gespeichert |
 
 Nicht gewählt: die Stimmen `alan` und `jenny_dioco` (Lizenz ungeprüft). Eine andere freie Stimme
 lässt sich in `jarvis.toml` (`tts_voice_en`, `tts_voice_de`) eintragen, wenn die Datei in `data/voice/`

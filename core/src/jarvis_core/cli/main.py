@@ -145,6 +145,22 @@ def voice_run() -> None:
     voice_run_module.main(_settings(INTERACTIVE_LOG_LEVEL))
 
 
+@voice_app.command("anlernen")
+def voice_enroll() -> None:
+    """Nimmt deine Stimme auf (5 Sätze) und speichert nur einen Vektor für die Sprecherprüfung."""
+    from jarvis_voice import cli as voice_cli
+
+    voice_cli.speaker_enroll_command(_settings(INTERACTIVE_LOG_LEVEL))
+
+
+@voice_app.command("vergessen")
+def voice_forget() -> None:
+    """Löscht das Sprecherprofil."""
+    from jarvis_voice import cli as voice_cli
+
+    voice_cli.speaker_forget_command(_settings(INTERACTIVE_LOG_LEVEL))
+
+
 @voice_app.command("text")
 def voice_text() -> None:
     """Gesprächslogik ohne Mikrofon: eingetippte Zeilen gelten als gesprochen (zum Ausprobieren)."""

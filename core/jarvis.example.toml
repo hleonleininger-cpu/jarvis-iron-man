@@ -48,6 +48,11 @@ context_tokens = 8192
 # barge_in = "key"         # off, key (Tastenkürzel) oder voice
 # confirm_by_voice = false # nur WRITE_REVERSIBLE und nur mit Sprecherprüfung
 # wake_threshold = 0.5     # Wake Word: niedriger = empfindlicher
+# hotkey_listen = "<ctrl>+<alt>+j"  # Kürzel (leer = aus): zuhören, mute, interrupt, dictation
+# clap_wake = false        # Doppelklatschen als Start
+# pre_roll_seconds = 0     # Gespräch vor dem Wake Word (Sekunden, nur im Arbeitsspeicher)
+# speaker_check = false    # nur Masters Stimme (erst `jarvis voice anlernen`)
+# speaker_threshold = 0.4
 # stt_device = "cpu"       # "cuda" nur mit NVIDIA-Karte, CUDA 12 und cuDNN 9
 # mic_device = "Headset"   # Teil des Gerätenamens; `jarvis voice doctor` listet sie
 # speaker_device = "Headset"

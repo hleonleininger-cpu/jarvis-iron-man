@@ -21,6 +21,7 @@ class State(StrEnum):
     LISTENING = "HÖRT ZU"
     THINKING = "DENKT"
     SPEAKING = "SPRICHT"
+    DICTATION = "DIKTAT"  # Gesprochenes wird als Text in das aktive Fenster getippt
     CONFIRM = "WARTET AUF JA/NEIN"  # Sprachbestätigung (nur mit Sprecherprüfung)
 
 
@@ -66,6 +67,7 @@ CoreEvent = CoreDelta | CoreConfirm | CoreNotice | CoreDone | CoreError
 class CoreClient(Protocol):
     def ask(self, text: str, session_id: str | None) -> AsyncIterator[CoreEvent]: ...
     async def confirm(self, request_id: str, approve: bool, by_voice: bool) -> bool: ...
+    async def voice_event(self, event: str) -> None: ...  # Audit ohne Inhalt (Diktat an/aus)
     async def stop(self) -> None: ...
 
 
@@ -111,6 +113,16 @@ class SpeakerGate(Protocol):
     """Hört nur auf Master (M2.9). Ohne Gate gilt jede Stimme."""
 
     def verify(self, pcm: bytes) -> bool: ...
+
+
+class TextTyper(Protocol):
+    """Tippt Text in das aktive Fenster (nur Zeichen, nie Enter/Tab/Steuerzeichen)."""
+
+    def type(self, text: str) -> None: ...
+
+
+class WindowWatcher(Protocol):
+    def current(self) -> object | None: ...  # Kennung des aktiven Fensters, None = unbekannt
 
 
 class Indicator(Protocol):

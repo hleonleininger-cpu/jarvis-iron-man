@@ -96,6 +96,11 @@ class HttpCoreClient:
             return False
         return response.status_code == 200
 
+    async def voice_event(self, event: str) -> None:
+        """Meldet dem Core ein Ereignis ohne Inhalt fürs Audit (dictation_start/dictation_end)."""
+        with contextlib.suppress(httpx2.HTTPError):
+            await self._http.post("/v1/voice/event", json={"event": event})
+
     async def stop(self) -> None:
         with contextlib.suppress(httpx2.HTTPError):  # Core hängt oder ist weg: `jarvis stop` hilft
             await self._http.post("/v1/stop", timeout=5.0)

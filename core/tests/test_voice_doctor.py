@@ -36,8 +36,9 @@ def test_resample_halves_the_length_for_32khz_and_keeps_16khz() -> None:
 
 def test_missing_models_are_reported_per_group(tmp_path: Path) -> None:
     checks = model_checks(tmp_path)
-    assert len(checks) == 6 and not any(c.ok for c in checks)
-    assert all("fehlt" in c.detail for c in checks)
+    required = [c for c in checks if c.name != "Modell speaker_titanet"]
+    assert len(required) == 6 and not any(c.ok for c in required)
+    assert all("fehlt" in c.detail for c in required)
 
 
 def test_package_checks_name_every_package() -> None:

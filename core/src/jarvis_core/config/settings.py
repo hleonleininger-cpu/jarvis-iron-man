@@ -134,6 +134,24 @@ class VoiceConfig(BaseModel):
     barge_in: Literal["off", "key", "voice"] = "key"
     # Per Stimme bestätigen (nur WRITE_REVERSIBLE, nur mit Sprecherprüfung; ADR-023).
     confirm_by_voice: bool = False
+    # Globale Tastenkürzel (pynput-Schreibweise). Leer = ausgeschaltet.
+    hotkey_listen: str = (
+        "<ctrl>+<alt>+j"  # sofort zuhören (wie das Wake Word), weckt aus dem Schlaf
+    )
+    hotkey_mute: str = "<ctrl>+<alt>+m"  # Mikrofon ganz schließen / wieder öffnen
+    hotkey_interrupt: str = "<ctrl>+<alt>+x"  # Sprechen und laufende Anfrage beenden
+    hotkey_dictation: str = "<ctrl>+<alt>+d"  # Diktiermodus an/aus
+    # Doppelklatschen als Start (aus, weil es auch auf Geräusche anspricht); Schwelle 0 bis 1.
+    clap_wake: bool = False
+    clap_threshold: float = Field(default=0.3, ge=0.05, le=0.95)
+    # Wake Word mitten im Satz (M2.10): so viele Sekunden Audio vor dem Wake Word bleiben NUR im
+    # Arbeitsspeicher und gehen mit in die Erkennung. 0 = aus (es wird dann nichts vorgehalten).
+    pre_roll_seconds: float = Field(default=0.0, ge=0.0, le=15.0)
+    # Sprecherprüfung (M2.9): nur Masters Stimme zählt. Braucht `jarvis voice anlernen`.
+    speaker_check: bool = False
+    speaker_threshold: float = Field(default=0.4, ge=0.1, le=0.95)
+    # Diktiermodus (M2.12): endet nach so vielen Sekunden Stille von selbst.
+    dictation_idle_seconds: float = Field(default=60.0, ge=5.0, le=600.0)
     # Geräte (Name oder Teil davon); None = Standardgerät.
     mic_device: str | None = None
     speaker_device: str | None = None
@@ -145,6 +163,19 @@ class VoiceConfig(BaseModel):
     wake_threshold: float = Field(default=0.5, ge=0.05, le=0.99)
     tts_voice_de: str = "de_DE-thorsten-medium"
     tts_voice_en: str = "en_GB-northern_english_male-medium"
+
+    @field_validator("hotkey_listen", "hotkey_mute", "hotkey_interrupt", "hotkey_dictation")
+    @classmethod
+    def _hotkey_format(cls, value: str) -> str:
+        import re
+
+        pattern = (
+            r"(<(ctrl|alt|shift|cmd|alt_gr)>\+)+"
+            r"([a-z0-9]|<f([1-9]|1[0-9]|2[0-4])>|<(space|home|end|insert|delete|page_up|page_down)>)"
+        )
+        if value and not re.fullmatch(pattern, value):
+            raise ValueError("Tastenkürzel wie <ctrl>+<alt>+j schreiben (oder leer lassen).")
+        return value
 
     @field_validator("core_url")
     @classmethod

@@ -58,3 +58,20 @@ ohne Kosten. Der Core ist ein Server; Mikrofon und Lautsprecher gehören auf den
   weitergegeben); die Wake-Word-Modelle sind CC BY-NC-SA (privat).
 - **Messung:** `jarvis voice bench` misst nur Zeiten. Ziel auf dem CPU-Profil: höchstens 6 Sekunden
   vom Satzende bis zum ersten Ton.
+
+## Ergänzung Block C (Sprecher, Diktat, Kürzel, Gespräch davor)
+- **Sprecherprüfung (M2.9):** TitaNet small über sherpa-onnx, Kosinus-Vergleich mit dem angelernten
+  Profil. Gespeichert wird nur der normierte Vektor in `data/voice/sprecher.json` (Rechte nur für den
+  Benutzer), nie Audio; `jarvis voice vergessen` löscht ihn. Mit eingeschalteter Prüfung ignoriert
+  der Client andere Stimmen für Befehle, Antworten, Bestätigungen und das Diktat; zu kurze Äußerungen
+  werden abgelehnt. Keine Sicherheitsgarantie gegen Aufnahmen oder Nachahmer.
+- **Gespräch vor dem Wake Word (M2.10):** Ein Ringpuffer hält höchstens `pre_roll_seconds` Audio
+  im Arbeitsspeicher, nur im Zustand WARTET. Er wird bei Treffer, im Schlaf und beim Beenden geleert und nie
+  geschrieben. Standard aus.
+- **Diktat (M2.12):** Nur Tastenanschläge (pynput), nur druckbare Zeichen, keine Zwischenablage, nie
+  Enter/Tab/Steuerzeichen. Es endet bei "Diktat Ende", Kürzel, Fensterwechsel (Windows, ctypes), Schlaf,
+  Unterbrechen oder Ruhe. Der Core bekommt nur `dictation_start` und `dictation_end` (`POST
+  /v1/voice/event`) und schreibt sie ohne Text ins Audit. Der Text geht nie zum Core.
+- **Kürzel und Klatschen (M2.13):** Globale Kürzel über pynput (Standard Strg+Alt+J/M/X/D, änderbar,
+  leer = aus). Doppelklatschen ist reine Signalverarbeitung, standardmäßig aus und im Schlafmodus
+  wirkungslos, weil das Mikrofon dort zu ist; das Kürzel weckt.

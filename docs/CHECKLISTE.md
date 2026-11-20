@@ -43,13 +43,13 @@ Markierungen:
 - [~] M2.4 Sprechpausen-Erkennung (Silero VAD, Smart Turn) über Pipecat (gebaut nach Masters Entscheidung vom 19.11. ohne Pipecat: Silero-VAD und Smart Turn v3.2 direkt als ONNX, ohne PyTorch; getestet mit echten Modellen (Sprache/Stille sauber getrennt, Satzende endet spätestens durch Stille); ob das Smart-Turn-Urteil bei echter Sprache stimmt, nur am PC prüfbar. Beleg: engines/silero.py, engines/smart_turn.py, ADR-023)
 - [~] M2.5 Unterbrechen mitten im Satz (gebaut: Gesprächslogik im Paket jarvis_voice, getestet mit Attrappen in core/tests/test_voice_session.py; am echten Mikrofon erst mit Block B prüfbar. ADR-023)
 - [~] M2.6 Folgefragen ohne erneutes Wake Word (gebaut: Gesprächslogik im Paket jarvis_voice, getestet mit Attrappen in core/tests/test_voice_session.py; am echten Mikrofon erst mit Block B prüfbar. ADR-023)
-- [ ] M2.7 Deutsch und Englisch automatisch
+- [~] M2.7 Deutsch und Englisch automatisch (gebaut: Whisper erkennt die Sprache je Äußerung (nur de/en), die Antwort folgt in der erkannten Sprache mit passender Stimme; mit echten Modellen getestet. Beleg: engines/whisper.py, tests/test_voice_engines.py, test_voice_session.py)
 - [~] M2.8 Echo-Schutz: reagiert nicht auf die eigene Stimme (gebaut: Stufe 1, halbduplex mit Pegelvergleich; echte Echounterdrückung ist Folgearbeit, bei Lautsprechern kann Unterbrechen per Stimme unzuverlässig sein; Beleg: test_voice_parts.py, test_voice_session.py; ADR-023)
-- [ ] M2.9 Stimmerkennung: hört nur auf Master
-- [ ] M2.10 Wake Word mitten im Satz, versteht das kurze Gespräch davor (nur lokal, nur wenige Sekunden)
+- [~] M2.9 Stimmerkennung: hört nur auf Master (gebaut: TitaNet small über sherpa-onnx, `jarvis voice anlernen|vergessen`, nur der Vektor wird lokal gespeichert, Schwelle einstellbar; mit echtem Modell geprüft: trennt zwei Stimmen sauber; bei echten Menschen und Mikrofon nur am PC prüfbar, keine Sicherheitsgarantie gegen Aufnahmen. Beleg: speaker.py, engines/speaker_sherpa.py, tests/test_voice_speaker.py, ADR-023)
+- [~] M2.10 Wake Word mitten im Satz, versteht das kurze Gespräch davor (nur lokal, nur wenige Sekunden) (gebaut: Ringpuffer `pre_roll_seconds` nur im Arbeitsspeicher, standardmäßig aus; getestet mit Attrappen, am Mikrofon nur am PC prüfbar. Beleg: session.py, tests/test_voice_session.py)
 - [~] M2.11 Schlafmodus ("Gute Nacht, Jarvis") und Flüstermodus (gebaut: Gesprächslogik im Paket jarvis_voice, getestet mit Attrappen in core/tests/test_voice_session.py; am echten Mikrofon erst mit Block B prüfbar. ADR-023)
-- [ ] M2.12 Diktiermodus in jedes Textfeld
-- [ ] M2.13 Start per Tastenkürzel oder Doppelklatschen
+- [~] M2.12 Diktiermodus in jedes Textfeld (gebaut: Diktat per Sprache oder Kürzel, nur Tastenanschläge ohne Zwischenablage und ohne Enter/Tab/Steuerzeichen, endet bei Fensterwechsel/Ruhe/Schlaf, Audit nur Beginn und Ende; getestet mit Attrappen, echtes Tippen in fremde Fenster nur am PC prüfbar. Beleg: session.py, engines/typer_pynput.py, tests/test_voice_session.py)
+- [~] M2.13 Start per Tastenkürzel oder Doppelklatschen (gebaut: globale Kürzel (Strg+Alt+J/M/X/D) über pynput und Doppelklatschen als reine Signalverarbeitung; getestet mit Attrappen und künstlichen Signalen, echte Tastatur und echtes Klatschen nur am PC prüfbar. Beleg: hotkeys.py, clap.py, tests/test_voice_block_c.py)
 
 ## M3 – HUD
 - [ ] M3.1 Web-Oberfläche im Iron-Man-Stil (Bestand: schlichte Chat-Oberfläche hell/dunkel mit Markdown, Stopp, Rückfragen und Erinnerungen, api/web/; kein HUD-Stil)

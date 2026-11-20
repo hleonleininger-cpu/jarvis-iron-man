@@ -49,11 +49,18 @@ def package_checks() -> list[Check]:
     return checks
 
 
+OPTIONAL_MODELS = frozenset({"speaker_titanet"})  # nur nötig, wenn die Funktion eingeschaltet ist
+
+
 def model_checks(models_dir: Path, deep: bool = False) -> list[Check]:
     checks: list[Check] = []
     for key, entry in load_registry().items():
         problems = verify(models_dir, entry, deep=deep)
-        checks.append(Check(f"Modell {key}", not problems, "; ".join(problems) or entry.zweck))
+        if key in OPTIONAL_MODELS:
+            note = "nicht geladen (optional: jarvis voice setup --nur " + key + ")"
+            checks.append(Check(f"Modell {key}", True, "; ".join(problems) and note or entry.zweck))
+        else:
+            checks.append(Check(f"Modell {key}", not problems, "; ".join(problems) or entry.zweck))
     return checks
 
 

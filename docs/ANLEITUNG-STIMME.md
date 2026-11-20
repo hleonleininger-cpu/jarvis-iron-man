@@ -35,6 +35,32 @@ hilft "Stopp", sobald das Mikrofon zuhört.
    in `[voice]` unter `tts_voice_en` bzw. `tts_voice_de` den Dateinamen ohne `.onnx` eintragen.
    Fehlt die Datei, sagt JARVIS es mit dem Hinweis auf `jarvis voice setup`.
 
+## Block C: Tastenkürzel, Klatschen, Diktat, Stimmerkennung, Gespräch davor
+
+- **Tastenkürzel** (laufen, solange `jarvis voice run` läuft; ändern in `[voice]`, leer = aus):
+  Strg+Alt+J = sofort zuhören (wie das Wake Word, weckt auch aus dem Schlaf), Strg+Alt+M =
+  Mikrofon ganz schließen oder wieder öffnen, Strg+Alt+X = Sprechen und laufende Anfrage beenden,
+  Strg+Alt+D = Diktat an/aus. Auf dem iPhone gibt es keine Kürzel; das kommt mit M8.
+- **Doppelklatschen** (`clap_wake = true`, `clap_threshold` 0,05 bis 0,95): zweimal kurz
+  klatschen weckt wie das Wake Word. Es spricht auch auf andere kurze Knalle an, deshalb ist es aus.
+  Im Schlafmodus ist das Mikrofon zu: dort weckt nur Strg+Alt+J.
+- **Diktat:** "Diktiermodus an" (oder Strg+Alt+D). Das Gesprochene wird als Text in das gerade aktive
+  Fenster getippt, ohne Zwischenablage und ohne Enter, Tab oder Steuerzeichen. Es endet mit
+  "Diktat Ende", Strg+Alt+D, Fensterwechsel, "Gute Nacht" oder nach `dictation_idle_seconds` (60 s)
+  Stille. Der Core protokolliert nur Beginn und Ende, nie den Text. Die Anzeige zeigt DIKTAT.
+- **Stimmerkennung** (nur deine Stimme zählt): 1. `uv run jarvis voice setup --nur speaker_titanet`
+  (40 MB), 2. `uv run jarvis voice anlernen` (fünf Sätze vorlesen; gespeichert wird nur ein Vektor,
+  kein Audio), 3. in `[voice]` `speaker_check = true`. Die Ausgabe nennt, wie ähnlich deine
+  Aufnahmen dem Profil sind; `speaker_threshold` (Standard 0,40) sollte darunter liegen. Zu kurze
+  Äußerungen (unter 0,5 s) werden abgelehnt. `uv run jarvis voice vergessen` löscht das Profil.
+  Bestätigen per Stimme (`confirm_by_voice = true`) geht nur mit eingeschalteter Sprecherprüfung,
+  nur für anlegen/ändern, die sich rückgängig machen lassen, und nur mit der Phrase "Ja,
+  bestätigt". Das ist keine Sicherheit gegen Aufnahmen oder gute Nachahmer.
+- **Gespräch vor dem Wake Word** (`pre_roll_seconds`, z. B. 8): die letzten Sekunden vor "Hey
+  Jarvis" bleiben nur im Arbeitsspeicher und gehen in die Erkennung ("Wie spät ist es ... Hey
+  Jarvis"). Standard ist 0 (aus), weil das Mikrofon dann ständig mithört. Nichts davon wird
+  gespeichert; im Schlaf und nach der Nutzung wird der Puffer geleert.
+
 **Was ich von dir wissen will:** Reagiert das Wake Word zuverlässig? Erkennt er dich richtig
 (Deutsch und Englisch)? Klingt die Stimme brauchbar? Wie lang ist die Pause bis zur Antwort
 (`bench`-Zahlen)? Was nervt?
@@ -42,4 +68,5 @@ hilft "Stopp", sobald das Mikrofon zuhört.
 **Bekannte Grenzen:** Das Wake-Word-Modell ist ein Standardmodell und kann bei Akzent oder Lärm
 schwächeln (`wake_threshold` in `[voice]` einstellbar). Ohne Grafikkarte dauert die Erkennung
 und die Antwort des Modells einige Sekunden. Die Satzende-Erkennung kann bei langen Denkpausen zu
-früh abschneiden.
+früh abschneiden. Die Stimmerkennung ist mit synthetischen Stimmen geprüft, nicht mit echten
+Menschen: bitte teste, ob sie dich zuverlässig erkennt (zu viele Ablehnungen: Schwelle senken).

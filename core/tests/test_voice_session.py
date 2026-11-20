@@ -104,6 +104,7 @@ class FakeCore:
         self.scripts = list(scripts)
         self.asked: list[tuple[str, str | None]] = []
         self.confirmed: list[tuple[str, bool, bool]] = []
+        self.events: list[str] = []
         self.stops = 0
 
     async def ask(self, text: str, session_id: str | None) -> AsyncIterator[CoreEvent]:
@@ -114,6 +115,9 @@ class FakeCore:
     async def confirm(self, request_id: str, approve: bool, by_voice: bool) -> bool:
         self.confirmed.append((request_id, approve, by_voice))
         return True
+
+    async def voice_event(self, event: str) -> None:
+        self.events.append(event)
 
     async def stop(self) -> None:
         self.stops += 1
@@ -571,3 +575,263 @@ async def test_vad_state_is_reset_for_every_new_utterance() -> None:
     rig.session.parts.vad = CountingVad()
     await rig.say_something()
     assert len(resets) >= 2  # nach dem Wake Word und für die Folgefrage
+
+
+# ------------------------------------------------------------------------- Block C (M2.9-M2.13)
+class FakeTyper:
+    def __init__(self) -> None:
+        self.typed: list[str] = []
+
+    def type(self, text: str) -> None:
+        self.typed.append(text)
+
+
+class FakeWindow:
+    def __init__(self) -> None:
+        self.handle: object = "fenster-1"
+
+    def current(self) -> object | None:
+        return self.handle
+
+
+def _rig_with(
+    typer: FakeTyper | None = None,
+    window: FakeWindow | None = None,
+    *,
+    stt: FakeStt | None = None,
+    speaker: Speaker | None = None,
+) -> Rig:
+    rig = Rig(stt=stt, speaker=speaker)
+    rig.session.parts.typer = typer
+    rig.session.parts.window = window
+    return rig
+
+
+async def _utter(rig: Rig) -> None:
+    await rig.frames(*([SPEECH] * 5 + [QUIET] * 8))
+    await rig.session.wait_idle()
+
+
+async def _start_dictation(rig: Rig) -> None:
+    await rig.frames(WAKE)
+    await rig.frames(*([SPEECH] * 5 + [QUIET] * 8))
+    await rig.session.wait_idle()
+
+
+async def test_dictation_types_text_not_commands_and_audits_start_and_end() -> None:
+    typer, window = FakeTyper(), FakeWindow()
+    stt = FakeStt(
+        ("Diktiermodus an", "de"), ("Hallo Welt, das ist ein Test", "de"), ("Diktat Ende", "de")
+    )
+    rig = _rig_with(typer, window, stt=stt)
+    await _start_dictation(rig)
+    assert rig.session.state is State.DICTATION and rig.core.events == ["dictation_start"]
+    await _utter(rig)
+    assert typer.typed == ["Hallo Welt, das ist ein Test "] and rig.core.asked == []  # nie zum Core
+    assert rig.session.state is State.DICTATION  # bleibt an, hört weiter zu
+    await _utter(rig)
+    assert rig.session.state is State.WAITING
+    assert rig.core.events == ["dictation_start", "dictation_end"]
+    assert typer.typed == ["Hallo Welt, das ist ein Test "]  # "Diktat Ende" wird nicht getippt
+
+
+async def test_dictation_never_types_control_characters() -> None:
+    typer = FakeTyper()
+    rig = _rig_with(
+        typer,
+        FakeWindow(),
+        stt=FakeStt(("Diktiermodus an", "de"), ("Zeile eins\nZeile zwei\t\x1b[A\r", "de")),
+    )
+    await _start_dictation(rig)
+    await _utter(rig)
+    (typed,) = typer.typed
+    assert not any(ord(c) < 32 or ord(c) == 127 for c in typed)
+    assert typed == "Zeile einsZeile zwei[A "
+
+
+async def test_dictation_ends_when_the_window_changes_and_types_nothing_more() -> None:
+    typer, window = FakeTyper(), FakeWindow()
+    rig = _rig_with(
+        typer,
+        window,
+        stt=FakeStt(("Diktiermodus an", "de"), ("erster Satz", "de"), ("zweiter Satz", "de")),
+    )
+    await _start_dictation(rig)
+    await _utter(rig)
+    window.handle = "fenster-2"  # Master wechselt das Fenster
+    await _utter(rig)
+    await rig.session.wait_idle()
+    assert typer.typed == ["erster Satz "]  # der zweite Satz landet nirgends
+    assert rig.session.state is State.WAITING and rig.core.events[-1] == "dictation_end"
+
+
+async def test_dictation_ends_after_long_silence() -> None:
+    rig = _rig_with(FakeTyper(), FakeWindow(), stt=FakeStt(("Diktiermodus an", "de")))
+    rig.session.config = VoiceConfig(end_silence_seconds=0.2, dictation_idle_seconds=5.0)
+    await _start_dictation(rig)
+    assert rig.session.state is State.DICTATION
+    await rig.frames(QUIET, step=6.0)
+    await rig.session.wait_idle()
+    assert rig.session.state is State.WAITING and rig.core.events[-1] == "dictation_end"
+
+
+async def test_dictation_by_foreign_voice_is_ignored() -> None:
+    typer, gate = FakeTyper(), Speaker()
+    rig = _rig_with(
+        typer,
+        FakeWindow(),
+        stt=FakeStt(("Diktiermodus an", "de"), ("fremde Stimme", "de")),
+        speaker=gate,
+    )
+    await _start_dictation(rig)
+    gate.accept = False
+    await _utter(rig)
+    assert typer.typed == []
+
+
+async def test_dictation_without_typer_says_so_and_audits_nothing() -> None:
+    rig = _rig_with(None, None, stt=FakeStt(("Diktiermodus an", "de")))
+    await _start_dictation(rig)
+    assert rig.core.events == [] and rig.session.state is not State.DICTATION
+    assert MESSAGES["de"]["no_dictation"] in [t for t, _l, _w in rig.tts.said]
+
+
+async def test_dictation_hotkey_toggles_and_sleep_or_interrupt_end_it() -> None:
+    rig = _rig_with(FakeTyper(), FakeWindow())
+    rig.session.toggle_dictation()
+    await rig.session.wait_idle()
+    assert rig.session.state is State.DICTATION
+    rig.session.toggle_dictation()
+    await rig.session.wait_idle()
+    assert rig.core.events == ["dictation_start", "dictation_end"]
+    rig.session.toggle_dictation()
+    await rig.session.wait_idle()
+    rig.session.sleep()  # Schlaf beendet das Diktat
+    await rig.session.wait_idle()
+    assert rig.core.events[-1] == "dictation_end" and rig.session.state is State.SLEEP
+
+
+# ------------------------------------------------------------------------- Tastenkürzel
+async def test_listen_hotkey_starts_listening_like_the_wake_word() -> None:
+    rig = Rig(stt=FakeStt(("Wie spät ist es?", "de")), core=FakeCore(answer("Es ist spät genug.")))
+    rig.session.trigger_listen()
+    assert rig.session.state is State.LISTENING and "wake" in rig.indicator.cues
+    await rig.frames(*([SPEECH] * 5 + [QUIET] * 8))
+    await rig.session.wait_idle()
+    assert rig.core.asked == [("Wie spät ist es?", None)]
+
+
+async def test_listen_hotkey_interrupts_an_answer_and_listens() -> None:
+    rig = await _speaking_rig("key")
+    rig.session.trigger_listen()
+    await rig.session.wait_idle()
+    assert rig.sink.stops >= 1 and rig.session.state is State.LISTENING
+
+
+async def test_listen_hotkey_wakes_from_sleep_and_listens() -> None:
+    source = FakeSource([QUIET] * 3)
+    rig = Rig(source=source)
+    rig.session.sleep()
+    runner = asyncio.create_task(rig.session.run())
+    await asyncio.sleep(0.05)
+    assert rig.source.closed >= 1  # Mikrofon zu
+    rig.session.trigger_listen()
+    await asyncio.wait_for(runner, 5)
+    assert rig.source.opened >= 2
+    assert State.LISTENING in rig.indicator.states
+
+
+async def test_mute_hotkey_closes_and_reopens_the_microphone() -> None:
+    rig = Rig()
+    rig.session.toggle_mute()
+    assert rig.session.state is State.SLEEP
+    rig.session.toggle_mute()
+    assert rig.session._wake_event.is_set()  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_interrupt_hotkey_stops_speaking() -> None:
+    rig = await _speaking_rig("key")
+    rig.session.request_interrupt()
+    await rig.session.wait_idle()
+    assert rig.sink.stops == 1 and rig.session.state is State.WAITING
+
+
+# ------------------------------------------------------------------------ Doppelklatschen
+async def test_double_clap_starts_listening_and_speech_does_not() -> None:
+    from jarvis_voice.clap import ClapDetector
+
+    rig = Rig()
+    rig.session.parts.clap = ClapDetector(0.3)
+    bang = tone(1000, FRAME_SECONDS, level=0.9)
+    await rig.frames(bang, QUIET, QUIET, QUIET, QUIET, QUIET, QUIET)  # ein Klatschen
+    assert rig.session.state is State.WAITING
+    await rig.frames(bang, QUIET, QUIET)  # zweites nach ca. 0,2 s
+    assert rig.session.state is State.LISTENING
+    rig2 = Rig()
+    rig2.session.parts.clap = ClapDetector(0.3)
+    await rig2.frames(*([tone(250, FRAME_SECONDS, level=0.9)] * 20 + [QUIET] * 5))
+    assert rig2.session.state is State.WAITING  # Sprache ist kein Klatschen
+
+
+async def test_clap_does_not_wake_the_sleeping_session() -> None:
+    from jarvis_voice.clap import ClapDetector
+
+    rig = Rig()
+    rig.session.parts.clap = ClapDetector(0.3)
+    rig.session.sleep()
+    bang = tone(1000, FRAME_SECONDS, level=0.9)
+    await rig.frames(bang, QUIET, QUIET, QUIET, QUIET, QUIET, bang, QUIET, QUIET)
+    assert rig.session.state is State.SLEEP  # das Mikrofon ist zu, nur das Kürzel weckt
+
+
+# ---------------------------------------------------------------------- Wake Word mitten im Satz
+async def _pre_roll_rig(seconds: float, text: str = "Wie spät ist es") -> Rig:
+    config = VoiceConfig(end_silence_seconds=0.2, pre_roll_seconds=seconds, follow_up_seconds=0.0)
+    return Rig(
+        stt=FakeStt((text, "de")), core=FakeCore(answer("Es ist spät genug.")), config=config
+    )
+
+
+async def test_audio_before_the_wake_word_goes_into_the_recognition() -> None:
+    sizes: list[int] = []
+
+    class Measuring(FakeStt):
+        async def transcribe(self, pcm: bytes) -> Transcript:
+            sizes.append(len(pcm))
+            return await super().transcribe(pcm)
+
+    rig = await _pre_roll_rig(6.0)
+    rig.session.parts.stt = Measuring(("Wie spät ist es hey jarvis", "de"))
+    await rig.frames(*([SPEECH] * 20))  # das Gespräch davor
+    await rig.frames(WAKE)
+    await rig.frames(*([QUIET] * 8))  # danach Stille: das Satzende
+    await rig.session.wait_idle()
+    assert sizes and sizes[0] >= 21 * FRAME_SAMPLES_BYTES  # Gespräch davor + Wake Word
+    assert rig.core.asked and rig.core.asked[0][0].startswith("Wie spät ist es")
+
+
+FRAME_SAMPLES_BYTES = 1024
+
+
+async def test_without_pre_roll_nothing_is_kept_in_memory() -> None:
+    rig = await _pre_roll_rig(0.0)
+    assert rig.session._ring is None  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
+    await rig.frames(*([SPEECH] * 30))
+    await rig.frames(WAKE)
+    assert rig.session.state is State.LISTENING
+    assert len(rig.session._buffer) == 0  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_pre_roll_is_capped_cleared_after_use_and_on_sleep() -> None:
+    rig = await _pre_roll_rig(1.0)
+    ring = rig.session._ring  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
+    assert ring is not None
+    await rig.frames(*([SPEECH] * 100))
+    assert len(ring) == 31  # nie mehr als ca. 1 s (gerundet) vorgehalten
+    await rig.frames(WAKE)
+    assert len(ring) == 0  # einmal verwendet, nicht aufgehoben
+    rig.session._to_waiting()  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
+    await rig.frames(*([SPEECH] * 10))
+    assert len(ring) == 10
+    rig.session.sleep()
+    assert len(ring) == 0  # im Schlaf bleibt nichts zurück

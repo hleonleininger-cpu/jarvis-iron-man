@@ -6,11 +6,21 @@ import sys
 from pathlib import Path
 
 from jarvis_core.config import Settings
+from jarvis_voice.clap import ClapDetector
 from jarvis_voice.cli_parts import ConsoleIndicator, NeverWake, NoSource, NullSink, core_client
 from jarvis_voice.engines import MissingPackage
-from jarvis_voice.models import ModelError, load_registry, model_path
-from jarvis_voice.protocols import AudioSink, AudioSource, WakeWordDetector
+from jarvis_voice.hotkeys import HotkeyListener
+from jarvis_voice.models import ModelEntry, ModelError, load_registry, model_path
+from jarvis_voice.protocols import (
+    AudioSink,
+    AudioSource,
+    SpeakerGate,
+    TextTyper,
+    WakeWordDetector,
+    WindowWatcher,
+)
 from jarvis_voice.session import Parts, VoiceSession
+from jarvis_voice.speaker import ProfileError, load_profile, profile_path
 
 
 def models_dir(settings: Settings) -> Path:
@@ -28,6 +38,20 @@ class AudioIndicator(ConsoleIndicator):
         beep = getattr(self._sink, "beep", None)
         if callable(beep):
             beep(name)
+
+
+def build_speaker(
+    settings: Settings, directory: Path, registry: dict[str, ModelEntry]
+) -> SpeakerGate:
+    """Sprecherprüfung (M2.9): Modell und angelerntes Profil müssen da sein."""
+    from jarvis_voice.engines.speaker_sherpa import SherpaEmbedder, SherpaSpeakerGate
+
+    model = model_path(directory, registry["speaker_titanet"], "nemo_en_titanet_small.onnx")
+    try:
+        profile, _name = load_profile(profile_path(settings.data_dir))
+    except ProfileError as exc:
+        raise ModelError(str(exc)) from None
+    return SherpaSpeakerGate(SherpaEmbedder(model), profile, settings.voice.speaker_threshold)
 
 
 def build_parts(settings: Settings, with_audio: bool = True) -> Parts:
@@ -68,6 +92,17 @@ def build_parts(settings: Settings, with_audio: bool = True) -> Parts:
         if with_audio:
             raise
         detector = NeverWake()  # nur Funktionsprobe/Messung auf Systemen ohne das Wake-Word-Paket
+    speaker = build_speaker(settings, directory, registry) if config.speaker_check else None
+    typer: TextTyper | None = None
+    watcher: WindowWatcher | None = None
+    if with_audio:  # Tippen und Fensterwechsel nur im echten Betrieb
+        try:
+            from jarvis_voice.engines.typer_pynput import PynputTyper
+            from jarvis_voice.engines.window_win import ForegroundWatcher
+
+            typer, watcher = PynputTyper(), ForegroundWatcher()
+        except MissingPackage:
+            typer = None  # ohne pynput kein Diktat (und keine Tastenkürzel)
     return Parts(
         source=source,
         sink=sink,
@@ -91,7 +126,37 @@ def build_parts(settings: Settings, with_audio: bool = True) -> Parts:
         ),
         core=core_client(settings),
         indicator=AudioIndicator(sink),
+        speaker=speaker,
+        typer=typer,
+        window=watcher,
+        clap=ClapDetector(config.clap_threshold) if config.clap_wake and with_audio else None,
     )
+
+
+def start_hotkeys(settings: Settings, session: VoiceSession) -> "HotkeyListener | None":
+    """Globale Tastenkürzel (M2.13). Ohne pynput läuft der Client ohne sie weiter."""
+    from jarvis_voice.hotkeys import HotkeyListener
+
+    config = settings.voice
+    actions = {
+        config.hotkey_listen: session.trigger_listen,
+        config.hotkey_mute: session.toggle_mute,
+        config.hotkey_interrupt: session.request_interrupt,
+        config.hotkey_dictation: session.toggle_dictation,
+    }
+    bindings = {combo: action for combo, action in actions.items() if combo}
+    if not bindings:
+        return None
+    listener = HotkeyListener(bindings, asyncio.get_running_loop())
+    try:
+        listener.start()
+    except MissingPackage as exc:
+        print(f"Hinweis: Tastenkürzel sind aus ({exc})", file=sys.stderr)
+        return None
+    except Exception as exc:  # z. B. kein Zugriff auf die Tastatur (Berechtigung)
+        print(f"Hinweis: Tastenkürzel sind aus ({type(exc).__name__}).", file=sys.stderr)
+        return None
+    return listener
 
 
 async def run(settings: Settings, echo: object) -> None:
