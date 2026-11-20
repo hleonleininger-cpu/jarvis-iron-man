@@ -28,7 +28,8 @@ Oberfläche (die schlichte Web-Oberfläche bleibt als Ausweichweg bestehen).
   Vite-Proxy `Origin` und `Sec-Fetch-*`; er gilt nur lokal beim Entwickeln.
 - **Token/Konfiguration (Fund 8):** Das HUD läuft nur auf dem PC und spricht `127.0.0.1:<Port>`
   (Port als Startparameter, Standard aus `jarvis.example.toml`). Dort ist laut ADR-011 kein Token
-  nötig; ist `require_api_token` gesetzt, gibt Master das Token beim Start ein und der Rust-Teil
+  nötig; ist `require_api_token` gesetzt (bewusst, nicht Standard; die Anleitung sagt das, auch wegen
+  Autostart), fragt das HUD beim Start danach und der Rust-Teil
   hält es nur im Arbeitsspeicher. Damit entfallen `keyring` und `toml` im Rust-Teil.
 - **Reihenfolge der Dokumente:** ADR-024 "HUD" entsteht in Block A (Build-Kette nur in `hud/`,
   `api/web` bleibt Ausweichweg, Herkunft, CSP, Kürzel).
@@ -38,10 +39,10 @@ Oberfläche (die schlichte Web-Oberfläche bleibt als Ausweichweg bestehen).
 Heute liefert `/v1/events` nur Erinnerungen und Rückfragen, `/v1/chat` einen Strom je Anfrage. Ein
 HUD braucht einen Strom über alles, auch über Anfragen anderer Clients (zum Beispiel der Stimme).
 
-- **Zuerst prüfen, ob `/v1/events` erweitert werden kann** (kleinerer Diff als ein neuer Endpunkt;
-  Test, dass `api/web/app.js` unbekannte Ereignisse ignoriert). Nur wenn das nicht trägt: neuer
-  Endpunkt `GET /v1/status` (SSE, mit Zugangstoken wie die übrigen). Er schickt beim Verbinden den
-  aktuellen Stand (`snapshot`, inkl. Profil S/M/L), danach Ereignisse:
+- **Entschieden (Prüfrunde 2, Fund 3): die Status-Ereignisse kommen in den vorhandenen Strom
+  `GET /v1/events`.** Kein zweiter Dauerstrom, kleinerer Diff; Rückfragen und Erinnerungen laufen
+  dort ohnehin. Test, dass `api/web/app.js` unbekannte Ereignisse ignoriert. Beim Verbinden
+  sendet der Strom zusätzlich einen `snapshot` (aktueller Stand, inkl. Profil S/M/L), danach:
   `state` (Zustand des Sprachclients), `tool_start`/`tool_end` (Lauf-ID, Werkzeugname,
   Risikoklasse, Dauer, Ergebnis ok/Fehler/abgelehnt), `thinking` (Schrittzähler), `stop`
   (Not-Aus ausgelöst), `mic` (an/aus, dazu ein Lebenszeichen alle ca. 5 s; bleibt es aus, zeigt
@@ -51,18 +52,23 @@ HUD braucht einen Strom über alles, auch über Anfragen anderer Clients (zum Be
   `confirm_open/confirm_done` werden nicht im Bus doppelt geführt. Der Statusstrom selbst bleibt
   inhaltsfrei; die Rückfrage-Karte bekommt `preview`/`question` weiterhin aus dem autorisierten
   Rückfrage-Weg.
-- **Datenschutz:** der Strom enthält nie Nachrichtentext und nie Werkzeugergebnisse, nur Art, Name,
-  Dauer. Das ist dieselbe Regel wie beim Audit. Den Text einer Unterhaltung zeigt nur der
+- **Datenschutz:** die neuen Status-Ereignisse enthalten nie Nachrichtentext und nie Werkzeug-
+  ergebnisse, nur Art, Name, Dauer (die Regel gilt je Ereignistyp; Rückfragen und Erinnerungen
+  bleiben wie bisher). Das ist dieselbe Regel wie beim Audit. Den Text einer Unterhaltung zeigt nur der
   Chat-Bereich des Clients, der sie selbst geführt hat.
 - **Quelle der Ereignisse:** Werkzeug-Ereignisse kommen nur aus `McpHub.gated_call` (nur dort sind
   Dauer, Ergebnis und "abgelehnt" bekannt). Damit die Schichten stimmen (`mcp_hub` darf nicht
-  nach oben importieren), liegt der kleine Verteiler `StatusBus` neben `audit` und wird dem Hub
-  als Beobachter injiziert. Der Sprachclient meldet `state`/`mic`/`level` über `/v1/voice/event`.
+  nach oben importieren), liegt der kleine Verteiler `StatusBus` in einem eigenen Modul
+  `jarvis_core/status.py` und wird dem Hub als Beobachter injiziert. `thinking` und `stop` meldet
+  `ChatService` (agent darf auf die untere Schicht zugreifen). Der Sprachclient meldet
+  `state`/`mic`/`level`/`heartbeat` über `/v1/voice/event`.
   Kein zweites State-System: der Bus hält nur den letzten Stand je Zustand im Arbeitsspeicher.
 - **Sprachclient meldet Zustand:** `CoreClient.voice_event` kennt bisher nur Diktat-Ereignisse;
   er bekommt `state`, `mic` und `level` dazu. Zustandswechsel und Mikrofon an/aus kommen ins Audit
   (nur Ereignisart). Pegelwerte (höchstens 5-10 Hz, 4-8 Stufen) und Lebenszeichen gehen über
-  einen eigenen Pfad ohne Audit je Wert, sonst flutete das Audit. Das HUD öffnet nie selbst ein
+  denselben Endpunkt `POST /v1/voice/event` mit den Arten `level` und `heartbeat`, die nicht ins Audit
+  gehen (`state` und `mic` gehen hinein); das `Literal` in `VoiceEvent` wird erweitert, ein Test
+  belegt, dass `level`/`heartbeat` keinen Audit-Eintrag erzeugen. Sonst flutete das Audit. Das HUD öffnet nie selbst ein
   Mikrofon.
 
 ## 4. Aufbau von `hud/`
@@ -70,7 +76,10 @@ HUD braucht einen Strom über alles, auch über Anfragen anderer Clients (zum Be
 hud/
   package.json, vite.config.ts, tsconfig.json   (Vite, React 18, TypeScript streng)
   src/            React-Oberfläche: Kacheln, Zustandsring, Aktivitätsliste, Rückfrage-Karte
-  src/api/        Client für /v1/status, /v1/chat, /v1/confirm, /v1/stop (SSE selbst gelesen)
+  src/api/        Transportschnittstelle mit zwei Umsetzungen: `fetch` (Dev-Modus, SSE selbst
+                  gelesen) und `invoke`/`listen` (unter Tauri). Sie liegt schon in Block A, damit
+                  Block B nur die zweite Umsetzung ergänzt. Aufrufe: /v1/events, /v1/chat,
+                  /v1/confirm, /v1/stop, /v1/tiles.
   src/theme/      Farben, Schrift, Animationen als CSS-Variablen
   src-tauri/      Rust-Teil: Fenster, Tray, globale Not-Aus-Taste, Overlay-Modus
 ```
@@ -87,7 +96,8 @@ Neue Abhängigkeiten (vollständige Liste; nichts anderes kommt ohne Rückfrage 
 | Cargo: `tauri` (Feature `tray-icon`), `tauri-build` | Fenster, Tray | M3.2 |
 | Cargo: `tauri-plugin-global-shortcut` | Not-Aus-Kürzel, Overlay-Umschalter | M3.2/M3.5 |
 | Cargo: `tauri-plugin-autostart` | Start mit Windows (Schalter) | M3.2 |
-| Cargo: `reqwest` (nur localhost, rustls) | Core-Aufrufe aus dem Rust-Teil | M3.2 |
+| Cargo: `reqwest` (`default-features = false`, Features `json`, `stream`; kein TLS, nur `http://127.0.0.1`), `futures-util` | Core-Aufrufe und SSE-Ströme lesen im Rust-Teil | M3.2 |
+| Cargo: `serde`, `serde_json` | Tauri-Befehle, Ereignisdaten | M3.2 |
 | Python: `psutil` (nur falls die `hardware`-Schicht CPU/RAM nicht schon liefert) | System-Kachel | M3.6 |
 
 Das Plugin `shell` wird ausdrücklich nicht verwendet. Töne und Schrift: nur eigene oder frei
@@ -98,7 +108,7 @@ lizenzierte Dateien (CC0/OFL), keine Filmsounds. Versionen sind festgeschrieben
 Ein Block je Nacht, jeder mit Commit, Tests, CI und Anleitung.
 
 ### Block A (Nacht 1): Strom, Oberfläche, Aktivität
-- **Core:** `StatusBus`, `GET /v1/status`, Tests mit Attrappen (Datenschutz-Test: kein Text im
+- **Core:** `StatusBus` (`jarvis_core/status.py`), Erweiterung von `/v1/events` und `/v1/voice/event`, Tests mit Attrappen (Datenschutz-Test: kein Text im
   Strom, Strom bricht bei Token-Fehler mit 401 ab, Verbindung hält Leerlauf aus).
 - **M3.1 Oberfläche im Iron-Man-Stil:** Vite-Projekt, Zustandsring, Aktivitätsliste, Chat-Bereich,
   Rückfrage-Karte, dunkles HUD-Thema mit Cyan/Orange, Schrift mitgeliefert. Läuft zuerst im
@@ -121,7 +131,11 @@ Ein Block je Nacht, jeder mit Commit, Tests, CI und Anleitung.
 - **M3.5 Transparentes Overlay:** Fenster ohne Rahmen, durchsichtig, immer im Vordergrund,
   Klicks gehen durch, Umschalten per Tray und Kürzel. Standard ist AUS (Fenstermodus). Im Overlay
   ist der rote Knopf nicht klickbar: Not-Aus und Verlassen gehen dort über Kürzel und Tray;
-  optional schaltet das Halten von Strg den Klick-Durchlass kurz aus.
+  ein weiteres Kürzel schaltet den Klick-Durchlass um (Halten-Tasten kennt `global-shortcut` nicht).
+  Ist ein Kürzel schon von einem anderen Programm belegt, meldet das HUD sichtbar "Not-Aus-Kürzel
+  nicht verfügbar" (mit Test).
+- **SSE im Rust-Teil:** Rust liest `/v1/events` und `/v1/chat`, reicht sie als Tauri-Ereignisse an
+  die Oberfläche weiter und bricht sie beim Not-Aus und beim Schließen des Fensters ab.
 - Windows-CI: `npm ci && npm run build` (Tauri prüft `frontendDist`), dann `cargo check` und
   `cargo clippy` für `src-tauri`, mit `Swatinem/rust-cache`; der Job läuft nur bei Änderungen unter
   `hud/` (Minuten sparen, falls das Repo privat ist). Ein echter Fenstertest ist nur am PC möglich.
@@ -138,7 +152,10 @@ Ein Block je Nacht, jeder mit Commit, Tests, CI und Anleitung.
 
 ### Block D (Nacht 4): Kacheln und Lage
 - **M3.6 Live-Kacheln:** ein lesender Endpunkt `GET /v1/tiles` (Cache ca. 60 s, Audit ohne Inhalte);
-  das HUD ruft keine MCP-Werkzeuge selbst. System (CPU/RAM aus der `hardware`-Schicht, sonst
+  das HUD ruft keine MCP-Werkzeuge selbst. Kachelabrufe laufen über denselben Weg wie Anfragen
+  (Anfrage-Sperre, `gated_call`, Policy READ, der Not-Aus bricht sie ab) und reihen sich hinter
+  laufende Anfragen ein; solange gesperrt ist, liefert der Cache den letzten Stand mit Zeitstempel.
+  Kein zweiter Hub. System (CPU/RAM aus der `hardware`-Schicht, sonst
   `psutil`; greift M4.9 nur minimal vor), Termine (nächste drei, aus dem Cache, nie je Frame
   gepollt), Missionen (offene Aufgaben aus dem Notizen-Server), Fokus (ADR-016 kennt kein
   "aktives Projekt": entweder dort definieren oder die Kachel zeigt "keine Daten"). Jede Kachel
@@ -155,8 +172,8 @@ Ein Block je Nacht, jeder mit Commit, Tests, CI und Anleitung.
 - Strom ohne Inhalte (siehe 3). Test, der prüft, dass kein Feld mit Text/Ergebnis vorkommt.
 - Das HUD speichert nichts außer Fensterposition und Einstellungen (Overlay, Sounds), lokal.
 - Content-Security-Policy in Tauri: `default-src 'self'`, Webview ohne Netzwerkzugriff nach außen
-  (`connect-src 'none'`; Core-Aufrufe laufen im Rust-Teil, `connect-src` steht fest in der
-  Konfiguration, nicht zur Laufzeit). Keine Fernladung, kein `eval`, kein `dangerouslySetInnerHTML`
+  (`connect-src ipc: http://ipc.localhost`, nur die Tauri-IPC; Core-Aufrufe laufen im Rust-Teil;
+  Wert steht fest in `tauri.conf.json`, ein Test prüft ihn). Keine Fernladung, kein `eval`, kein `dangerouslySetInnerHTML`
   (Lint-Regel plus Test).
 - Ein Token (nur falls `require_api_token`) liegt im Arbeitsspeicher des Rust-Teils, nie in
   `localStorage` und nie im Log.
@@ -198,4 +215,9 @@ bereits mit Node allein im Browser, damit Master früh etwas sieht.
 Runde 1 (Opus): NACHBESSERN, 5 hohe, 8 mittlere, 8 niedrige Funde. Alle eingearbeitet (Herkunft
 über den Rust-Teil, eigenes Not-Aus-Kürzel, Pegel nur vom Sprachclient und gedrosselt, M3.9 an
 M4.6/M4.8, vollständige Abhängigkeitsliste, `/v1/tiles`, Bus-Schichtung, Token im Speicher, ADR-024,
-CI-Details). Runde 2 steht aus.
+CI-Details). Runde 2 (Opus): NACHBESSERN (knapp), keine hohen Funde mehr, 4 mittlere, 6 niedrige. Alle
+eingearbeitet (Transportschicht mit zwei Umsetzungen, vollständige Cargo-Liste, `/v1/events`
+statt neuem Endpunkt, `/v1/tiles` über denselben Weg wie Anfragen, `status.py`, Pegel ohne Audit,
+CSP `ipc:`, Overlay-Umschalter, Kürzel-Fehlermeldung, Token-Hinweis). Zwei Runden sind
+verbraucht, ein ausdrückliches "perfekt" gab es nicht: nach der Freigabe-Regel baue ich M3 daher
+nicht von selbst, sondern frage Master in der Besprechung um sein Okay.
