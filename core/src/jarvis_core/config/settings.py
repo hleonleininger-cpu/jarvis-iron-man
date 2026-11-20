@@ -149,7 +149,7 @@ class VoiceConfig(BaseModel):
     pre_roll_seconds: float = Field(default=0.0, ge=0.0, le=15.0)
     # Sprecherprüfung (M2.9): nur Masters Stimme zählt. Braucht `jarvis voice anlernen`.
     speaker_check: bool = False
-    speaker_threshold: float = Field(default=0.4, ge=0.1, le=0.95)
+    speaker_threshold: float = Field(default=0.5, ge=0.1, le=0.95)
     # Diktiermodus (M2.12): endet nach so vielen Sekunden Stille von selbst.
     dictation_idle_seconds: float = Field(default=60.0, ge=5.0, le=600.0)
     # Geräte (Name oder Teil davon); None = Standardgerät.
@@ -173,9 +173,29 @@ class VoiceConfig(BaseModel):
             r"(<(ctrl|alt|shift|cmd|alt_gr)>\+)+"
             r"([a-z0-9]|<f([1-9]|1[0-9]|2[0-4])>|<(space|home|end|insert|delete|page_up|page_down)>)"
         )
-        if value and not re.fullmatch(pattern, value):
-            raise ValueError("Tastenkürzel wie <ctrl>+<alt>+j schreiben (oder leer lassen).")
+        if value and not (
+            re.fullmatch(pattern, value) and any(m in value for m in ("ctrl", "alt", "cmd"))
+        ):
+            raise ValueError(
+                "Tastenkürzel wie <ctrl>+<alt>+j, mit Strg, Alt oder Cmd (oder leer lassen)."
+            )
         return value
+
+    @model_validator(mode="after")
+    def _hotkeys_are_distinct(self) -> "VoiceConfig":
+        used = [
+            k
+            for k in (
+                self.hotkey_listen,
+                self.hotkey_mute,
+                self.hotkey_interrupt,
+                self.hotkey_dictation,
+            )
+            if k
+        ]
+        if len(used) != len(set(used)):
+            raise ValueError("Jedes Tastenkürzel darf nur einmal vergeben sein.")
+        return self
 
     @field_validator("core_url")
     @classmethod

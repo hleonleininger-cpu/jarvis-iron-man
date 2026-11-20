@@ -47,9 +47,14 @@ def average(vectors: Sequence[Sequence[float]]) -> list[float]:
 def save_profile(path: Path, vector: Sequence[float], model: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {"version": PROFILE_VERSION, "model": model, "embedding": normalize(vector)}
-    path.write_text(json.dumps(payload), encoding="utf-8")
+    temporary = path.with_suffix(".tmp")
+    # Von Anfang an nur für den Benutzer lesbar (unter Windows ohne Wirkung), dann atomar ersetzen.
+    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload))
     with contextlib.suppress(OSError, NotImplementedError):
-        os.chmod(path, 0o600)  # nur der Benutzer; unter Windows ohne Wirkung
+        os.chmod(temporary, 0o600)
+    temporary.replace(path)
 
 
 def load_profile(path: Path) -> tuple[list[float], str]:

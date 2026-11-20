@@ -16,7 +16,10 @@ HOTKEY_PATTERN = re.compile(
 
 
 def valid_hotkey(text: str) -> bool:
-    return bool(HOTKEY_PATTERN.fullmatch(text))
+    """Nur mit Strg, Alt oder Cmd: <shift>+j löste bei jedem großen J aus (auch beim Diktat)."""
+    if not HOTKEY_PATTERN.fullmatch(text):
+        return False
+    return any(mod in text for mod in ("<ctrl>", "<alt>", "<cmd>", "<alt_gr>"))
 
 
 class HotkeyListener:

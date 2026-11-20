@@ -37,7 +37,7 @@ class SherpaEmbedder:
 
 class SherpaSpeakerGate:
     def __init__(
-        self, embedder: SherpaEmbedder, profile: Sequence[float], threshold: float = 0.4
+        self, embedder: SherpaEmbedder, profile: Sequence[float], threshold: float = 0.5
     ) -> None:
         self._embedder = embedder
         self._profile = list(profile)

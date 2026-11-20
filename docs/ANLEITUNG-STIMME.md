@@ -46,12 +46,12 @@ hilft "Stopp", sobald das Mikrofon zuhört.
   Im Schlafmodus ist das Mikrofon zu: dort weckt nur Strg+Alt+J.
 - **Diktat:** "Diktiermodus an" (oder Strg+Alt+D). Das Gesprochene wird als Text in das gerade aktive
   Fenster getippt, ohne Zwischenablage und ohne Enter, Tab oder Steuerzeichen. Es endet mit
-  "Diktat Ende", Strg+Alt+D, Fensterwechsel, "Gute Nacht" oder nach `dictation_idle_seconds` (60 s)
+  "Diktat Ende", Strg+Alt+D, Fensterwechsel (nur unter Windows erkannt), "Gute Nacht" oder nach `dictation_idle_seconds` (60 s)
   Stille. Der Core protokolliert nur Beginn und Ende, nie den Text. Die Anzeige zeigt DIKTAT.
 - **Stimmerkennung** (nur deine Stimme zählt): 1. `uv run jarvis voice setup --nur speaker_titanet`
   (40 MB), 2. `uv run jarvis voice anlernen` (fünf Sätze vorlesen; gespeichert wird nur ein Vektor,
   kein Audio), 3. in `[voice]` `speaker_check = true`. Die Ausgabe nennt, wie ähnlich deine
-  Aufnahmen dem Profil sind; `speaker_threshold` (Standard 0,40) sollte darunter liegen. Zu kurze
+  Aufnahmen dem Profil sind; `speaker_threshold` (Standard 0,50) sollte darunter liegen. Zu kurze
   Äußerungen (unter 0,5 s) werden abgelehnt. `uv run jarvis voice vergessen` löscht das Profil.
   Bestätigen per Stimme (`confirm_by_voice = true`) geht nur mit eingeschalteter Sprecherprüfung,
   nur für anlegen/ändern, die sich rückgängig machen lassen, und nur mit der Phrase "Ja,

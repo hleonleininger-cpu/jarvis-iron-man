@@ -802,11 +802,11 @@ async def test_audio_before_the_wake_word_goes_into_the_recognition() -> None:
 
     rig = await _pre_roll_rig(6.0)
     rig.session.parts.stt = Measuring(("Wie spät ist es hey jarvis", "de"))
-    await rig.frames(*([SPEECH] * 20))  # das Gespräch davor
+    await rig.frames(*([SPEECH] * 60))  # das Gespräch davor (länger als der Wake-Satz)
     await rig.frames(WAKE)
     await rig.frames(*([QUIET] * 8))  # danach Stille: das Satzende
     await rig.session.wait_idle()
-    assert sizes and sizes[0] >= 21 * FRAME_SAMPLES_BYTES  # Gespräch davor + Wake Word
+    assert sizes and sizes[0] >= 61 * FRAME_SAMPLES_BYTES  # Gespräch davor + Wake Word
     assert rig.core.asked and rig.core.asked[0][0].startswith("Wie spät ist es")
 
 
@@ -835,3 +835,57 @@ async def test_pre_roll_is_capped_cleared_after_use_and_on_sleep() -> None:
     assert len(ring) == 10
     rig.session.sleep()
     assert len(ring) == 0  # im Schlaf bleibt nichts zurück
+
+
+# ----------------------------------------------------------- Prüffunde Block C (Nachbesserung)
+class _SlowStt(FakeStt):
+    """Erkennung, die erst nach einem Signal fertig wird (Diktat endet währenddessen)."""
+
+    def __init__(self, *results: tuple[str, str | None]) -> None:
+        super().__init__(*results)
+        self.gate = asyncio.Event()
+
+    async def transcribe(self, pcm: bytes) -> Transcript:
+        await self.gate.wait()
+        return await super().transcribe(pcm)
+
+
+async def test_dictation_utterance_never_reaches_the_core_when_dictation_ended_meanwhile() -> None:
+    typer = FakeTyper()
+    stt = _SlowStt(("Das ist ein vertraulicher Satz", "de"))
+    rig = _rig_with(typer, FakeWindow(), stt=stt)
+    rig.session.toggle_dictation()
+    await rig.session.wait_idle()
+    await rig.frames(*([SPEECH] * 5 + [QUIET] * 8))  # die Erkennung hängt noch
+    rig.session.toggle_dictation()  # Diktat endet währenddessen
+    stt.gate.set()
+    await rig.session.wait_idle()
+    assert rig.core.asked == []
+    assert typer.typed == []
+
+
+async def test_sleep_cancels_a_running_reply() -> None:
+    stt = _SlowStt(("Wie spät ist es", "de"))
+    rig = _rig_with(stt=stt)
+    await rig.frames(WAKE)
+    await rig.frames(*([SPEECH] * 5 + [QUIET] * 8))
+    rig.session.sleep()
+    stt.gate.set()
+    await rig.session.wait_idle()
+    assert rig.core.asked == []
+    assert rig.session.state is State.SLEEP
+
+
+async def test_state_stays_asleep_until_wake() -> None:
+    rig = _rig_with()
+    rig.session.sleep()
+    rig.session._to_waiting()  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
+    assert rig.session.state is State.SLEEP
+
+
+async def test_shutdown_audits_the_end_of_a_running_dictation() -> None:
+    rig = _rig_with(FakeTyper(), FakeWindow())
+    rig.session.toggle_dictation()
+    await rig.session.wait_idle()
+    await rig.session.shutdown()
+    assert rig.core.events == ["dictation_start", "dictation_end"]

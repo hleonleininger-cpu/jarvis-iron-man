@@ -48,9 +48,16 @@ def build_speaker(
 
     model = model_path(directory, registry["speaker_titanet"], "nemo_en_titanet_small.onnx")
     try:
-        profile, _name = load_profile(profile_path(settings.data_dir))
+        profile, name = load_profile(profile_path(settings.data_dir))
     except ProfileError as exc:
         raise ModelError(str(exc)) from None
+    if (
+        name != model.name
+    ):  # das Profil stammt von einem anderen Modell: Vektoren sind nicht vergleichbar
+        raise ModelError(
+            f"Das Sprecherprofil gehört zum Modell {name}, geladen ist {model.name}. "
+            "Neu anlernen mit: jarvis voice anlernen"
+        )
     return SherpaSpeakerGate(SherpaEmbedder(model), profile, settings.voice.speaker_threshold)
 
 
@@ -170,12 +177,15 @@ async def run(settings: Settings, echo: object) -> None:
     # Modelle vorab laden, damit die erste Antwort nicht auf das Laden warten muss.
     await asyncio.to_thread(parts.stt.warm_up)  # type: ignore[attr-defined]
     await asyncio.to_thread(parts.tts.warm_up)  # type: ignore[attr-defined]
+    hotkeys = start_hotkeys(settings, session)
     print(
         'Bereit. Sage "Hey Jarvis". Beenden mit Strg+C, schlafen mit "Gute Nacht".', file=sys.stderr
     )
     try:
         await session.run()
     finally:
+        if hotkeys is not None:
+            hotkeys.stop()
         with contextlib.suppress(Exception):
             await parts.core.aclose()  # type: ignore[attr-defined]
 

@@ -40,6 +40,8 @@ from jarvis_voice.protocols import (
 )
 from jarvis_voice.sentences import SentenceChunker
 
+WAKE_PHRASE_FRAMES = 40  # ca. 1,3 s: so lang ist "Hey Jarvis" samt Nachlauf höchstens
+MIN_CONTEXT_FRAMES = 6  # so viel Sprache davor gilt als Gespräch (ca. 0,2 s)
 MAX_TEXT_CHARS = 500  # so viel Text tippt das Diktat je Äußerung höchstens
 MAX_TURNS = 50  # so viele Zeitmessungen bleiben für `jarvis voice bench` im Speicher
 BARGE_IN_FRAMES = 4  # so viele Sprach-Frames in Folge (ca. 130 ms) unterbrechen die Ausgabe
@@ -136,10 +138,13 @@ class VoiceSession:
         self._dictating = False
         self._dictation_window: object | None = None
         self._listen_after_wake = False
+        self._waking = False
         self.parts.indicator.show(self.state)
 
     # ------------------------------------------------------------------ Zustand und Anzeige
     def _set(self, state: State) -> None:
+        if self.state is State.SLEEP and state is not State.SLEEP and not self._waking:
+            return  # aus dem Schlaf kommt nur `run()` nach `wake()` heraus
         if state is not self.state:
             self.state = state
             self.parts.indicator.show(state)
@@ -153,15 +158,17 @@ class VoiceSession:
         self.parts.turn.reset()
         self.parts.vad.reset()
         self._deadline = self.clock() + timeout
+        if self._ring is not None:
+            self._ring.clear()  # in jedem Fall: was vor dem Zuhören war, bleibt nicht liegen
         if seed:  # Audio vor dem Wake Word geht mit in die Erkennung (M2.10)
             self._buffer += b"".join(seed)
-            last_speech: bytes | None = None
-            for frame in seed:
-                if self.parts.vad.is_speech(frame):
-                    last_speech = frame
-            if last_speech is not None:
+            # Sprache VOR dem Wake-Word-Satz? Dann ist die Äußerung schon da und endet mit der
+            # nächsten Pause. Steht nur "Hey Jarvis" im Puffer, kommt die Frage erst danach.
+            body = seed[: max(0, len(seed) - WAKE_PHRASE_FRAMES)]
+            speech = [f for f in body if self.parts.vad.is_speech(f)]
+            if len(speech) >= MIN_CONTEXT_FRAMES:
                 self._heard = True
-                self.parts.turn.feed(last_speech, True)  # der Satzende-Erkenner kennt die Sprache
+                self.parts.turn.feed(speech[-1], True)  # der Satzende-Erkenner kennt die Sprache
         self._set(state)
 
     def _to_waiting(self) -> None:
@@ -179,7 +186,9 @@ class VoiceSession:
                     self._wake_event.clear()
                     await self._wake_event.wait()
                     await self.parts.source.open()
+                    self._waking = True
                     self._to_waiting()
+                    self._waking = False
                     self.parts.indicator.cue("wake")
                     if self._listen_after_wake:  # Tastenkürzel "zuhören" im Schlaf
                         self._listen_after_wake = False
@@ -201,6 +210,12 @@ class VoiceSession:
     async def shutdown(self) -> None:
         self.parts.source.close()
         self.parts.sink.stop()
+        if self._ring is not None:
+            self._ring.clear()
+        if self._dictating:  # auch bei Strg+C: das Ende gehört ins Audit
+            self._dictating = False
+            with contextlib.suppress(Exception):
+                await self.parts.core.voice_event("dictation_end")
         for task in list(self._tasks):
             task.cancel()
         for task in list(self._tasks):
@@ -237,6 +252,8 @@ class VoiceSession:
         self._buffer += frame
         if speech:
             self._heard = True
+            if self._dictating:  # wer spricht, diktiert noch: die Ruhe-Frist beginnt neu
+                self._deadline = now + self.config.dictation_idle_seconds
         ended = self._heard and self.parts.turn.feed(frame, speech)
         too_long = len(self._buffer) / 2 / SAMPLE_RATE >= self.config.max_utterance_seconds
         if ended or too_long:
@@ -264,7 +281,7 @@ class VoiceSession:
         self.parts.turn.reset()
         if not self._dictating:  # beim Diktat bleibt die Anzeige "DIKTAT" und das Zuhören an
             self._set(State.THINKING)  # auch bei CONFIRM: nach einer Äußerung nicht weiter zuhören
-        self._spawn(self._process(pcm))
+        self._spawn(self._process(pcm, dictation=self._dictating))
 
     def _maybe_barge_in(self, frame: bytes, now: float) -> None:
         """Unterbrechen per Stimme (nur `barge_in = "voice"`); Wake Word wird hier ignoriert."""
@@ -285,9 +302,9 @@ class VoiceSession:
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
 
-    async def _process(self, pcm: bytes) -> None:
+    async def _process(self, pcm: bytes, dictation: bool = False) -> None:
         try:
-            await self._recognize_and_answer(pcm)
+            await self._recognize_and_answer(pcm, dictation)
         except asyncio.CancelledError:
             raise
         except (
@@ -297,7 +314,7 @@ class VoiceSession:
                 self._answer.set_result(None)
             self._to_waiting()
 
-    async def _recognize_and_answer(self, pcm: bytes) -> None:
+    async def _recognize_and_answer(self, pcm: bytes, dictation: bool = False) -> None:
         transcript = await self.parts.stt.transcribe(pcm)
         if self._turn is not None:
             self._turn.transcribed = self.clock()
@@ -307,13 +324,18 @@ class VoiceSession:
         elif transcript.language in ("de", "en"):
             self._language = transcript.language or "de"
         # Mit Sprecherprüfung zählt nur Masters Stimme (M2.9); sonst jede.
-        if text and self.parts.speaker is not None and not self.parts.speaker.verify(pcm):
+        speaker = self.parts.speaker
+        # Das Urteil rechnet das Modell: nicht in der Event-Loop, sonst steht alles still.
+        if text and speaker is not None and not await asyncio.to_thread(speaker.verify, pcm):
             text = ""
         if self._answer is not None and not self._answer.done():
             self._resolve_answer(text)
             return
-        if self._dictating:
-            await self._dictate(text)
+        if dictation:
+            # Eine Äußerung, die beim Diktat aufgenommen wurde, geht NIE zum Core (ADR-023): ist
+            # das Diktat inzwischen beendet, wird sie verworfen.
+            if self._dictating:
+                await self._dictate(text)
             return
         if not text:  # nichts oder eine fremde Stimme: kein neues Folgefragen-Fenster öffnen
             self._to_waiting()
@@ -524,8 +546,12 @@ class VoiceSession:
 
     def sleep(self) -> None:
         """Mikrofon ganz schließen (Schlafmodus, harte Stummschaltung). Nur `wake()` weckt."""
-        self._end_dictation()
         self.parts.sink.stop()
+        current = asyncio.current_task()
+        for task in list(self._tasks):  # laufende Antwort und Erkennung enden mit dem Mikrofon
+            if task is not current:
+                task.cancel()
+        self._end_dictation()  # erst danach: sein Audit-Ereignis darf nicht mit abgebrochen werden
         if self._ring is not None:
             self._ring.clear()  # nichts vom Mitgehörten bleibt im Schlaf zurück
         if self.parts.clap is not None:

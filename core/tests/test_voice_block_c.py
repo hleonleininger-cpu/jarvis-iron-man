@@ -123,3 +123,14 @@ def test_config_validates_hotkeys_and_allows_switching_off() -> None:
     with pytest.raises(ValidationError):
         VoiceConfig(hotkey_mute="ctrl m")
     assert sys.platform  # (Modul genutzt)
+
+
+def test_hotkeys_need_a_modifier_and_must_differ() -> None:
+    from pydantic import ValidationError
+
+    from jarvis_core.config.settings import VoiceConfig
+
+    with pytest.raises(ValidationError):
+        VoiceConfig(hotkey_listen="<shift>+j")
+    with pytest.raises(ValidationError):
+        VoiceConfig(hotkey_listen="<ctrl>+<alt>+j", hotkey_mute="<ctrl>+<alt>+j")
