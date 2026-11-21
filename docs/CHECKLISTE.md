@@ -52,14 +52,14 @@ Markierungen:
 - [~] M2.13 Start per Tastenkürzel oder Doppelklatschen (gebaut: globale Kürzel (Strg+Alt+J/M/X/D) über pynput und Doppelklatschen als reine Signalverarbeitung; getestet mit Attrappen und künstlichen Signalen, echte Tastatur und echtes Klatschen nur am PC prüfbar. Beleg: hotkeys.py, clap.py, tests/test_voice_block_c.py)
 
 ## M3 – HUD
-- [ ] M3.1 Web-Oberfläche im Iron-Man-Stil (Bestand: schlichte Chat-Oberfläche hell/dunkel mit Markdown, Stopp, Rückfragen und Erinnerungen, api/web/; kein HUD-Stil)
+- [~] M3.1 Web-Oberfläche im Iron-Man-Stil (gebaut: hud/ mit Vite, React, TypeScript; Zustandsring, Aktivität, Gespräch, Rückfrage-Karte, Not-Aus; läuft im Browser über `npm run dev`, Desktop-App folgt mit M3.2. Status-Ereignisse inhaltsfrei in /v1/events. Beleg: hud/, core/src/jarvis_core/status.py, core/tests/test_status.py, hud/test/, docs/ANLEITUNG-HUD.md, ADR-024. Optik nur von Master beurteilbar)
 - [ ] M3.2 Desktop-App mit Tauri 2
 - [ ] M3.3 Boot-Sequenz und Sounds
 - [ ] M3.4 Audio-Visualizer beim Zuhören und Sprechen
 - [ ] M3.5 Transparentes Overlay über dem Desktop
 - [ ] M3.6 Live-Kacheln: System, Termine, Fokus, Missionen
 - [ ] M3.7 Situatives HUD: Anzeigen erscheinen nur, wenn sie gebraucht werden
-- [ ] M3.8 Anzeige, was Jarvis gerade tut, mit Abbrechen-Knopf
+- [~] M3.8 Anzeige, was Jarvis gerade tut, mit Abbrechen-Knopf (gebaut: Aktivitätsliste aus tool_start/tool_end mit Risiko, Ergebnis, Dauer; Not-Aus-Knopf und Strg+.; Hinweis auf `jarvis stop`, wenn der Core nicht antwortet. Beleg: hud/src/components/ActivityList.tsx, hud/test/app.test.tsx, core/tests/test_status.py)
 - [ ] M3.9 Augensymbol, solange Jarvis den Bildschirm liest
 - [ ] M3.10 Drehbare 3D-Ansichten als Hologramm-Ersatz
 

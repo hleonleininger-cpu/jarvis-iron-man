@@ -8,11 +8,11 @@ import json
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.responses import Response, StreamingResponse
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic_ai.models import Model
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
@@ -34,6 +34,7 @@ from jarvis_core.agent import (
 from jarvis_core.agent.confirmation import ConfirmDone, ConfirmRequest
 from jarvis_core.audit import AuditLog
 from jarvis_core.config import Settings
+from jarvis_core.status import StatusEvent
 
 
 class ChatRequest(BaseModel):
@@ -58,10 +59,37 @@ class ConfirmAnswer(BaseModel):
     via: Literal["voice"] | None = None
 
 
-class VoiceEvent(BaseModel):
-    """Ereignis des Sprachclients fürs Audit: nur die Art, nie Inhalte."""
+VoiceState = Literal[
+    "SCHLAF", "WARTET", "HÖRT ZU", "DENKT", "SPRICHT", "DIKTAT", "WARTET AUF JA/NEIN"
+]
+# Welche Angabe zu welcher Art gehört; mehr nimmt der Core nicht an.
+_VOICE_FIELDS: dict[str, frozenset[str]] = {
+    "dictation_start": frozenset(),
+    "dictation_end": frozenset(),
+    "state": frozenset({"state"}),
+    "mic": frozenset({"on"}),
+    "level": frozenset({"level", "source"}),
+    "heartbeat": frozenset(),
+}
 
-    event: Literal["dictation_start", "dictation_end"]
+
+class VoiceEvent(BaseModel):
+    """Ereignis des Sprachclients: nie Inhalte. Diktat, Zustand und Mikrofon gehen ins Audit
+    (nur die Art); Pegel und Lebenszeichen nur ans HUD, sonst flutete das Audit."""
+
+    event: Literal["dictation_start", "dictation_end", "state", "mic", "level", "heartbeat"]
+    state: VoiceState | None = None
+    on: bool | None = None
+    level: int | None = Field(default=None, ge=0, le=7)
+    source: Literal["mic", "speaker"] | None = None
+
+    @model_validator(mode="after")
+    def _fields_match_event(self) -> "VoiceEvent":
+        names = ("state", "on", "level", "source")
+        given = frozenset(name for name in names if getattr(self, name) is not None)
+        if given != _VOICE_FIELDS[self.event]:
+            raise ValueError(f"Für '{self.event}' passen diese Angaben nicht: {sorted(given)}")
+        return self
 
 
 # Lebenszeichen während Funkstille (z. B. Rückfrage offen): Clients und Proxys trennen sonst
@@ -144,6 +172,21 @@ async def with_keepalive[T](source: AsyncGenerator[T], interval: float) -> Async
             with suppress(asyncio.CancelledError, StopAsyncIteration, Exception):
                 await pending
         await source.aclose()
+
+
+async def merge_queues(*queues: asyncio.Queue[Any]) -> AsyncGenerator[Any]:
+    """Liefert Einträge aus allen Warteschlangen, in der Reihenfolge ihres Eintreffens."""
+    waiting = {asyncio.ensure_future(queue.get()): queue for queue in queues}
+    try:
+        while True:
+            done, _ = await asyncio.wait(waiting, return_when=asyncio.FIRST_COMPLETED)
+            for future in [f for f in waiting if f in done]:  # feste Reihenfolge der Quellen
+                queue = waiting.pop(future)
+                yield future.result()
+                waiting[asyncio.ensure_future(queue.get())] = queue
+    finally:
+        for future in waiting:
+            future.cancel()
 
 
 def _sse(event: str, data: dict[str, object]) -> str:
@@ -289,46 +332,47 @@ def create_app(
 
     @app.post("/v1/voice/event", dependencies=guarded)
     async def voice_event(item: VoiceEvent) -> dict[str, str]:  # pyright: ignore[reportUnusedFunction]
-        """Audit-Eintrag für Dinge, die der Sprachclient ohne Anfrage tut (Diktiermodus)."""
-        service.record_event("voice", f"voice_{item.event}", "WRITE_LOCAL", "ALLOW", "ok")
+        """Meldungen des Sprachclients: Diktat (Audit), Zustand und Mikrofon (Audit und HUD),
+        Pegel und Lebenszeichen (nur HUD)."""
+        match item.event:
+            case "dictation_start" | "dictation_end":
+                service.record_event("voice", f"voice_{item.event}", "WRITE_LOCAL", "ALLOW", "ok")
+            case "state":
+                service.record_event("voice", "voice_state", "READ", "ALLOW", "ok")
+                service.status.publish("state", state=item.state)
+            case "mic":
+                tool = "voice_mic_on" if item.on else "voice_mic_off"
+                service.record_event("voice", tool, "READ", "ALLOW", "ok")
+                service.status.publish("mic", on=item.on)
+            case "level":
+                service.status.publish("level", level=item.level, source=item.source)
+            case "heartbeat":
+                service.status.publish("heartbeat")
         return {"status": "ok"}
 
     @app.get("/v1/events", dependencies=guarded)
     async def events_stream() -> StreamingResponse:  # pyright: ignore[reportUnusedFunction]
-        """Dauerhafter Stream für Meldungen ohne Anfrage: Erinnerungen (ADR-013) und Rückfragen,
-        damit eine offene Rückfrage auch auf einem anderen Gerät (Handy) beantwortet werden kann."""
-
-        async def merged(
-            reminder_queue: asyncio.Queue[Reminder],
-            confirm_queue: asyncio.Queue[ConfirmRequest | ConfirmDone],
-        ) -> AsyncGenerator[Reminder | ConfirmRequest | ConfirmDone]:
-            waiting_reminder = asyncio.ensure_future(reminder_queue.get())
-            waiting_confirm = asyncio.ensure_future(confirm_queue.get())
-            try:
-                while True:
-                    await asyncio.wait(
-                        {waiting_reminder, waiting_confirm}, return_when=asyncio.FIRST_COMPLETED
-                    )
-                    if waiting_reminder.done():
-                        yield waiting_reminder.result()
-                        waiting_reminder = asyncio.ensure_future(reminder_queue.get())
-                    if waiting_confirm.done():
-                        yield waiting_confirm.result()
-                        waiting_confirm = asyncio.ensure_future(confirm_queue.get())
-            finally:
-                waiting_reminder.cancel()
-                waiting_confirm.cancel()
+        """Dauerhafter Stream für Meldungen ohne Anfrage: Erinnerungen (ADR-013), Rückfragen
+        (auch auf einem anderen Gerät beantwortbar) und Status-Ereignisse fürs HUD (M3, ADR-024;
+        nie Inhalte). Beim Verbinden kommt der aktuelle Stand als `snapshot`."""
 
         async def events() -> AsyncIterator[str]:
             yield _sse("ready", {"erinnerungen": watcher.enabled})
-            with watcher.listen() as reminder_queue, service.broker.listen() as confirm_queue:
+            with (
+                watcher.listen() as reminder_queue,
+                service.broker.listen() as confirm_queue,
+                service.status.listen() as status_queue,
+            ):
+                yield _sse("snapshot", dict(service.status.snapshot()))
                 for request in service.broker.open_requests():  # schon offene Rückfragen
                     confirm_queue.put_nowait(request)
-                async for item in with_keepalive(
-                    merged(reminder_queue, confirm_queue), keepalive_seconds
-                ):
+                merged = merge_queues(reminder_queue, confirm_queue, status_queue)
+                item: Reminder | ConfirmRequest | ConfirmDone | StatusEvent | None
+                async for item in with_keepalive(merged, keepalive_seconds):
                     if item is None:
                         yield KEEPALIVE
+                    elif isinstance(item, StatusEvent):
+                        yield _sse(item.kind, dict(item.data))
                     elif isinstance(item, Reminder):
                         yield _sse(
                             "reminder", {"id": item.id, "text": item.text, "zeitpunkt": item.when}

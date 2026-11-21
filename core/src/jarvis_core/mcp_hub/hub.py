@@ -3,10 +3,12 @@ Werkzeuge an den Agent und erzwingt vor JEDEM Aufruf die Policy. Jeder Aufruf ge
 (nur Werkzeugname, Risikoklasse, Entscheidung, Ergebnis; nie Argumente)."""
 
 import asyncio
+import itertools
 import json
 import os
 import re
 import sys
+import time
 from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -22,11 +24,14 @@ from pydantic_ai.toolsets import AbstractToolset
 from jarvis_core.audit import AuditLog
 from jarvis_core.config.settings import McpServerConfig
 from jarvis_core.policy import Decision, PolicyContext, RiskClass, decide
+from jarvis_core.status import MAX_TEXT, StatusBus
 
 log = structlog.get_logger("jarvis.mcp")
 
 # Kanal der laufenden Anfrage ("cli", "api"); wird vom Agent gesetzt.
 current_channel: ContextVar[str] = ContextVar("jarvis_channel", default="cli")
+# Ergebnisse des laufenden Werkzeugaufrufs (für das Status-Ereignis `tool_end`, M3.8).
+_call_outcomes: ContextVar[list[str] | None] = ContextVar("jarvis_call_outcomes", default=None)
 
 INIT_TIMEOUT_SECONDS = 20.0
 # Obergrenze je Werkzeugaufruf: ein hängender Server darf die Anfrage (und alle, die dahinter
@@ -120,8 +125,12 @@ class McpHub:
         audit: AuditLog,
         model_name: str,
         log_dir: Path | None = None,
+        status: StatusBus | None = None,
     ) -> None:
         self._servers = servers
+        # Meldet Beginn und Ende jedes Werkzeugaufrufs ans HUD (nur Name, Risiko, Ergebnis).
+        self.status = status
+        self._calls = itertools.count(1)
         # Fehlerausgabe der Server je Lauf in <log_dir>/<server>.log (überschrieben, nicht
         # angehängt); ohne log_dir landet sie auf stderr.
         self._log_dir = log_dir
@@ -356,6 +365,30 @@ class McpHub:
     async def gated_call(
         self, server: str, call_tool: CallTool, name: str, args: dict[str, Any]
     ) -> Any:
+        """Jeder Werkzeugaufruf des Modells: Policy, Rückfrage, Ausführung, Audit. Mit Status-Bus
+        gehen Beginn und Ende (Ergebnis wie im Audit, Dauer) als Ereignis ans HUD."""
+        status = self.status
+        if status is None:
+            return await self._gate(server, call_tool, name, args)
+        risk = self._risk(server, name)
+        call = next(self._calls)
+        tool = safe_tool_name(name)[:MAX_TEXT]
+        risk_text = "UNKNOWN" if risk is None else str(risk)
+        outcomes: list[str] = []
+        token = _call_outcomes.set(outcomes)
+        started = time.monotonic()
+        status.publish("tool_start", call=call, tool=tool, risk=risk_text)
+        try:
+            return await self._gate(server, call_tool, name, args)
+        finally:
+            _call_outcomes.reset(token)
+            status.publish(
+                "tool_end", call=call, tool=tool, risk=risk_text,
+                status=outcomes[-1] if outcomes else "aborted",
+                ms=round((time.monotonic() - started) * 1000),
+            )  # fmt: skip
+
+    async def _gate(self, server: str, call_tool: CallTool, name: str, args: dict[str, Any]) -> Any:
         risk = self._risk(server, name)
         channel = current_channel.get()
         if risk is None or (self._selected is not None and name not in self._selected):
@@ -488,6 +521,9 @@ class McpHub:
         )
 
     def _record(self, channel: str, tool: str, risk: str, decision: str, status: str) -> None:
+        outcomes = _call_outcomes.get()
+        if outcomes is not None and status != "pending":  # "pending": Rückfrage läuft noch
+            outcomes.append(status)
         self._audit.record_tool_call(
             channel=channel,
             model=self._model_name,

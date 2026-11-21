@@ -89,7 +89,8 @@ Neue Abhängigkeiten (vollständige Liste; nichts anderes kommt ohne Rückfrage 
 |---|---|---|
 | npm: `react`, `react-dom` | Oberfläche | M3.1 |
 | npm: `vite`, `@vitejs/plugin-react`, `typescript` | Bauen | M3.1 |
-| npm: `vitest`, `jsdom`, `@testing-library/react` | Tests | M3.1 |
+| npm: `vitest`, `jsdom` | Tests (Komponententests direkt mit `react-dom` und `act`; `@testing-library/react` entfällt, es zöge `@testing-library/dom` nach) | M3.1 |
+| npm: `@types/react`, `@types/react-dom` | Typen zu React 18 (Nachtrag beim Bau) | M3.1 |
 | npm: `eslint`, `typescript-eslint`, `eslint-plugin-react-hooks` | Lint (CI) | M3.1 |
 | npm: `@tauri-apps/cli`, `@tauri-apps/api` | Desktop-App | M3.2 |
 | npm: `three` | 3D | M3.10 |
@@ -226,3 +227,13 @@ nicht von selbst, sondern frage Master in der Besprechung um sein Okay.
 - Block A wird gebaut (Okay trotz fehlendem "perfekt": die verbleibenden Funde waren mittel/niedrig und sind eingearbeitet).
 - Das HUD-Frontend wird später (M8) auch die Handy-App (PWA); `api/web` entfällt dann. Block A bleibt davon unberührt.
 - Das Repo ist öffentlich: Windows-Minuten kosten nichts. Der Tauri-Job läuft trotzdem nur bei Änderungen unter `hud/`.
+
+## 13. Bau Block A (21.11., Ausnahme-Arbeitstag)
+- Gebaut: `jarvis_core/status.py`, Werkzeug-Ereignisse aus `gated_call`, `thinking`/`stop` aus
+  `ChatService`, `snapshot` und Status in `/v1/events`, `VoiceEvent` mit `state`/`mic`/`level`/
+  `heartbeat`, Sprachclient meldet Zustand, Mikrofon und Lebenszeichen; `hud/` mit Oberfläche,
+  Transportschicht (fetch), Tests, CI-Job `hud`, ADR-024, `docs/ANLEITUNG-HUD.md`.
+- Abweichungen: `hud/.npmrc` mit `legacy-peer-deps` (npm-10-Fehler, ADR-024); keine Schriftdatei
+  (Bahnschrift ist unter Windows eingebaut); Hardware-Profil noch nicht im `snapshot` (erst M3.10);
+  der Sprachclient meldet `level` noch nicht (kommt mit M3.4); `vite.config.ts` ist von `tsc`
+  ausgenommen (bräuchte Node-Typen), ESLint prüft sie.

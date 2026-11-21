@@ -1,6 +1,7 @@
 """Chat-Dienst: Pydantic AI + Ollama (OpenAI-kompatibel), mit Audit pro Anfrage."""
 
 import asyncio
+import itertools
 import os
 from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Callable
 from contextlib import asynccontextmanager, suppress
@@ -44,6 +45,7 @@ from jarvis_core.config.settings import CloudConfig
 from jarvis_core.hardware import detect_hardware, recommend
 from jarvis_core.mcp_hub import McpHub, current_channel, current_confirmer, safe_tool_name
 from jarvis_core.mcp_hub.select import Selection, ToolSelector
+from jarvis_core.status import StatusBus
 
 # Kein Werbebanner von Pydantic AI auf stdout/stderr.
 os.environ.setdefault("PYDANTIC_AI_NO_BANNER", "1")
@@ -253,7 +255,14 @@ class ChatService:
         cloud_config: CloudConfig | None = None,
         cloud_model: Callable[[], Model | None] | None = None,
         subagent_parallel: int = 1,
+        status: StatusBus | None = None,
     ) -> None:
+        # Status-Ereignisse fürs HUD (M3): was gerade läuft, nie Inhalte. Der Hub meldet seine
+        # Werkzeugaufrufe auf denselben Bus.
+        self.status = status or hub.status or StatusBus()
+        if hub.status is None:
+            hub.status = self.status
+        self._runs = itertools.count(1)
         self._subagent_parallel = subagent_parallel
         self._cloud = cloud_config or CloudConfig()
         self._cloud_model = cloud_model  # baut das Cloud-Modell erst, wenn es gebraucht wird
@@ -310,6 +319,7 @@ class ChatService:
             risk="READ", decision="ALLOW", status="ok" if tasks else "idle",
         )  # fmt: skip
         log.warning("emergency_stop", channel=channel, stopped=len(tasks))
+        self.status.publish("stop", count=self.stop_count)
         return len(tasks)
 
     async def stream(
@@ -372,6 +382,8 @@ class ChatService:
             current_channel.reset(channel_token)
             current_confirmer.reset(confirmer_token)
         self._tasks.add(task)
+        run = next(self._runs)
+        self.status.publish("thinking", active=True, run=run)
 
         def finished(done: asyncio.Task[None]) -> None:
             self._tasks.discard(done)
@@ -401,6 +413,7 @@ class ChatService:
                 task.cancel()
             with suppress(asyncio.CancelledError, Exception):
                 await task
+            self.status.publish("thinking", active=False, run=run)
             self._stopped.discard(task)
             self._audit.record(channel=channel, model=routed[0], tokens=usage[0], status=status)
             log.info("chat_done", channel=channel, model=routed[0], status=status)
@@ -847,7 +860,10 @@ def build_service(
             settings.model_fast, provider=OpenAIProvider(openai_client=_ollama_client(settings))
         )
         fast = (fast_model, settings.model_fast)
-    hub = hub or McpHub(settings.mcp_servers, audit, name, log_dir=settings.data_dir / "logs")
+    status = StatusBus()
+    hub = hub or McpHub(
+        settings.mcp_servers, audit, name, log_dir=settings.data_dir / "logs", status=status
+    )
     sessions = SessionStore(settings.history_max_turns, settings.history_max_chars)
     return ChatService(
         model, name, settings.ollama_base_url, audit, hub, sessions=sessions,
@@ -855,5 +871,5 @@ def build_service(
         address=settings.anrede, selector=selector or _tool_selector(settings),
         fast=fast, tool_match=settings.router_tool_match,
         cloud_config=settings.cloud, cloud_model=_cloud_model_factory(settings.cloud),
-        subagent_parallel=settings.subagent_parallel,
+        subagent_parallel=settings.subagent_parallel, status=hub.status or status,
     )  # fmt: skip

@@ -96,6 +96,12 @@ class HttpCoreClient:
             return False
         return response.status_code == 200
 
+    async def status(self, event: str, **fields: str | bool | int) -> None:
+        """Meldet dem Core Zustand, Mikrofon oder Lebenszeichen fürs HUD (M3, ohne Inhalte).
+        Kurze Frist: ein hängender Core darf das Zuhören nicht aufhalten."""
+        with contextlib.suppress(httpx2.HTTPError):
+            await self._http.post("/v1/voice/event", json={"event": event, **fields}, timeout=2.0)
+
     async def voice_event(self, event: str) -> None:
         """Meldet dem Core ein Ereignis ohne Inhalt fürs Audit (dictation_start/dictation_end)."""
         with contextlib.suppress(httpx2.HTTPError):

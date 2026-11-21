@@ -2,6 +2,7 @@
 Unterbrechen, Schlaf- und Flüstermodus, Rückfragen per Stimme, Datenschutz."""
 
 import asyncio
+import contextlib
 import os
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -105,6 +106,7 @@ class FakeCore:
         self.asked: list[tuple[str, str | None]] = []
         self.confirmed: list[tuple[str, bool, bool]] = []
         self.events: list[str] = []
+        self.reports: list[tuple[str, dict[str, str | bool | int]]] = []
         self.stops = 0
 
     async def ask(self, text: str, session_id: str | None) -> AsyncIterator[CoreEvent]:
@@ -118,6 +120,9 @@ class FakeCore:
 
     async def voice_event(self, event: str) -> None:
         self.events.append(event)
+
+    async def status(self, event: str, **fields: str | bool | int) -> None:
+        self.reports.append((event, fields))
 
     async def stop(self) -> None:
         self.stops += 1
@@ -889,3 +894,52 @@ async def test_shutdown_audits_the_end_of_a_running_dictation() -> None:
     await rig.session.wait_idle()
     await rig.session.shutdown()
     assert rig.core.events == ["dictation_start", "dictation_end"]
+
+
+# ------------------------------------------------------------------- Meldungen ans HUD (M3)
+async def test_run_reports_state_and_microphone_to_the_hud_without_content() -> None:
+    source = FakeSource([WAKE] + [SPEECH] * 5 + [QUIET] * 8)
+    rig = Rig(stt=FakeStt(("Gute Nacht, Jarvis", "de")), source=source)
+    runner = asyncio.create_task(rig.session.run())
+    for _ in range(300):
+        await asyncio.sleep(0.01)
+        if rig.session.state is State.SLEEP and rig.source.closed:
+            break
+    await asyncio.sleep(0.05)  # die Meldeschleife arbeitet nach
+    rig.session.wake()
+    await asyncio.wait_for(runner, 5)
+    reports = rig.core.reports
+    assert reports[:2] == [("state", {"state": "WARTET"}), ("mic", {"on": True})]
+    assert ("state", {"state": "HÖRT ZU"}) in reports
+    assert ("mic", {"on": False}) in reports  # Schlaf: Mikrofon zu, das HUD sieht es
+    assert reports[-1] == ("mic", {"on": False})  # Ende: Mikrofon zu
+    assert all(kind in {"state", "mic", "heartbeat"} for kind, _ in reports)
+    assert "Gute Nacht" not in repr(reports)
+
+
+async def test_heartbeat_is_sent_when_nothing_happens(monkeypatch: pytest.MonkeyPatch) -> None:
+    from jarvis_voice import session as session_module
+
+    monkeypatch.setattr(session_module, "HEARTBEAT_SECONDS", 0.05)
+    rig = Rig()
+    reports: asyncio.Queue[tuple[str, dict[str, str | bool | int]]] = asyncio.Queue()
+    task = asyncio.create_task(rig.session._report_loop(reports))  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
+    await asyncio.sleep(0.2)
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+    assert ("heartbeat", {}) in rig.core.reports
+
+
+async def test_a_hanging_core_does_not_block_listening() -> None:
+    class HangingCore(FakeCore):
+        async def status(self, event: str, **fields: str | bool | int) -> None:
+            await asyncio.sleep(3600)
+
+    rig = Rig(core=HangingCore())
+    rig.session._reports = asyncio.Queue()  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
+    for _ in range(50):
+        rig.session._set(State.LISTENING)  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
+        rig.session._set(State.WAITING)  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
+    await rig.say_something()  # läuft weiter, obwohl der Core die Meldungen nie annimmt
+    assert rig.session.state is not State.SLEEP
