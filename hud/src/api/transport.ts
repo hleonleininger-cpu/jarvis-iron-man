@@ -8,6 +8,13 @@ export type { ServerEvent } from "./sse";
 
 export type Listener = (event: ServerEvent) => void;
 
+/** Nur in der Desktop-App: Overlay, Hinweise (z. B. belegtes Kürzel), Not-Aus per Kürzel/Tray. */
+export interface DesktopHandlers {
+  overlay: (on: boolean) => void;
+  notice: (text: string) => void;
+  stopResult: (ok: boolean) => void;
+}
+
 export interface Transport {
   /** Dauerstrom /v1/events (Status, Rückfragen, Erinnerungen); verbindet sich selbst neu. */
   subscribe(onEvent: Listener, onConnection: (connected: boolean, problem?: string) => void): () => void;
@@ -16,6 +23,8 @@ export interface Transport {
   confirm(id: string, approve: boolean): Promise<boolean>;
   /** Not-Aus. false, wenn der Core nicht in `timeoutMs` antwortet. */
   stop(timeoutMs?: number): Promise<boolean>;
+  /** Nur in der Desktop-App vorhanden. */
+  desktop?(handlers: DesktopHandlers): () => void;
 }
 
 const RETRY_MIN_MS = 1000;

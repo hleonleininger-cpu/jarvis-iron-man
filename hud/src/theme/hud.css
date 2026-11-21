@@ -444,6 +444,7 @@ main {
 .act-ms,
 .act-status {
   color: var(--muted);
+  white-space: nowrap;
 }
 
 .risk {
@@ -538,4 +539,30 @@ main {
 .chat button:disabled {
   opacity: 0.4;
   cursor: default;
+}
+
+/* ------------------------------------------------------------------------------- Overlay
+   Desktop-App (M3.5): durchsichtig über dem Desktop, Klicks gehen durch. Ohne Gespräch; Not-Aus
+   und Verlassen über Strg+Alt+Q, Strg+Alt+O und das Tray-Symbol. */
+html.overlay,
+html.overlay body {
+  background: transparent;
+}
+
+.hud.overlay .top {
+  border-bottom: none;
+}
+
+.hud.overlay .panel {
+  background: rgba(5, 11, 20, 0.55);
+}
+
+.hud.overlay main {
+  grid-template-columns: minmax(280px, 1fr) minmax(280px, 1fr);
+}
+
+.hud.overlay .stop-button::after {
+  content: " · Strg+Alt+Q";
+  font-weight: 400;
+  letter-spacing: 0;
 }

@@ -14,6 +14,7 @@ export function App({ transport, now = Date.now }: { transport: Transport; now?:
   const [state, dispatch] = useReducer(reducer, initialState);
   const [clock, setClock] = useState(now);
   const chatAbort = useRef<AbortController | null>(null);
+  const [overlay, setOverlay] = useState(false);
 
   useEffect(
     () =>
@@ -23,6 +24,22 @@ export function App({ transport, now = Date.now }: { transport: Transport; now?:
       ),
     [transport, now],
   );
+
+  // Nur in der Desktop-App: Overlay, Hinweise (belegtes Kürzel), Not-Aus per Kürzel oder Tray.
+  useEffect(
+    () =>
+      transport.desktop?.({
+        overlay: setOverlay,
+        notice: (text) => dispatch({ type: "notice", text }),
+        stopResult: (ok) => dispatch({ type: "stop_result", ok, now: now() }),
+      }),
+    [transport, now],
+  );
+
+  useEffect(() => {
+    // Im Overlay ist das Fenster durchsichtig: dafür muss auch der Seitenhintergrund weg.
+    document.documentElement.classList.toggle("overlay", overlay);
+  }, [overlay]);
 
   useEffect(() => {
     const timer = setInterval(() => setClock(now()), TICK_MS);
@@ -63,7 +80,7 @@ export function App({ transport, now = Date.now }: { transport: Transport; now?:
   const stopped = state.stoppedAt !== null && current - state.stoppedAt < STOP_NOTICE_MS;
 
   return (
-    <div className="hud">
+    <div className={overlay ? "hud overlay" : "hud"}>
       <header className="top">
         <h1>J.A.R.V.I.S.</h1>
         <span className={`link link-${state.connected ? "up" : "down"}`}>
@@ -86,7 +103,7 @@ export function App({ transport, now = Date.now }: { transport: Transport; now?:
           </div>
         </div>
         <ActivityList activities={state.activities} />
-        <ChatPanel messages={state.messages} busy={state.chatting} onSend={send} />
+        {overlay ? null : <ChatPanel messages={state.messages} busy={state.chatting} onSend={send} />}
       </main>
     </div>
   );

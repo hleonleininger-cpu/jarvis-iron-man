@@ -1,0 +1,33 @@
+name: HUD Desktop (Windows)
+
+# Baut die Tauri-App (M3.2) unter Windows, aber nur wenn sich unter hud/ etwas ändert:
+# ein kalter Rust-Bau kostet viele Minuten.
+on:
+  push:
+    paths: ["hud/**", ".github/workflows/hud-tauri.yml"]
+  pull_request:
+    paths: ["hud/**", ".github/workflows/hud-tauri.yml"]
+
+jobs:
+  tauri-windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: hud
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: hud/package-lock.json
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: hud/src-tauri
+      - run: npm ci --ignore-scripts --no-fund --no-audit
+      # Tauri prüft beim Kompilieren, ob das gebaute Frontend (frontendDist) da ist.
+      - run: npm run build
+      - run: cargo test
+        working-directory: hud/src-tauri
+      - run: cargo clippy --all-targets -- -D warnings
+        working-directory: hud/src-tauri

@@ -1,7 +1,7 @@
 # ADR-024: HUD (Desktop-Oberfläche)
 
-**Status:** akzeptiert (Block A: Status-Ereignisse und Oberfläche im Browser; Tauri folgt in
-Block B). Plan: `docs/PLAN-M3.md`.
+**Status:** akzeptiert (Block A: Status-Ereignisse und Oberfläche im Browser; Block B:
+Desktop-App mit Tauri 2). Plan: `docs/PLAN-M3.md`.
 
 ## Kontext
 M3 verlangt eine Oberfläche im Iron-Man-Stil, die live zeigt, was JARVIS hört, denkt und tut,
@@ -47,6 +47,22 @@ auch die Handy-App (PWA) werden, dann entfällt `api/web`.
   optionalen Peer-Abhängigkeiten von vitest ab (`reading 'edgesOut'`). Die nötigen Peers (vite,
   jsdom) stehen ausdrücklich in `package.json`; Versionen sind fest (`package-lock.json`) und
   waren beim Einbau mindestens zwei Wochen alt.
+- **Desktop-App (Block B):** `hud/src-tauri`. Alle Core-Aufrufe laufen im Rust-Teil (`reqwest`
+  ohne TLS und ohne Proxy, nur `http://127.0.0.1|localhost|[::1]`, geprüft in `core.rs`; eine
+  andere Adresse beendet die App mit Fehler). Die SSE-Ströme liest Rust und reicht sie als
+  Tauri-Ereignisse an die Oberfläche. Die Webview darf nur die eigenen Befehle aufrufen und
+  Ereignisse empfangen (`capabilities/default.json`), CSP `connect-src ipc: http://ipc.localhost`.
+  Die Chat-Nummer vergibt die Oberfläche, damit frühe Ereignisse zuordenbar sind.
+- **Kürzel und Tray:** Strg+Alt+Q Not-Aus (einstellbar über `JARVIS_HUD_STOP_KEY`, nie eines
+  der Kürzel des Sprachclients J/M/X/D), Strg+Alt+O Overlay. Der Not-Aus-Handler sitzt in Rust
+  und ruft `POST /v1/stop` direkt, wirkt also auch bei hängender Oberfläche. Lässt sich ein
+  Kürzel nicht registrieren, meldet das HUD es sichtbar. Tray: HUD zeigen, Overlay, Not-Aus,
+  "Mit Windows starten" (Standard aus), Beenden.
+- **Overlay:** rahmenlos, immer vorn, Klicks gehen durch; ohne Gesprächsfeld. Der rote Knopf ist
+  dort nicht klickbar, Not-Aus und Verlassen gehen über Kürzel und Tray.
+- **Token:** Kein Speicher auf der Platte. Der Befehl `set_token` hält ein Token nur im
+  Arbeitsspeicher (für `require_api_token = true`; die Oberfläche fragt in Block B noch nicht
+  danach, Standard ist localhost ohne Token).
 - **Schrift:** keine Schriftdatei; Bahnschrift ist unter Windows eingebaut, sonst Systemschrift.
 
 ## Konsequenzen

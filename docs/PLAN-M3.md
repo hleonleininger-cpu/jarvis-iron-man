@@ -244,3 +244,15 @@ nicht von selbst, sondern frage Master in der Besprechung um sein Okay.
   laufenden System mit 403 belegt. Mittel: `thinking` bei überlappenden Anfragen (jetzt Menge
   aktiver Läufe), HUD-Zustand nach Neuverbindung (Snapshot ersetzt alles), Meldeschleife des
   Sprachclients (je Art nur die neueste Meldung, Frist 2 s).
+
+## 14. Bau Block B (21.11., Ausnahme-Arbeitstag)
+- Gebaut: `hud/src-tauri` (Rust: Befehle `events_start`, `chat_start`, `chat_cancel`, `confirm`,
+  `stop`, `set_token`, `shortcut_problems`, `overlay_set`; Tray; Kürzel; Overlay; Autostart),
+  Tauri-Transport im Frontend (`src/api/tauri.ts`), Workflow `hud-tauri.yml` (Windows, nur bei
+  Änderungen unter `hud/`), Anleitung, ADR-024.
+- Abweichungen: `tokio` direkt mit Feature `time` (steckt über tauri ohnehin im Baum, nur für das
+  Warten beim Wiederverbinden); die Oberfläche fragt noch nicht nach einem Token (localhost ohne
+  Token ist Standard).
+- Geprüft: `cargo test` (6), `cargo clippy -D warnings`, `npx tauri build --no-bundle` unter Linux,
+  App unter Xvfb gegen einen Test-Core gestartet: Verbindung, Status, Rückfrage, Strg+Alt+Q löst den
+  Not-Aus aus (Audit-Eintrag). Windows-Bau und Overlay-Durchsichtigkeit nur am PC.

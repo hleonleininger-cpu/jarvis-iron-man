@@ -1,0 +1,31 @@
+[package]
+name = "jarvis-hud"
+version = "0.1.0"
+description = "Desktop-HUD für JARVIS (M3)"
+edition = "2021"
+publish = false
+
+[lib]
+name = "jarvis_hud_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "=2.7.4", features = [] }
+
+[dependencies]
+tauri = { version = "=2.12.5", features = ["tray-icon"] }
+tauri-plugin-global-shortcut = "=2.4.1"
+tauri-plugin-autostart = "=2.7.0"
+# Nur http://127.0.0.1: kein TLS, keine Standard-Features.
+reqwest = { version = "=0.13.5", default-features = false, features = ["json", "stream"] }
+futures-util = { version = "=0.3.34", default-features = false, features = ["std"] }
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.154"
+# Steckt über tauri ohnehin im Baum; direkt nur für `time::sleep` (Wiederverbinden).
+tokio = { version = "=1.54.1", default-features = false, features = ["time"] }
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true

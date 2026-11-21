@@ -11,7 +11,7 @@ Markierungen:
 - [~] M0.2 jarvis doctor erkennt die Hardware und wählt das Modellprofil S, M oder L (Beleg: core/src/jarvis_core/hardware/profile.py, core/tests/test_profile.py)
 - [~] M0.3 Audit-Log ohne Inhalte
 - [~] M0.4 Policy mit Bestätigungspflicht für Schreibendes, Bezahlen und Handeln gesperrt
-- [~] M0.5 Not-Aus per Taste und per Befehl, stoppt alle laufenden Aktionen (roter Knopf und Strg+. in der Web-Oberfläche, `jarvis stop`, POST /v1/stop; beendet auch einen hängenden Server. Beleg: docs/adr/ADR-018-not-aus.md, core/tests/test_emergency_stop.py. Eine systemweite Taste außerhalb des Browsers kommt mit der Desktop-App, M3)
+- [~] M0.5 Not-Aus per Taste und per Befehl, stoppt alle laufenden Aktionen (roter Knopf und Strg+. in der Web-Oberfläche, `jarvis stop`, POST /v1/stop; beendet auch einen hängenden Server. Beleg: docs/adr/ADR-018-not-aus.md, core/tests/test_emergency_stop.py. Systemweite Taste: Strg+Alt+Q in der Desktop-App (M3.2), einstellbar über JARVIS_HUD_STOP_KEY, wirkt auch bei hängender Oberfläche; belegtes Kürzel wird im HUD gemeldet)
 - [~] M0.6 CLI-Chat mit lokalem Modell über Ollama
 - [~] M0.7 Konfiguration und Secrets getrennt (OS-Schlüsselbund statt .env, nie im Repo; Entscheidung von Master am 15.11.; Beleg: core/src/jarvis_core/secrets/store.py, core/tests/test_secrets.py, .gitignore)
 - [~] M0.8 Testgerüst: 644 Tests, ruff und pyright sauber, CI auf Linux und Windows
@@ -53,10 +53,10 @@ Markierungen:
 
 ## M3 – HUD
 - [~] M3.1 Web-Oberfläche im Iron-Man-Stil (gebaut: hud/ mit Vite, React, TypeScript; Zustandsring, Aktivität, Gespräch, Rückfrage-Karte, Not-Aus; läuft im Browser über `npm run dev`, Desktop-App folgt mit M3.2. Status-Ereignisse inhaltsfrei in /v1/events. Beleg: hud/, core/src/jarvis_core/status.py, core/tests/test_status.py, hud/test/, docs/ANLEITUNG-HUD.md, ADR-024. Optik nur von Master beurteilbar)
-- [ ] M3.2 Desktop-App mit Tauri 2
+- [~] M3.2 Desktop-App mit Tauri 2 (gebaut: hud/src-tauri; der Rust-Teil spricht nur mit localhost, die Webview hat keinen Netzzugang (CSP); Tray mit HUD zeigen, Overlay, Not-Aus, Autostart-Schalter (Standard aus), Beenden; systemweites Not-Aus Strg+Alt+Q. Unter Linux gebaut und gestartet (Xvfb, Bildschirmfoto, Kürzel ausgelöst); unter Windows nur am PC prüfbar, solange die Windows-CI gesperrt ist. Beleg: hud/src-tauri/src/lib.rs, core.rs, sse.rs, cargo test, hud/test/tauri.test.ts, docs/ANLEITUNG-HUD.md)
 - [ ] M3.3 Boot-Sequenz und Sounds
 - [ ] M3.4 Audio-Visualizer beim Zuhören und Sprechen
-- [ ] M3.5 Transparentes Overlay über dem Desktop
+- [~] M3.5 Transparentes Overlay über dem Desktop (gebaut: Strg+Alt+O oder Tray; rahmenlos, immer vorn, Klicks gehen durch, ohne Gesprächsfeld; Standard aus. Durchsichtigkeit nur am PC prüfbar, hier ohne Compositor nicht sichtbar. Beleg: hud/src-tauri/src/lib.rs set_overlay, hud/src/App.tsx, hud/src/theme/hud.css)
 - [ ] M3.6 Live-Kacheln: System, Termine, Fokus, Missionen
 - [ ] M3.7 Situatives HUD: Anzeigen erscheinen nur, wenn sie gebraucht werden
 - [~] M3.8 Anzeige, was Jarvis gerade tut, mit Abbrechen-Knopf (gebaut: Aktivitätsliste aus tool_start/tool_end mit Risiko, Ergebnis, Dauer; Not-Aus-Knopf und Strg+.; Hinweis auf `jarvis stop`, wenn der Core nicht antwortet. Beleg: hud/src/components/ActivityList.tsx, hud/test/app.test.tsx, core/tests/test_status.py)

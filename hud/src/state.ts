@@ -69,6 +69,7 @@ export type Action =
   | { type: "chat_end" }
   | { type: "confirm_answered"; id: string }
   | { type: "confirm_failed"; id: string }
+  | { type: "notice"; text: string }
   | { type: "stop_result"; ok: boolean; now: number };
 
 const str = (value: unknown, fallback = ""): string => (typeof value === "string" ? value : fallback);
@@ -206,6 +207,8 @@ export function reducer(state: HudState, action: Action): HudState {
       return { ...state, chatting: false };
     case "confirm_answered":
       return { ...state, confirms: state.confirms.filter((c) => c.id !== action.id) };
+    case "notice":
+      return { ...state, messages: addMessage(state.messages, { role: "info", text: action.text }) };
     case "confirm_failed":
       return {
         ...state,
