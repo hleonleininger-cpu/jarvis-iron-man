@@ -226,7 +226,7 @@ nicht von selbst, sondern frage Master in der Besprechung um sein Okay.
 ## 12. Entscheidungen von Master (21.11., Besprechung)
 - Block A wird gebaut (Okay trotz fehlendem "perfekt": die verbleibenden Funde waren mittel/niedrig und sind eingearbeitet).
 - Das HUD-Frontend wird später (M8) auch die Handy-App (PWA); `api/web` entfällt dann. Block A bleibt davon unberührt.
-- Das Repo ist öffentlich: Windows-Minuten kosten nichts. Der Tauri-Job läuft trotzdem nur bei Änderungen unter `hud/`.
+- Korrektur 21.11.: Das Repo ist laut GitHub privat (nicht öffentlich). Seit 21.11. startet GitHub keine CI-Jobs mehr (Zahlung fehlgeschlagen oder Ausgabenlimit erreicht); Entscheidung bei Master. Der Tauri-Job läuft nur bei Änderungen unter `hud/`, reine Doku-Commits lösen keine CI aus.
 
 ## 13. Bau Block A (21.11., Ausnahme-Arbeitstag)
 - Gebaut: `jarvis_core/status.py`, Werkzeug-Ereignisse aus `gated_call`, `thinking`/`stop` aus
