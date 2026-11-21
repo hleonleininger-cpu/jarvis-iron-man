@@ -17,12 +17,19 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 import psutil
+import structlog
 
 from jarvis_core.agent.service import ChatService
 from jarvis_core.mcp_hub import current_channel
 
+log = structlog.get_logger("jarvis.tiles")
+
 TZ = ZoneInfo("Europe/Berlin")
 TOOL_SECONDS = 300.0  # Termine und Aufgaben höchstens alle fünf Minuten
+RETRY_SECONDS = 60.0  # nach Abbruch (Anfrage hatte Vorrang, Not-Aus) frühestens so bald wieder
+READ_TIMEOUT = 10.0  # je Werkzeug; eine hängende Quelle hält nichts lange auf
+FIRST_WAIT = 5.0  # beim allerersten Laden höchstens so lange warten, danach Zwischenspeicher
+NO_END = timedelta(hours=1)  # Termin ohne Ende: so lange gilt er als laufend
 MAX_EVENTS = 3
 MAX_TASKS = 5
 MAX_TEXT = 80
@@ -54,11 +61,15 @@ def _as_list(value: object) -> list[dict[str, Any]]:
 
 def system_tile() -> Tile:
     """CPU- und Speicherlast in Prozent, Akku falls vorhanden. Nur Zahlen."""
-    memory = psutil.virtual_memory()
-    battery = psutil.sensors_battery() if hasattr(psutil, "sensors_battery") else None
+    try:
+        memory = psutil.virtual_memory()
+        battery = psutil.sensors_battery() if hasattr(psutil, "sensors_battery") else None
+        cpu = psutil.cpu_percent(interval=None)
+    except Exception:  # exotische Systeme: lieber "keine Daten" als gar keine Kacheln
+        return _none("Systemwerte nicht lesbar.")
     return {
         "ok": True,
-        "cpu": round(psutil.cpu_percent(interval=None)),
+        "cpu": round(cpu),
         "ram": round(memory.percent),
         "akku": None
         if battery is None
@@ -91,11 +102,13 @@ def _end_of(entry: dict[str, Any], start: datetime) -> datetime:
             return value if value.tzinfo else value.replace(tzinfo=TZ)
         except ValueError:
             pass
-    return start
+    return start + NO_END
 
 
 def events_tile(data: object, now: datetime) -> Tile:
-    """Die nächsten Termine, die noch nicht vorbei sind (laufende zählen mit)."""
+    """Die nächsten Termine, die noch nicht vorbei sind (laufende zählen mit). Je Tag stehen
+    Termine mit Uhrzeit vor ganztägigen: Geburtstage oder Urlaube anderer verdrängen sonst den
+    Zahnarzttermin um 15 Uhr."""
     result = _as_dict(data)
     if result is None or result.get("ok") is not True:
         return _none("Termine konnten nicht gelesen werden.")
@@ -104,7 +117,7 @@ def events_tile(data: object, now: datetime) -> Tile:
         start = _start_of(entry)
         if start is not None and _end_of(entry, start) > now:
             upcoming.append((start, entry))
-    upcoming.sort(key=lambda pair: pair[0])
+    upcoming.sort(key=lambda pair: (pair[0].date(), pair[1].get("ganztaegig") is True, pair[0]))
     return {
         "ok": True,
         "eintraege": [
@@ -120,15 +133,19 @@ def events_tile(data: object, now: datetime) -> Tile:
 
 
 def tasks_tile(data: object) -> Tile:
-    """Offene Aufgaben, überfällige und bald fällige zuerst (Reihenfolge des Notiz-Servers)."""
+    """Offene Aufgaben: nur Einträge mit Fälligkeit oder Erinnerung. Reine Merkzettel (etwa ein
+    Passwort für Gäste) gehören nicht dauerhaft sichtbar auf den Bildschirm."""
     result = _as_dict(data)
     if result is None or result.get("ok") is not True:
         return _none("Aufgaben konnten nicht gelesen werden.")
-    entries = _as_list(result.get("eintraege"))
-    count = result.get("anzahl")
+    entries = [
+        entry
+        for entry in _as_list(result.get("eintraege"))
+        if isinstance(entry.get("faellig"), str) or isinstance(entry.get("erinnern_um"), str)
+    ]
     return {
         "ok": True,
-        "anzahl": count if isinstance(count, int) else len(entries),
+        "anzahl": len(entries),
         "eintraege": [
             {
                 "text": _short(entry.get("text")),
@@ -160,9 +177,11 @@ class TileService:
         due = self._tools_at is None or self._clock() - self._tools_at >= TOOL_SECONDS
         if due and (self._loading is None or self._loading.done()):
             self._loading = asyncio.create_task(self._load())
-        if self._loading is not None and not self._loading.done():
-            # Abbrechen der HTTP-Anfrage bricht das Laden nicht ab (shield); der Not-Aus schon.
-            await asyncio.wait({asyncio.shield(self._loading)})
+            self._loading.add_done_callback(self._loaded)
+        if self._tools is None and self._loading is not None and not self._loading.done():
+            # Nur beim allerersten Mal kurz warten; danach gilt der Zwischenspeicher, während im
+            # Hintergrund neu geladen wird. Abbrechen der HTTP-Anfrage stoppt das Laden nicht.
+            await asyncio.wait({asyncio.shield(self._loading)}, timeout=FIRST_WAIT)
         tools = self._tools or {
             "termine": _none("Noch nicht geladen."),
             "missionen": _none("Noch nicht geladen."),
@@ -175,11 +194,32 @@ class TileService:
             "fokus": _none(NO_FOCUS),
         }
 
+    async def settle(self) -> None:
+        """Wartet, bis ein laufendes Nachladen fertig ist (Tests, geordnetes Beenden)."""
+        if self._loading is not None and not self._loading.done():
+            await asyncio.wait({self._loading})
+
+    async def close(self) -> None:
+        """Beim Herunterfahren: laufendes Nachladen abbrechen und seine Server sauber beenden."""
+        if self._loading is not None and not self._loading.done():
+            self._loading.cancel()
+            await asyncio.wait({self._loading})
+
+    def _loaded(self, task: asyncio.Task[None]) -> None:
+        """Abgebrochen (eine Anfrage hatte Vorrang, Not-Aus): nicht gleich wieder, aber bald.
+        Andere Fehler ins Log, nie still verschlucken."""
+        if task.cancelled():
+            self._tools_at = self._clock() - TOOL_SECONDS + RETRY_SECONDS
+        elif (error := task.exception()) is not None:
+            log.warning("tiles_failed", error=type(error).__name__)
+            self._tools_at = self._clock() - TOOL_SECONDS + RETRY_SECONDS
+
     async def _load(self) -> None:
         hub = self._service.hub
         token = current_channel.set("hud")
+        only = hub.servers_for(("list_events", "list_notes"))
         try:
-            async with self._service.idle_turn() as free:
+            async with self._service.idle_turn(only) as free:
                 if not free:
                     return  # eine Anfrage läuft: alter Stand bleibt, nächster Abruf versucht es
                 now = self._now()
@@ -187,12 +227,15 @@ class TileService:
                 tiles: dict[str, Tile] = {}
                 if hub.has_read_tool("list_events"):
                     window = f"{today.isoformat()}/{(today + timedelta(days=6)).isoformat()}"
-                    data = await hub.read_tool("list_events", {"zeitraum": window})
+                    data = await hub.read_tool(
+                        "list_events", {"zeitraum": window}, limit_seconds=READ_TIMEOUT
+                    )
                     tiles["termine"] = events_tile(data, now)
                 else:
                     tiles["termine"] = _none("Kein Kalender eingerichtet.")
                 if hub.has_read_tool("list_notes"):
-                    tiles["missionen"] = tasks_tile(await hub.read_tool("list_notes", {}))
+                    notes = await hub.read_tool("list_notes", {}, limit_seconds=READ_TIMEOUT)
+                    tiles["missionen"] = tasks_tile(notes)
                 else:
                     tiles["missionen"] = _none("Keine Aufgabenliste eingerichtet.")
                 self._tools = tiles

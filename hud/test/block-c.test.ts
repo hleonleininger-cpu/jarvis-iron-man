@@ -76,5 +76,8 @@ describe("Töne", () => {
     expect(oscillators).toBe(0);
     sounds.play("confirm", 0.5);
     expect(oscillators).toBe(2);
+    context.state = "suspended"; // Autoplay-Sperre: verwerfen, nicht aufstauen
+    sounds.play("boot", 0.5);
+    expect(oscillators).toBe(2);
   });
 });

@@ -1,7 +1,9 @@
 // Hinweistöne (M3.3), erzeugt mit der Web-Audio-API: keine Tondateien, keine Lizenzfragen.
 // Ohne Audio-Unterstützung oder vor der ersten Bedienung (Autoplay-Sperre) bleibt es still.
 
-export type SoundName = "boot" | "listen" | "confirm" | "stop" | "error";
+// Kein Ton "Zuhören": den spielt der Sprachclient selbst, und ein zweiter aus dem HUD landete
+// über Lautsprecher im Mikrofon.
+export type SoundName = "boot" | "confirm" | "stop" | "error";
 
 // Tonfolgen: [Frequenz in Hz, Beginn in s, Dauer in s]
 const PATTERNS: Record<SoundName, [number, number, number][]> = {
@@ -9,10 +11,6 @@ const PATTERNS: Record<SoundName, [number, number, number][]> = {
     [392, 0, 0.12],
     [523, 0.12, 0.12],
     [784, 0.24, 0.25],
-  ],
-  listen: [
-    [660, 0, 0.07],
-    [990, 0.07, 0.1],
   ],
   confirm: [
     [880, 0, 0.12],
@@ -34,7 +32,12 @@ export function createSounds(makeContext: () => AudioContextLike | null = defaul
       if (volume <= 0) return;
       context ??= makeContext();
       if (!context) return;
-      if (context.state === "suspended") void context.resume().catch(() => {});
+      if (context.state !== "running") {
+        // Autoplay-Sperre (noch keine Bedienung): Ton verwerfen statt aufstauen, sonst kämen
+        // später alle zugleich.
+        void context.resume().catch(() => {});
+        return;
+      }
       const start = context.currentTime;
       for (const [frequency, offset, duration] of PATTERNS[name]) {
         const oscillator = context.createOscillator();

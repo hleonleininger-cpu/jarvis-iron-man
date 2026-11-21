@@ -41,8 +41,10 @@ export function App({ transport, now = Date.now }: { transport: Transport; now?:
   useEffect(() => {
     soundRef.current = settings;
   }, [settings]);
+  const listening = useRef(false);
   const play = useCallback((name: SoundName) => {
-    if (soundRef.current.sound) sounds.play(name, soundRef.current.volume);
+    // Solange das Mikrofon offen ist und zuhört, schweigt das HUD (sonst hörte Jarvis sich selbst).
+    if (soundRef.current.sound && !listening.current) sounds.play(name, soundRef.current.volume);
   }, [sounds]);
 
   const changeSettings = (next: Settings) => {
@@ -140,7 +142,11 @@ export function App({ transport, now = Date.now }: { transport: Transport; now?:
   const { focus, why } = focusOf({ state, tiles, now: current });
   const shown = overlay ? overlayPanels(focus) : { activity: true, tiles: true };
 
-  // Töne (M3.3) bei Übergängen: verbunden, Zuhören beginnt, neue Rückfrage, Not-Aus, Fehler.
+  useEffect(() => {
+    listening.current = micOf(state, current) === "an" && (ring === "listening" || ring === "confirm" || ring === "dictation");
+  });
+
+  // Töne (M3.3) bei Übergängen: verbunden, neue Rückfrage, Not-Aus, Fehler.
   const previous = useRef<{ connected: boolean; ring: Ring; confirms: number; stoppedAt: number | null; failed: boolean }>({
     connected: false,
     ring: "offline",
@@ -151,7 +157,6 @@ export function App({ transport, now = Date.now }: { transport: Transport; now?:
   useEffect(() => {
     const before = previous.current;
     if (state.connected && !before.connected) play("boot");
-    if (ring === "listening" && before.ring !== "listening") play("listen");
     if (state.confirms.length > before.confirms) play("confirm");
     if (state.stoppedAt !== null && state.stoppedAt !== before.stoppedAt) play("stop");
     if (state.stopFailed && !before.failed) play("error");
@@ -208,7 +213,7 @@ export function App({ transport, now = Date.now }: { transport: Transport; now?:
         {shown.activity ? <ActivityList activities={state.activities} focused={focus === "activity"} /> : null}
         {overlay ? null : <ChatPanel messages={state.messages} busy={state.chatting} onSend={send} />}
       </main>
-      {shown.tiles ? <TileGrid tiles={tiles} focus={focus} problem={tilesProblem} /> : null}
+      {shown.tiles ? <TileGrid tiles={tiles} focus={focus} problem={tilesProblem} only={overlay ? "termine" : null} /> : null}
     </div>
   );
 }

@@ -265,6 +265,7 @@ class ChatService:
         hub.status = self.status
         self._runs = itertools.count(1)
         self._active_runs: set[int] = set()  # Anfragen, die laufen oder an der Sperre warten
+        self._idle: asyncio.Task[object] | None = None  # laufende Arbeit ohne Modell (Kacheln)
         self._subagent_parallel = subagent_parallel
         self._cloud = cloud_config or CloudConfig()
         self._cloud_model = cloud_model  # baut das Cloud-Modell erst, wenn es gebraucht wird
@@ -424,20 +425,25 @@ class ChatService:
             log.info("chat_done", channel=channel, model=routed[0], status=status)
 
     @asynccontextmanager
-    async def idle_turn(self) -> AsyncGenerator[bool]:
+    async def idle_turn(self, only: frozenset[str] | None = None) -> AsyncGenerator[bool]:
         """Kurze Arbeit ohne Modell (HUD-Kacheln, M3.6) auf demselben Weg wie Anfragen: nur,
         wenn gerade keine Anfrage läuft oder wartet (sonst False, nie warten). Hält die
-        Anfrage-Sperre und den Hub; der Not-Aus bricht sie ab wie eine Anfrage."""
+        Anfrage-Sperre und den Hub (nur die Server in `only`). Jede echte Anfrage hat Vorrang und
+        bricht sie ab; der Not-Aus auch."""
         task = asyncio.current_task()
         if self._run_lock.locked() or self._waiting or task is None:
             yield False
             return
         async with self._run_lock:
             self._tasks.add(task)
+            self._idle = task
+            self.hub.only = only
             try:
                 async with self.hub:
                     yield True
             finally:
+                self.hub.only = None
+                self._idle = None
                 self._tasks.discard(task)
                 self._stopped.discard(task)
 
@@ -445,8 +451,12 @@ class ChatService:
     async def _turn(
         self, queue: asyncio.Queue[StreamEvent | BaseException | None]
     ) -> AsyncGenerator[None]:
-        """Reiht die Anfrage ein (eine zugleich, höchstens MAX_WAITING wartend)."""
-        if self._run_lock.locked():
+        """Reiht die Anfrage ein (eine zugleich, höchstens MAX_WAITING wartend). Arbeit ohne
+        Modell (Kacheln) weicht sofort: sie wird abgebrochen, ohne Hinweis "beschäftigt"."""
+        idle = self._idle
+        if idle is not None and not idle.done():
+            idle.cancel()
+        elif self._run_lock.locked():
             if self._waiting >= MAX_WAITING:
                 raise ChatError(OVERLOADED_MESSAGE)
             queue.put_nowait(Notice(BUSY_MESSAGE))

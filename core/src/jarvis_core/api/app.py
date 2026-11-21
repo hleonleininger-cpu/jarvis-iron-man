@@ -213,6 +213,8 @@ def create_app(
         **({"poll_seconds": reminder_poll_seconds} if reminder_poll_seconds else {}),
     )  # fmt: skip
 
+    tiles = TileService(service)
+
     async def publish_profile() -> None:
         """Hardware-Profil fürs HUD (M3.10), einmal im Hintergrund: die Erkennung startet
         Unterprozesse und gehört nicht in jeden Verbindungsaufbau."""
@@ -227,6 +229,7 @@ def create_app(
         try:
             yield
         finally:
+            await tiles.close()  # ein Kachel-Abruf hält sonst Werkzeug-Server offen
             for running in (task, profile):
                 if running is not None:
                     running.cancel()
@@ -360,8 +363,6 @@ def create_app(
             case "heartbeat":
                 service.status.publish("heartbeat")
         return {"status": "ok"}
-
-    tiles = TileService(service)
 
     @app.get("/v1/tiles", dependencies=guarded)
     async def tiles_view() -> dict[str, object]:  # pyright: ignore[reportUnusedFunction]

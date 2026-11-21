@@ -147,6 +147,8 @@ class McpHub:
         self.confirm_local_writes = False
         self.failures: list[str] = []
         self.tool_timeout = TOOL_TIMEOUT_SECONDS
+        # Nur diese Server starten (HUD-Kacheln, M3.6); None = alle. Gilt für einen Lauf.
+        self.only: frozenset[str] | None = None
 
     def _risk(self, server: str, tool: str) -> RiskClass | None:
         """Einzige Quelle der Werkzeug-Metadaten: die Deklaration DIESES Servers in jarvis.toml."""
@@ -219,7 +221,10 @@ class McpHub:
             # müssen in derselben Task geschlossen werden, in der sie geöffnet wurden.
             ready: dict[str, asyncio.Future[MCPToolset[Any]]] = {}
             loop = asyncio.get_running_loop()
+            only = self.only
             for name, cfg in self._servers.items():
+                if only is not None and name not in only:
+                    continue
                 ready[name] = loop.create_future()
                 self._running.append(
                     asyncio.create_task(self._serve(name, cfg, ready[name], self._stop))
@@ -518,7 +523,17 @@ class McpHub:
         """Ist ein Werkzeug als READ deklariert (unabhängig davon, ob der Server gerade läuft)?"""
         return any(self._risk(server, tool) is RiskClass.READ for server in self._servers)
 
-    async def read_tool(self, tool: str, args: dict[str, Any]) -> Any:
+    def servers_for(self, tools: tuple[str, ...]) -> frozenset[str]:
+        """Die Server, die eines dieser Werkzeuge als READ deklarieren."""
+        return frozenset(
+            server
+            for server in self._servers
+            if any(self._risk(server, tool) is RiskClass.READ for tool in tools)
+        )
+
+    async def read_tool(
+        self, tool: str, args: dict[str, Any], limit_seconds: float | None = None
+    ) -> Any:
         """Ein lesendes Werkzeug ohne Modell aufrufen (HUD-Kacheln, M3.6). Nur ausdrücklich als
         READ deklarierte Werkzeuge; Policy und Audit wie immer (Kanal aus `current_channel`, nie
         Argumente oder Ergebnis). Gibt None zurück, wenn es nicht geht."""
@@ -532,8 +547,12 @@ class McpHub:
             return None
         try:
             result = await asyncio.wait_for(
-                self._connected[server].client.call_tool(tool, args), self.tool_timeout
+                self._connected[server].client.call_tool(tool, args),
+                limit_seconds or self.tool_timeout,
             )
+        except TimeoutError:
+            self._record(channel, tool, RiskClass.READ, decision, "timeout")
+            return None
         except Exception:
             self._record(channel, tool, RiskClass.READ, decision, "error")
             return None

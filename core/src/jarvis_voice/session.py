@@ -45,7 +45,6 @@ WAKE_PHRASE_FRAMES = 40  # ca. 1,3 s: so lang ist "Hey Jarvis" samt Nachlauf hö
 MIN_CONTEXT_FRAMES = 6  # so viel Sprache davor gilt als Gespräch (ca. 0,2 s)
 HEARTBEAT_SECONDS = 5.0  # Lebenszeichen ans HUD, wenn sonst nichts zu melden ist
 LEVEL_SECONDS = 0.125  # höchstens 8 Pegelmeldungen je Sekunde ans HUD (M3.4)
-LEVEL_SAMPLE_SECONDS = 0.25  # aus längeren Ausgabestücken nur den Anfang messen
 REPORT_TIMEOUT_SECONDS = 2.0  # höchstens so lange wartet eine Meldung auf den Core
 MAX_TEXT_CHARS = 500  # so viel Text tippt das Diktat je Äußerung höchstens
 MAX_TURNS = 50  # so viele Zeitmessungen bleiben für `jarvis voice bench` im Speicher
@@ -168,16 +167,36 @@ class VoiceSession:
             self._reports[event] = fields
             self._report_ready.set()
 
-    def _report_level(self, pcm: bytes, source: str, sample_rate: int = SAMPLE_RATE) -> None:
-        """Pegel fürs HUD: gedrosselt, nur als Stufe 0..7, nur wenn das HUD zuhören kann."""
+    def _report_level(self, pcm: bytes, source: str) -> None:
+        """Pegel des Mikrofons fürs HUD: gedrosselt, nur als Stufe 0..7, nur wenn das HUD zuhören
+        kann."""
         if self._reports is None:
             return
         now = self.clock()
         if now - self._level_at.get(source, -LEVEL_SECONDS) < LEVEL_SECONDS:
             return
         self._level_at[source] = now
-        sample = pcm[: int(sample_rate * LEVEL_SAMPLE_SECONDS) * 2]
-        self._report("level", level=audio_level(sample), source=source)
+        self._report("level", level=audio_level(pcm), source=source)
+
+    def _speaker_levels(self, pcm: bytes, rate: int) -> asyncio.Task[None]:
+        """Pegel der Ausgabe fürs HUD (M3.4) über die ganze Satzdauer: ein Satz ist oft mehrere
+        Sekunden Ton in einem Stück. Der erste Wert geht sofort hinaus, der Rest im Takt der
+        Wiedergabe; die Task endet mit der Wiedergabe."""
+        step = max(2, int(rate * LEVEL_SECONDS) * 2)
+        self._report("level", level=audio_level(pcm[:step]), source="speaker")
+
+        async def follow() -> None:
+            rest = pcm[step:]
+            values = await asyncio.to_thread(
+                lambda: [audio_level(rest[i : i + step]) for i in range(0, len(rest), step)]
+            )
+            for value in values:
+                await asyncio.sleep(LEVEL_SECONDS)
+                if self.state is not State.SPEAKING:
+                    return
+                self._report("level", level=value, source="speaker")
+
+        return asyncio.create_task(follow())
 
     async def _report_loop(self, reports: dict[str, dict[str, str | bool | int]]) -> None:
         """Schickt die neuesten Meldungen; ist länger nichts passiert, ein Lebenszeichen, damit
@@ -486,8 +505,12 @@ class VoiceSession:
             if self._turn is not None and self._turn.first_audio is None:
                 self._turn.first_audio = self.clock()
             self._echo.played(pcm, self.clock(), len(pcm) / 2 / rate)
-            self._report_level(pcm, "speaker", rate)
-            await self.parts.sink.play(pcm, rate)
+            levels = self._speaker_levels(pcm, rate) if self._reports is not None else None
+            try:
+                await self.parts.sink.play(pcm, rate)
+            finally:
+                if levels is not None:
+                    levels.cancel()
 
     def _after_reply(self) -> None:
         """Nach der Antwort: Folgefrage ohne Wake Word, sonst zurück zum Warten."""

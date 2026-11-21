@@ -34,7 +34,18 @@ function when(start: string, allDay: boolean): string {
 }
 
 /** Live-Kacheln (M3.6). Jede Kachel zeigt "keine Daten" mit Grund, nie einen erfundenen Wert. */
-export function TileGrid({ tiles, focus, problem }: { tiles: Tiles | null; focus: Focus; problem: string | null }) {
+export function TileGrid({
+  tiles,
+  focus,
+  problem,
+  only = null,
+}: {
+  tiles: Tiles | null;
+  focus: Focus;
+  problem: string | null;
+  /** Im Overlay nur eine Kachel (M3.7: nur das Gebrauchte). */
+  only?: "termine" | null;
+}) {
   if (!tiles) {
     return (
       <section className="tiles" aria-label="Lage">
@@ -45,7 +56,7 @@ export function TileGrid({ tiles, focus, problem }: { tiles: Tiles | null; focus
   const { system, termine, missionen, fokus } = tiles;
   return (
     <section className="tiles" aria-label="Lage">
-      <article className="panel tile">
+      {only ? null : <article className="panel tile">
         <h2>System</h2>
         {system.ok ? (
           <>
@@ -60,7 +71,7 @@ export function TileGrid({ tiles, focus, problem }: { tiles: Tiles | null; focus
         ) : (
           <Empty tile={system} />
         )}
-      </article>
+      </article>}
       <article className={`panel tile${focus === "termin" ? " tile-focus" : ""}`}>
         <h2>Termine</h2>
         {termine.ok ? (
@@ -80,7 +91,7 @@ export function TileGrid({ tiles, focus, problem }: { tiles: Tiles | null; focus
           <Empty tile={termine} />
         )}
       </article>
-      <article className="panel tile">
+      {only ? null : <article className="panel tile">
         <h2>Missionen</h2>
         {missionen.ok ? (
           missionen.eintraege.length === 0 ? (
@@ -101,11 +112,11 @@ export function TileGrid({ tiles, focus, problem }: { tiles: Tiles | null; focus
         ) : (
           <Empty tile={missionen} />
         )}
-      </article>
-      <article className="panel tile">
+      </article>}
+      {only ? null : <article className="panel tile">
         <h2>Fokus</h2>
         <Empty tile={fokus} />
-      </article>
+      </article>}
       {!tiles.aktuell && tiles.stand ? <p className="tile-stand">Stand {new Date(tiles.stand).toLocaleTimeString("de-DE")}</p> : null}
     </section>
   );

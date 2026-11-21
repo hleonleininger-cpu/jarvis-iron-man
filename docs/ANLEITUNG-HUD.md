@@ -49,11 +49,12 @@ Der Ring zeigt dann "HÖRT ZU", "DENKT", "SPRICHT" usw., darunter, ob das Mikrof
 - Sprachclient beenden, während das HUD offen ist: nach etwa 12 Sekunden steht beim Mikrofon
   "unbekannt".
 
-- Unten stehen vier Kacheln: System (CPU, RAM, Akku), die nächsten Termine, offene Aufgaben
-  ("Missionen") und Fokus. Termine und Aufgaben holt JARVIS höchstens alle fünf Minuten neu.
+- Unten stehen vier Kacheln: System (CPU, RAM, Akku), die nächsten Termine, offene Aufgaben mit
+  Fälligkeit oder Erinnerung ("Missionen"; reine Merkzettel erscheinen dort nicht) und Fokus. Termine und Aufgaben holt JARVIS höchstens alle fünf Minuten neu.
   Steht ein Termin in den nächsten 15 Minuten an, leuchtet die Termin-Kachel orange.
 - Overlay (Desktop-App): dort erscheinen nur Ring und das, was gerade gebraucht wird (Rückfrage,
-  laufende Werkzeuge oder der gleich beginnende Termin).
+  laufende Werkzeuge oder die Termin-Kachel, wenn ein Termin gleich beginnt).
+- Fragst du JARVIS etwas, während er die Kacheln auffrischt, hat deine Frage Vorrang.
 - Einstellungen (oben rechts): Startanimation, Töne, Lautstärke und 3D-Ansicht. Die 3D-Ansicht
   ist automatisch nur ab Profil M an; mit "an" auch auf kleineren Rechnern. Mit der Maus ziehen
   dreht den Ring.

@@ -79,9 +79,12 @@ auch die Handy-App (PWA) werden, dann entfällt `api/web`.
   die CSP aus `tauri.conf.json` (ein Test prüft sie).
 - **Kacheln (M3.6):** `GET /v1/tiles`. Systemwerte aus `psutil` (nur Zahlen). Termine und
   Aufgaben über `McpHub.read_tool`: nur als READ deklarierte Werkzeuge, Kanal `hud`, Policy und
-  Audit wie immer, ohne Argumente und Ergebnis. Abruf über `ChatService.idle_turn`: nur wenn
-  keine Anfrage läuft oder wartet (sonst der letzte Stand mit Zeitstempel), unter der
-  Anfrage-Sperre und mit dem Hub der Anfragen, der Not-Aus bricht ihn ab. Höchstens alle fünf
+  Audit wie immer, ohne Argumente und Ergebnis, je Werkzeug höchstens 10 s. Abruf über
+  `ChatService.idle_turn`: nur wenn keine Anfrage läuft oder wartet, unter der Anfrage-Sperre und
+  mit dem Hub der Anfragen, der dafür nur die beiden nötigen Server startet. Jede echte Anfrage
+  hat Vorrang und bricht den Abruf sofort ab (kein Hinweis "beschäftigt"), der Not-Aus auch.
+  `/v1/tiles` antwortet aus dem Zwischenspeicher und lädt im Hintergrund nach; nur beim ersten
+  Mal wartet es höchstens 5 s. Missionen zeigen nur Einträge mit Fälligkeit oder Erinnerung. Höchstens alle fünf
   Minuten, damit Audit und iCloud nicht jede Minute belastet werden. Die Kacheln tragen Inhalte
   (Termintitel, Aufgaben) und gehen deshalb nur über diesen autorisierten Endpunkt, nie über den
   Statusstrom.

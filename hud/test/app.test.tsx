@@ -197,6 +197,29 @@ describe("Block E", () => {
   });
 });
 
+describe("Prüffunde Block C/D", () => {
+  it("der Not-Aus bleibt während der Startanimation bedienbar; Escape überspringt sie", async () => {
+    render();
+    expect(container.querySelector(".boot")).not.toBeNull();
+    const stop = button("NOT-AUS");
+    expect(stop.closest(".boot")).toBeNull(); // nicht unter der Animation
+    await act(async () => stop.click());
+    expect(transport.stops).toBe(1);
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    });
+    expect(container.querySelector(".boot")).toBeNull();
+  });
+
+  it("im Overlay zeigt das Kachel-Raster nur die Termine", async () => {
+    const { TileGrid } = await import("../src/components/TileGrid");
+    const { parseTiles } = await import("../src/tiles");
+    const tiles = parseTiles(await transport.tiles());
+    act(() => root.render(<TileGrid tiles={tiles} focus="termin" problem={null} only="termine" />));
+    expect([...container.querySelectorAll(".tile h2")].map((h) => h.textContent)).toEqual(["Termine"]);
+  });
+});
+
 describe("Sicherheit im Quelltext", () => {
   it("nutzt nirgends HTML aus Zeichenketten oder eval", () => {
     const sources = import.meta.glob("../src/**/*.{ts,tsx}", { query: "?raw", import: "default", eager: true });

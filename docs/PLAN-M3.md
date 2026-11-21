@@ -299,3 +299,20 @@ nicht von selbst, sondern frage Master in der Besprechung um sein Okay.
 - Abhängigkeiten: `three@0.187.0` (im Plan), dazu `@types/three@0.187.0` (Typen, Nachtrag).
 - Geprüft: HUD-Tests (Regeln, Ziehen, Rückfall ohne WebGL), Bildschirmfoto in Chromium mit
   Software-WebGL nach Ziehen.
+
+## 19. Prüfrunde Block C/D (Opus, 21.11.)
+1 hoher, 7 mittlere, 7 niedrige Funde; behoben:
+- Hoch: Der Kachel-Abruf hielt die Anfrage-Sperre und startete alle Werkzeug-Server; eine
+  Sprachfrage wartete still mit (bei hängendem iCloud Minuten). Jetzt: Anfragen haben Vorrang und
+  brechen den Abruf ab, je Werkzeug 10 s, nur die nötigen Server.
+- Mittel: `/v1/tiles` antwortet sofort aus dem Zwischenspeicher; Termine mit Uhrzeit vor
+  ganztägigen (sonst verdrängt ein Geburtstag den Zahnarzt); Ausgabepegel über die ganze
+  Satzdauer im Takt der Wiedergabe; Not-Aus während der Startanimation sichtbar und Escape
+  überspringt; kein HUD-Ton beim Zuhören (Echo ins Mikrofon); im Overlay nur die Termin-Kachel;
+  Missionen nur mit Fälligkeit oder Erinnerung (keine Merkzettel auf dem Bildschirm).
+- Niedrig: Töne bei Autoplay-Sperre verwerfen; Pegelkranz zeichnet nur bei frischem Pegel;
+  Zeitüberschreitung als "timeout" im Audit; Systemkachel übersteht kaputte Sensoren; Termine ohne
+  Ende gelten eine Stunde; nach Abbruch erst nach 60 s neu laden, Fehler ins Log.
+- Dokumentierte Abweichungen: Kacheln nutzen `read_tool` statt `gated_call` (kein Modell, keine
+  Statusmeldung je Abruf); sie warten nie auf die Sperre; "Termin gleich" gilt 15 statt 10 Minuten
+  vorher.

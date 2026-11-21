@@ -24,10 +24,12 @@ export function Visualizer({ level, now = Date.now }: { level: LevelSignal | nul
     latest.current = level;
   }, [level]);
 
+  // Gezeichnet wird nur, solange ein frischer Pegel da ist; danach ruht die Schleife (keine
+  // Dauerlast mit 60 Bildern je Sekunde). Jede neue Meldung weckt sie wieder.
   useEffect(() => {
     const element = canvas.current;
     const context = element?.getContext?.("2d") ?? null;
-    if (!element || !context) return; // z. B. in Tests ohne Canvas
+    if (!element || !context || !level) return; // z. B. in Tests ohne Canvas
     const still = globalThis.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
     let frame = 0;
     const draw = () => {
@@ -36,6 +38,7 @@ export function Visualizer({ level, now = Date.now }: { level: LevelSignal | nul
       const signal = latest.current;
       if (signal) {
         const t = now();
+        if (t - signal.at > DECAY_MS) return; // abgeklungen: Bild ist leer, Schleife endet
         const lengths = bars(signal.value, t - signal.at, still ? 0 : t);
         context.strokeStyle = signal.source === "mic" ? "#4dffb0" : "#3fd0ff";
         context.lineWidth = size / 160;
@@ -56,7 +59,7 @@ export function Visualizer({ level, now = Date.now }: { level: LevelSignal | nul
     };
     frame = requestAnimationFrame(draw);
     return () => cancelAnimationFrame(frame);
-  }, [now]);
+  }, [now, level]);
 
   return <canvas ref={canvas} className="visualizer" width={640} height={640} aria-hidden="true" />;
 }

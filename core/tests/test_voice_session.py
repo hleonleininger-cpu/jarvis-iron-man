@@ -990,3 +990,36 @@ async def test_levels_go_to_the_hud_throttled_and_only_as_numbers() -> None:
     assert 3 <= len(mic) <= 8  # gedrosselt: höchstens 8 je Sekunde
     assert speaker, "beim Sprechen kommt der Pegel der Ausgabe"
     assert all(set(f) == {"level", "source"} and isinstance(f["level"], int) for f in seen)
+
+
+async def test_speaker_level_follows_the_whole_sentence() -> None:
+    """Ein Satz kommt als ein langes Stück; der Pegel läuft im Takt der Wiedergabe mit."""
+
+    class RealTimeSink(FakeSink):
+        async def play(self, pcm: bytes, sample_rate: int) -> None:
+            await super().play(pcm, sample_rate)
+            await asyncio.sleep(len(pcm) / 2 / sample_rate)  # so lange klingt es
+
+    class LongTts(FakeTts):
+        async def synthesize(
+            self, text: str, language: str, whisper: bool
+        ) -> AsyncIterator[tuple[bytes, int]]:
+            self.said.append((text, language, whisper))
+            yield tone(300, 0.6, level=0.3), 16_000
+
+    rig = Rig()
+    rig.session.parts.sink = RealTimeSink()
+    rig.session.parts.tts = LongTts()
+    rig.session._reports = {}  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
+    levels: list[dict[str, str | bool | int]] = []
+    original = rig.session._report  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
+
+    def spy(event: str, **fields: str | bool | int) -> None:
+        if event == "level" and fields["source"] == "speaker":
+            levels.append(fields)
+        original(event, **fields)
+
+    rig.session._report = spy  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
+    await rig.session._say("Ein langer Satz.")  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
+    assert len(levels) >= 4  # 0,6 s Ton, ein Wert je 0,125 s
+    assert all(isinstance(f["level"], int) and f["level"] > 0 for f in levels)

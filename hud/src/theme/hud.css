@@ -41,6 +41,8 @@ body {
 }
 
 .top {
+  position: relative;
+  z-index: 11; /* über der Startanimation: der Not-Aus ist immer sichtbar und klickbar */
   display: flex;
   align-items: center;
   gap: 16px;
