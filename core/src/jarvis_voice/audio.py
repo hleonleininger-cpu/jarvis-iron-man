@@ -18,6 +18,16 @@ def rms(pcm: bytes) -> float:
     return math.sqrt(sum(x * x for x in data) / len(data)) / 32768.0
 
 
+def level(pcm: bytes) -> int:
+    """Grober Pegel 0..7 fürs HUD (M3.4): -60 dB und leiser = 0, ab -18 dB = 7. Nur eine Zahl,
+    nie Ton."""
+    value = rms(pcm)
+    if value <= 0:
+        return 0
+    decibel = 20 * math.log10(value)
+    return max(0, min(7, round((decibel + 60) / 6)))
+
+
 def tone(freq: float, seconds: float, sample_rate: int = 16_000, level: float = 0.3) -> bytes:
     """Ein Sinuston (für Hinweistöne und Tests)."""
     count = int(sample_rate * seconds)

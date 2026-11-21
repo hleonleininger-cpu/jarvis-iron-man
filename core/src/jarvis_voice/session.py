@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from jarvis_core.config.settings import VoiceConfig
+from jarvis_voice.audio import level as audio_level
 from jarvis_voice.clap import ClapDetector
 from jarvis_voice.commands import Command, parse_command
 from jarvis_voice.echo import EchoGuard
@@ -43,6 +44,8 @@ from jarvis_voice.sentences import SentenceChunker
 WAKE_PHRASE_FRAMES = 40  # ca. 1,3 s: so lang ist "Hey Jarvis" samt Nachlauf höchstens
 MIN_CONTEXT_FRAMES = 6  # so viel Sprache davor gilt als Gespräch (ca. 0,2 s)
 HEARTBEAT_SECONDS = 5.0  # Lebenszeichen ans HUD, wenn sonst nichts zu melden ist
+LEVEL_SECONDS = 0.125  # höchstens 8 Pegelmeldungen je Sekunde ans HUD (M3.4)
+LEVEL_SAMPLE_SECONDS = 0.25  # aus längeren Ausgabestücken nur den Anfang messen
 REPORT_TIMEOUT_SECONDS = 2.0  # höchstens so lange wartet eine Meldung auf den Core
 MAX_TEXT_CHARS = 500  # so viel Text tippt das Diktat je Äußerung höchstens
 MAX_TURNS = 50  # so viele Zeitmessungen bleiben für `jarvis voice bench` im Speicher
@@ -146,6 +149,7 @@ class VoiceSession:
         # den aktuellen Zustand, nicht eine Schlange veralteter.
         self._reports: dict[str, dict[str, str | bool | int]] | None = None
         self._report_ready = asyncio.Event()
+        self._level_at: dict[str, float] = {}  # je Quelle: Mikrofon und Ausgabe getrennt
         self._reporter: asyncio.Task[None] | None = None
         self.parts.indicator.show(self.state)
 
@@ -163,6 +167,17 @@ class VoiceSession:
             self._reports.pop(event, None)  # neu einreihen: Reihenfolge der letzten Änderung
             self._reports[event] = fields
             self._report_ready.set()
+
+    def _report_level(self, pcm: bytes, source: str, sample_rate: int = SAMPLE_RATE) -> None:
+        """Pegel fürs HUD: gedrosselt, nur als Stufe 0..7, nur wenn das HUD zuhören kann."""
+        if self._reports is None:
+            return
+        now = self.clock()
+        if now - self._level_at.get(source, -LEVEL_SECONDS) < LEVEL_SECONDS:
+            return
+        self._level_at[source] = now
+        sample = pcm[: int(sample_rate * LEVEL_SAMPLE_SECONDS) * 2]
+        self._report("level", level=audio_level(sample), source=source)
 
     async def _report_loop(self, reports: dict[str, dict[str, str | bool | int]]) -> None:
         """Schickt die neuesten Meldungen; ist länger nichts passiert, ein Lebenszeichen, damit
@@ -279,6 +294,7 @@ class VoiceSession:
             if self.parts.wake.process(frame) or (clap is not None and clap.process(frame, now)):
                 self._start_listening(now, with_context=True)
         elif self.state in (State.LISTENING, State.CONFIRM, State.DICTATION):
+            self._report_level(frame, "mic")
             self._listen(frame, now)
         elif self.state is State.SPEAKING:
             self._maybe_barge_in(frame, now)
@@ -470,6 +486,7 @@ class VoiceSession:
             if self._turn is not None and self._turn.first_audio is None:
                 self._turn.first_audio = self.clock()
             self._echo.played(pcm, self.clock(), len(pcm) / 2 / rate)
+            self._report_level(pcm, "speaker", rate)
             await self.parts.sink.play(pcm, rate)
 
     def _after_reply(self) -> None:

@@ -256,3 +256,11 @@ nicht von selbst, sondern frage Master in der Besprechung um sein Okay.
 - Geprüft: `cargo test` (6), `cargo clippy -D warnings`, `npx tauri build --no-bundle` unter Linux,
   App unter Xvfb gegen einen Test-Core gestartet: Verbindung, Status, Rückfrage, Strg+Alt+Q löst den
   Not-Aus aus (Audit-Eintrag). Windows-Bau und Overlay-Durchsichtigkeit nur am PC.
+
+## 15. Bau Block C (21.11., Ausnahme-Arbeitstag)
+- Gebaut: Pegel im Sprachclient (`audio.level`, `_report_level`, je Quelle gedrosselt),
+  Pegel und `screen_read` im HUD-Zustand, `Visualizer` (Canvas, ohne Pegel still),
+  `BootSequence`, Töne per Web Audio (`sound.ts`, keine Dateien), Einstellungen (`settings.ts`,
+  `SettingsMenu`), Augensymbol.
+- Abweichungen: Töne werden erzeugt statt als Dateien mitgeliefert (keine Lizenzfrage); der Pegel
+  der Ausgabe wird je Satzstück gemessen (grob, wie geplant).

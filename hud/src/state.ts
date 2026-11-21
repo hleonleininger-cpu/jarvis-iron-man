@@ -35,6 +35,10 @@ export interface HudState {
   voiceState: string | null;
   mic: boolean | null;
   voiceSeenAt: number | null;
+  /** Letzter Pegel vom Sprachclient (M3.4): nur eine Stufe 0..7, nie Ton. */
+  level: { value: number; source: "mic" | "speaker"; at: number } | null;
+  /** Jarvis liest gerade den Bildschirm (M3.9; gespeist ab M4.6). */
+  screenRead: boolean;
   thinking: boolean;
   activities: Activity[];
   confirms: ConfirmItem[];
@@ -51,6 +55,8 @@ export const initialState: HudState = {
   voiceState: null,
   mic: null,
   voiceSeenAt: null,
+  level: null,
+  screenRead: false,
   thinking: false,
   activities: [],
   confirms: [],
@@ -103,6 +109,7 @@ function applyServer(state: HudState, { event, data }: ServerEvent, now: number)
       const voice = data.state as Record<string, unknown> | undefined;
       const mic = data.mic as Record<string, unknown> | undefined;
       const thinking = data.thinking as Record<string, unknown> | undefined;
+      const screen = data.screen_read as Record<string, unknown> | undefined;
       return {
         ...state,
         voiceState: voice ? str(voice.state) || null : null,
@@ -110,6 +117,8 @@ function applyServer(state: HudState, { event, data }: ServerEvent, now: number)
         // Ein Snapshot sagt nichts darüber, ob der Sprachclient noch lebt: erst seine nächste
         // Meldung zählt.
         thinking: thinking?.active === true,
+        screenRead: screen?.on === true,
+        level: null,
         confirms: [],
         activities: [],
       };
@@ -119,8 +128,15 @@ function applyServer(state: HudState, { event, data }: ServerEvent, now: number)
     case "mic":
       return { ...state, mic: data.on === true, voiceSeenAt: now };
     case "heartbeat":
-    case "level":
       return { ...state, voiceSeenAt: now };
+    case "level": {
+      const value = num(data.level);
+      if (value === null) return { ...state, voiceSeenAt: now };
+      const source = data.source === "speaker" ? "speaker" : "mic";
+      return { ...state, voiceSeenAt: now, level: { value: Math.max(0, Math.min(7, value)), source, at: now } };
+    }
+    case "screen_read":
+      return { ...state, screenRead: data.on === true };
     case "thinking":
       return { ...state, thinking: data.active === true };
     case "tool_start": {

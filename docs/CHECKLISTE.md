@@ -54,13 +54,13 @@ Markierungen:
 ## M3 – HUD
 - [~] M3.1 Web-Oberfläche im Iron-Man-Stil (gebaut: hud/ mit Vite, React, TypeScript; Zustandsring, Aktivität, Gespräch, Rückfrage-Karte, Not-Aus; läuft im Browser über `npm run dev`, Desktop-App folgt mit M3.2. Status-Ereignisse inhaltsfrei in /v1/events. Beleg: hud/, core/src/jarvis_core/status.py, core/tests/test_status.py, hud/test/, docs/ANLEITUNG-HUD.md, ADR-024. Optik nur von Master beurteilbar)
 - [~] M3.2 Desktop-App mit Tauri 2 (gebaut: hud/src-tauri; der Rust-Teil spricht nur mit localhost, die Webview hat keinen Netzzugang (CSP); Tray mit HUD zeigen, Overlay, Not-Aus, Autostart-Schalter (Standard aus), Beenden; systemweites Not-Aus Strg+Alt+Q. Unter Linux gebaut und gestartet (Xvfb, Bildschirmfoto, Kürzel ausgelöst); unter Windows nur am PC prüfbar, solange die Windows-CI gesperrt ist. Beleg: hud/src-tauri/src/lib.rs, core.rs, sse.rs, cargo test, hud/test/tauri.test.ts, docs/ANLEITUNG-HUD.md)
-- [ ] M3.3 Boot-Sequenz und Sounds
-- [ ] M3.4 Audio-Visualizer beim Zuhören und Sprechen
+- [~] M3.3 Boot-Sequenz und Sounds (gebaut: Startanimation bis zur Verbindung, höchstens 4 s, Klick überspringt; Töne per Web Audio ohne Dateien bei Verbindung, Zuhören, Rückfrage, Not-Aus, Fehler; Einstellungen: Startanimation, Töne, Lautstärke. Klang und Wirkung nur von Master beurteilbar. Beleg: hud/src/components/BootSequence.tsx, hud/src/sound.ts, hud/test/block-c.test.ts, hud/test/app.test.tsx)
+- [~] M3.4 Audio-Visualizer beim Zuhören und Sprechen (gebaut: Balkenkranz um den Ring; der Sprachclient meldet nur eine Pegelstufe 0..7, höchstens 8-mal je Sekunde und je Quelle, nicht ins Audit; das HUD öffnet nie ein Mikrofon. Mit echtem Mikrofon nur am PC prüfbar. Beleg: core/src/jarvis_voice/audio.py level, session.py _report_level, core/tests/test_voice_session.py, hud/src/components/Visualizer.tsx)
 - [~] M3.5 Transparentes Overlay über dem Desktop (gebaut: Strg+Alt+O oder Tray; rahmenlos, immer vorn, Klicks gehen durch, ohne Gesprächsfeld; Standard aus. Durchsichtigkeit nur am PC prüfbar, hier ohne Compositor nicht sichtbar. Beleg: hud/src-tauri/src/lib.rs set_overlay, hud/src/App.tsx, hud/src/theme/hud.css)
 - [ ] M3.6 Live-Kacheln: System, Termine, Fokus, Missionen
 - [ ] M3.7 Situatives HUD: Anzeigen erscheinen nur, wenn sie gebraucht werden
 - [~] M3.8 Anzeige, was Jarvis gerade tut, mit Abbrechen-Knopf (gebaut: Aktivitätsliste aus tool_start/tool_end mit Risiko, Ergebnis, Dauer; Not-Aus-Knopf und Strg+.; Hinweis auf `jarvis stop`, wenn der Core nicht antwortet. Beleg: hud/src/components/ActivityList.tsx, hud/test/app.test.tsx, core/tests/test_status.py)
-- [ ] M3.9 Augensymbol, solange Jarvis den Bildschirm liest
+- [~] M3.9 Augensymbol, solange Jarvis den Bildschirm liest (gebaut: Augensymbol im Kopf bei Ereignis screen_read; vorbereitet, denn Bildschirmlesen selbst kommt erst mit M4.6/M4.8 und speist dann dieses Ereignis. Beleg: hud/src/App.tsx, core/src/jarvis_core/status.py, hud/test/app.test.tsx)
 - [ ] M3.10 Drehbare 3D-Ansichten als Hologramm-Ersatz
 
 ## M4 – PC-Steuerung

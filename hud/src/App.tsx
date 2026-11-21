@@ -1,11 +1,16 @@
-import { useCallback, useEffect, useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { Transport } from "./api/transport";
 import { ActivityList } from "./components/ActivityList";
+import { BootSequence } from "./components/BootSequence";
 import { ChatPanel } from "./components/ChatPanel";
 import { ConfirmCard } from "./components/ConfirmCard";
 import { StateRing } from "./components/StateRing";
+import { SettingsMenu } from "./components/SettingsMenu";
 import { StopButton } from "./components/StopButton";
-import { initialState, micOf, reducer, ringOf } from "./state";
+import { Visualizer } from "./components/Visualizer";
+import { loadSettings, saveSettings, type Settings } from "./settings";
+import { createSounds, type SoundName } from "./sound";
+import { initialState, micOf, reducer, ringOf, type Ring } from "./state";
 
 const TICK_MS = 2000; // prüft, ob der Sprachclient noch lebt
 const STOP_NOTICE_MS = 4000;
@@ -15,6 +20,23 @@ export function App({ transport, now = Date.now }: { transport: Transport; now?:
   const [clock, setClock] = useState(now);
   const chatAbort = useRef<AbortController | null>(null);
   const [overlay, setOverlay] = useState(false);
+  const [settings, setSettings] = useState<Settings>(loadSettings);
+  const reducedMotion = useMemo(() => globalThis.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false, []);
+  const [booting, setBooting] = useState(() => settings.boot && !reducedMotion);
+  const endBoot = useCallback(() => setBooting(false), []);
+  const sounds = useMemo(() => createSounds(), []);
+  const soundRef = useRef(settings);
+  useEffect(() => {
+    soundRef.current = settings;
+  }, [settings]);
+  const play = useCallback((name: SoundName) => {
+    if (soundRef.current.sound) sounds.play(name, soundRef.current.volume);
+  }, [sounds]);
+
+  const changeSettings = (next: Settings) => {
+    setSettings(next);
+    saveSettings(next);
+  };
 
   useEffect(
     () =>
@@ -78,14 +100,50 @@ export function App({ transport, now = Date.now }: { transport: Transport; now?:
 
   const current = Math.max(clock, now());
   const stopped = state.stoppedAt !== null && current - state.stoppedAt < STOP_NOTICE_MS;
+  const ring = ringOf(state, current);
+
+  // Töne (M3.3) bei Übergängen: verbunden, Zuhören beginnt, neue Rückfrage, Not-Aus, Fehler.
+  const previous = useRef<{ connected: boolean; ring: Ring; confirms: number; stoppedAt: number | null; failed: boolean }>({
+    connected: false,
+    ring: "offline",
+    confirms: 0,
+    stoppedAt: null,
+    failed: false,
+  });
+  useEffect(() => {
+    const before = previous.current;
+    if (state.connected && !before.connected) play("boot");
+    if (ring === "listening" && before.ring !== "listening") play("listen");
+    if (state.confirms.length > before.confirms) play("confirm");
+    if (state.stoppedAt !== null && state.stoppedAt !== before.stoppedAt) play("stop");
+    if (state.stopFailed && !before.failed) play("error");
+    previous.current = {
+      connected: state.connected,
+      ring,
+      confirms: state.confirms.length,
+      stoppedAt: state.stoppedAt,
+      failed: state.stopFailed,
+    };
+  }, [state.connected, ring, state.confirms.length, state.stoppedAt, state.stopFailed, play]);
 
   return (
     <div className={overlay ? "hud overlay" : "hud"}>
+      {booting ? <BootSequence connected={state.connected} onDone={endBoot} /> : null}
       <header className="top">
         <h1>J.A.R.V.I.S.</h1>
         <span className={`link link-${state.connected ? "up" : "down"}`}>
           {state.connected ? "Core verbunden" : (state.problem ?? "Verbinde …")}
         </span>
+        {state.screenRead ? (
+          <span className="eye" role="status" title="Jarvis liest gerade den Bildschirm">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z" />
+              <circle cx="12" cy="12" r="3.5" />
+            </svg>
+            liest Bildschirm
+          </span>
+        ) : null}
+        <SettingsMenu settings={settings} onChange={changeSettings} />
         <StopButton onStop={stop} failed={state.stopFailed} />
       </header>
       {stopped ? (
@@ -95,7 +153,9 @@ export function App({ transport, now = Date.now }: { transport: Transport; now?:
       ) : null}
       <main>
         <div className="center">
-          <StateRing ring={ringOf(state, current)} mic={micOf(state, current)} />
+          <StateRing ring={ring} mic={micOf(state, current)}>
+            <Visualizer level={state.level} now={now} />
+          </StateRing>
           <div className="confirms">
             {state.confirms.map((item) => (
               <ConfirmCard key={item.id} item={item} onAnswer={answer} />

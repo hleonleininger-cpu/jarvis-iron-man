@@ -921,7 +921,7 @@ async def test_run_reports_state_and_microphone_to_the_hud_without_content() -> 
     assert ("state", {"state": "HÖRT ZU"}) in reports
     assert ("mic", {"on": True}) in reports[asleep:]  # nach dem Wecken wieder an
     assert reports[-1] == ("mic", {"on": False})  # Ende: Mikrofon zu
-    assert all(kind in {"state", "mic", "heartbeat"} for kind, _ in reports)
+    assert all(kind in {"state", "mic", "heartbeat", "level"} for kind, _ in reports)
     assert "Gute Nacht" not in repr(reports)
 
 
@@ -964,3 +964,29 @@ async def test_a_slow_core_gets_only_the_newest_state(monkeypatch: pytest.Monkey
     with contextlib.suppress(asyncio.CancelledError):
         await task
     assert len(rig.core.reports) < 10  # 100 Zustandswechsel, aber nur wenige Meldungen
+
+
+async def test_levels_go_to_the_hud_throttled_and_only_as_numbers() -> None:
+    from jarvis_voice.audio import level
+
+    assert level(QUIET) == 0 and 1 <= level(SPEECH) <= 7 and level(WAKE) >= level(SPEECH)
+    rig = Rig(stt=FakeStt(("Wie spät ist es", "de")), core=FakeCore(answer("Es ist spät.")))
+    reports: dict[str, dict[str, str | bool | int]] = {}
+    rig.session._reports = reports  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
+    seen: list[dict[str, str | bool | int]] = []
+    original = rig.session._report  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
+
+    def spy(event: str, **fields: str | bool | int) -> None:
+        if event == "level":
+            seen.append(fields)
+        original(event, **fields)
+
+    rig.session._report = spy  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
+    await rig.frames(WAKE)
+    await rig.frames(*([SPEECH] * 16 + [QUIET] * 8))  # 0,77 s Zuhören
+    await rig.session.wait_idle()
+    mic = [f for f in seen if f["source"] == "mic"]
+    speaker = [f for f in seen if f["source"] == "speaker"]
+    assert 3 <= len(mic) <= 8  # gedrosselt: höchstens 8 je Sekunde
+    assert speaker, "beim Sprechen kommt der Pegel der Ausgabe"
+    assert all(set(f) == {"level", "source"} and isinstance(f["level"], int) for f in seen)

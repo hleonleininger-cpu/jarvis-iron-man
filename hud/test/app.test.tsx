@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Listener, Transport } from "../src/api/transport";
 import { App } from "../src/App";
 
@@ -104,7 +104,7 @@ describe("HUD", () => {
 
   it("Gespräch: Antworten erscheinen als Text, nie als HTML", async () => {
     render();
-    const input = container.querySelector("input") as HTMLInputElement;
+    const input = container.querySelector('input[aria-label="Nachricht an Jarvis"]') as HTMLInputElement;
     await act(async () => {
       const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
       setter?.call(input, "Hallo Jarvis");
@@ -114,6 +114,39 @@ describe("HUD", () => {
     expect(transport.chats).toEqual(["Hallo Jarvis"]);
     expect(container.querySelector(".msg-jarvis")?.textContent).toBe("<b>kein HTML</b>");
     expect(container.querySelector(".msg-jarvis b")).toBeNull();
+  });
+});
+
+describe("Block C", () => {
+  it("zeigt das Augensymbol, solange Jarvis den Bildschirm liest", () => {
+    render();
+    expect(container.querySelector(".eye")).toBeNull();
+    send("screen_read", { on: true });
+    expect(container.querySelector(".eye")?.textContent).toContain("liest Bildschirm");
+    send("screen_read", { on: false });
+    expect(container.querySelector(".eye")).toBeNull();
+  });
+
+  it("die Startanimation endet nach der Verbindung und lässt sich abschalten", async () => {
+    vi.useFakeTimers();
+    try {
+      render();
+      expect(container.querySelector(".boot")).not.toBeNull();
+      act(() => transport.connection(true));
+      await act(async () => vi.advanceTimersByTime(2000));
+      expect(container.querySelector(".boot")).toBeNull();
+      // abschalten: Einstellung wird gespeichert und gilt beim nächsten Start
+      const toggle = [...container.querySelectorAll("label")].find((l) => l.textContent?.includes("Startanimation"))?.querySelector("input");
+      act(() => toggle?.click());
+      expect(JSON.parse(localStorage.getItem("jarvis.hud.settings") ?? "{}").boot).toBe(false);
+      act(() => root.unmount());
+      root = createRoot(container);
+      render();
+      expect(container.querySelector(".boot")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+      localStorage.clear();
+    }
   });
 });
 
