@@ -61,7 +61,7 @@ Markierungen:
 - [~] M3.7 Situatives HUD: Anzeigen erscheinen nur, wenn sie gebraucht werden (gebaut: Regeln als Liste in hud/src/situation.ts: Rückfrage vor laufender Arbeit vor Termin in 15 Minuten vor Ruhe; im Fenster wird das Wichtige hervorgehoben, im Overlay erscheint nur das Gebrauchte. Beleg: hud/test/block-d.test.ts, hud/test/app.test.tsx)
 - [~] M3.8 Anzeige, was Jarvis gerade tut, mit Abbrechen-Knopf (gebaut: Aktivitätsliste aus tool_start/tool_end mit Risiko, Ergebnis, Dauer; Not-Aus-Knopf und Strg+.; Hinweis auf `jarvis stop`, wenn der Core nicht antwortet. Beleg: hud/src/components/ActivityList.tsx, hud/test/app.test.tsx, core/tests/test_status.py)
 - [~] M3.9 Augensymbol, solange Jarvis den Bildschirm liest (gebaut: Augensymbol im Kopf bei Ereignis screen_read; vorbereitet, denn Bildschirmlesen selbst kommt erst mit M4.6/M4.8 und speist dann dieses Ereignis. Beleg: hud/src/App.tsx, core/src/jarvis_core/status.py, hud/test/app.test.tsx)
-- [ ] M3.10 Drehbare 3D-Ansichten als Hologramm-Ersatz
+- [~] M3.10 Drehbare 3D-Ansichten als Hologramm-Ersatz (gebaut: 3D-Ring mit three.js, per Maus drehbar, Farbe und Tempo je Zustand; nur nachgeladen, wenn gebraucht; Einstellung automatisch/an/aus, automatisch erst ab Profil M (der Core meldet das Profil im Snapshot); ohne WebGL zurück zum flachen Ring. In Chromium mit Software-WebGL gezeigt; Wirkung auf Masters Grafik nur am PC prüfbar. Beleg: hud/src/components/Hologram.tsx, hud/src/hologram.ts, hud/test/block-e.test.tsx, core/tests/test_status.py)
 
 ## M4 – PC-Steuerung
 - [ ] M4.1 Windows-Knoten über MCP

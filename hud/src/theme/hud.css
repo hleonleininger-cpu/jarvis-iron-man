@@ -250,6 +250,8 @@ main {
 
 .ring-label {
   position: relative;
+  pointer-events: none; /* Ziehen in der 3D-Ansicht soll drehen, nicht Text markieren */
+  user-select: none;
   font-size: 1rem;
   font-weight: 600;
   letter-spacing: 0.2em;
@@ -767,4 +769,29 @@ html.overlay body {
 
 .hud.overlay .tiles {
   grid-template-columns: minmax(240px, 360px);
+}
+
+/* --------------------------------------------------------------------------- 3D (M3.10) */
+.hologram {
+  position: absolute;
+  inset: 0;
+  cursor: grab;
+}
+
+.hologram:active {
+  cursor: grabbing;
+}
+
+.hologram canvas {
+  width: 100% !important;
+  height: 100% !important;
+  display: block;
+}
+
+.settings select {
+  font: inherit;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 4px;
 }

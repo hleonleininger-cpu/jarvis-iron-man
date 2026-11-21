@@ -29,9 +29,10 @@ FIELDS: Final[dict[str, frozenset[str]]] = {
     "tool_end": frozenset({"call", "tool", "risk", "status", "ms"}),
     "stop": frozenset({"count"}),  # Not-Aus ausgelöst
     "screen_read": frozenset({"on"}),  # Bildschirm wird gelesen (Vertrag für M4.6/M4.8)
+    "profile": frozenset({"name"}),  # Hardware-Profil S/M/L (z. B. 3D-Ansicht nur ab M)
 }
 # Arten, deren letzter Stand im Snapshot steht.
-SNAPSHOT_KINDS: Final = ("state", "mic", "thinking", "screen_read")
+SNAPSHOT_KINDS: Final = ("state", "mic", "thinking", "screen_read", "profile")
 # Bei vollem Puffer werden zuerst diese Arten verworfen (häufig und ohne bleibende Wirkung).
 DROPPABLE: Final = frozenset({"level", "heartbeat"})
 MAX_TEXT = 64  # Zustands- und Werkzeugnamen sind kurz; längerer Text wäre ein Inhalt

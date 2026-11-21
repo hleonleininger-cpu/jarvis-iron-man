@@ -35,6 +35,7 @@ from jarvis_core.agent.confirmation import ConfirmDone, ConfirmRequest
 from jarvis_core.agent.tiles import TileService
 from jarvis_core.audit import AuditLog
 from jarvis_core.config import Settings
+from jarvis_core.hardware import detect_hardware, recommend
 from jarvis_core.status import StatusEvent
 
 
@@ -212,16 +213,25 @@ def create_app(
         **({"poll_seconds": reminder_poll_seconds} if reminder_poll_seconds else {}),
     )  # fmt: skip
 
+    async def publish_profile() -> None:
+        """Hardware-Profil fürs HUD (M3.10), einmal im Hintergrund: die Erkennung startet
+        Unterprozesse und gehört nicht in jeden Verbindungsaufbau."""
+        with suppress(Exception):
+            found = await asyncio.to_thread(lambda: recommend(detect_hardware()).profile)
+            service.status.publish("profile", name=str(found))
+
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
         task = asyncio.create_task(watcher.run()) if watcher.enabled else None
+        profile = asyncio.create_task(publish_profile())
         try:
             yield
         finally:
-            if task is not None:
-                task.cancel()
-                with suppress(asyncio.CancelledError):
-                    await task
+            for running in (task, profile):
+                if running is not None:
+                    running.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await running
 
     app = FastAPI(title="JARVIS Core", version=__version__, lifespan=lifespan)
     app.state.service = service  # für Tests und Werkzeuge, die den laufenden Service brauchen

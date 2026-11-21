@@ -14,6 +14,14 @@ export function SettingsMenu({ settings, onChange }: { settings: Settings; onCha
         Töne
       </label>
       <label>
+        3D-Ansicht
+        <select value={settings.threeD} onChange={(e) => onChange({ ...settings, threeD: e.target.value as Settings["threeD"] })}>
+          <option value="auto">automatisch (ab Profil M)</option>
+          <option value="an">an</option>
+          <option value="aus">aus</option>
+        </select>
+      </label>
+      <label>
         Lautstärke
         <input
           type="range"

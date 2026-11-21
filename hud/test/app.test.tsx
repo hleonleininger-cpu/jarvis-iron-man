@@ -181,6 +181,22 @@ describe("Block D", () => {
   });
 });
 
+describe("Block E", () => {
+  it("ohne WebGL (wie hier in jsdom) bleibt der flache Ring, auch wenn 3D an ist", async () => {
+    localStorage.setItem("jarvis.hud.settings", JSON.stringify({ boot: false, threeD: "an" }));
+    try {
+      await act(async () => render());
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 50)); // three.js nachladen
+      });
+      expect(container.querySelector(".ring svg")).not.toBeNull();
+      expect(container.querySelector(".hologram")).toBeNull();
+    } finally {
+      localStorage.clear();
+    }
+  });
+});
+
 describe("Sicherheit im Quelltext", () => {
   it("nutzt nirgends HTML aus Zeichenketten oder eval", () => {
     const sources = import.meta.glob("../src/**/*.{ts,tsx}", { query: "?raw", import: "default", eager: true });

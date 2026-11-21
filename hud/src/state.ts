@@ -39,6 +39,8 @@ export interface HudState {
   level: { value: number; source: "mic" | "speaker"; at: number } | null;
   /** Jarvis liest gerade den Bildschirm (M3.9; gespeist ab M4.6). */
   screenRead: boolean;
+  /** Hardware-Profil des Core (S/M/L), z. B. für die 3D-Ansicht (M3.10). */
+  profile: string | null;
   thinking: boolean;
   activities: Activity[];
   confirms: ConfirmItem[];
@@ -57,6 +59,7 @@ export const initialState: HudState = {
   voiceSeenAt: null,
   level: null,
   screenRead: false,
+  profile: null,
   thinking: false,
   activities: [],
   confirms: [],
@@ -110,6 +113,7 @@ function applyServer(state: HudState, { event, data }: ServerEvent, now: number)
       const mic = data.mic as Record<string, unknown> | undefined;
       const thinking = data.thinking as Record<string, unknown> | undefined;
       const screen = data.screen_read as Record<string, unknown> | undefined;
+      const profile = data.profile as Record<string, unknown> | undefined;
       return {
         ...state,
         voiceState: voice ? str(voice.state) || null : null,
@@ -118,6 +122,7 @@ function applyServer(state: HudState, { event, data }: ServerEvent, now: number)
         // Meldung zählt.
         thinking: thinking?.active === true,
         screenRead: screen?.on === true,
+        profile: profile ? str(profile.name) || null : state.profile,
         level: null,
         confirms: [],
         activities: [],
@@ -137,6 +142,8 @@ function applyServer(state: HudState, { event, data }: ServerEvent, now: number)
     }
     case "screen_read":
       return { ...state, screenRead: data.on === true };
+    case "profile":
+      return { ...state, profile: str(data.name) || null };
     case "thinking":
       return { ...state, thinking: data.active === true };
     case "tool_start": {

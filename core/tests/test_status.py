@@ -270,3 +270,33 @@ def test_events_stream_sends_snapshot_then_live_status_without_content(tmp_path:
     assert kinds[2:] == ["thinking", "tool_start", "tool_end", "thinking"]
     assert events[3][1]["tool"] == "get_weather" and events[4][1]["status"] == "ok"
     assert SECRET not in json.dumps(events)
+
+
+def test_hardware_profile_goes_into_the_snapshot_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from types import SimpleNamespace
+
+    from jarvis_core.api import app as app_module
+
+    calls: list[int] = []
+
+    def detect() -> object:
+        calls.append(1)
+        return object()
+
+    monkeypatch.setattr(app_module, "detect_hardware", detect)
+
+    def recommend(_info: object) -> SimpleNamespace:
+        return SimpleNamespace(profile="M")
+
+    monkeypatch.setattr(app_module, "recommend", recommend)
+    app = create_app(_settings(tmp_path), TestModel(call_tools=[]), "t")
+    service: ChatService = app.state.service
+    with TestClient(app, base_url="http://127.0.0.1"):
+        for _ in range(100):
+            if "profile" in service.status.snapshot():
+                break
+            time.sleep(0.02)
+    assert service.status.snapshot()["profile"] == {"name": "M"}
+    assert calls == [1]

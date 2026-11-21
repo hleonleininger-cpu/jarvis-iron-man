@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { Transport } from "./api/transport";
 import { ActivityList } from "./components/ActivityList";
 import { BootSequence } from "./components/BootSequence";
@@ -11,9 +11,13 @@ import { TileGrid } from "./components/TileGrid";
 import { Visualizer } from "./components/Visualizer";
 import { loadSettings, saveSettings, type Settings } from "./settings";
 import { createSounds, type SoundName } from "./sound";
+import { wants3d } from "./hologram";
 import { focusOf, overlayPanels } from "./situation";
 import { initialState, micOf, reducer, ringOf, type Ring } from "./state";
 import { parseTiles, type Tiles } from "./tiles";
+
+// three.js nur laden, wenn die 3D-Ansicht gebraucht wird (M3.10): das HUD bleibt sonst schlank.
+const Hologram = lazy(() => import("./components/Hologram"));
 
 const TICK_MS = 2000; // prüft, ob der Sprachclient noch lebt
 const TILES_MS = 60_000; // Kacheln einmal je Minute (der Core holt Termine/Aufgaben nur alle 5 min)
@@ -26,6 +30,8 @@ export function App({ transport, now = Date.now }: { transport: Transport; now?:
   const [overlay, setOverlay] = useState(false);
   const [tiles, setTiles] = useState<Tiles | null>(null);
   const [tilesProblem, setTilesProblem] = useState<string | null>(null);
+  const [webglFailed, setWebglFailed] = useState(false);
+  const noWebgl = useCallback(() => setWebglFailed(true), []);
   const [settings, setSettings] = useState<Settings>(loadSettings);
   const reducedMotion = useMemo(() => globalThis.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false, []);
   const [booting, setBooting] = useState(() => settings.boot && !reducedMotion);
@@ -129,6 +135,7 @@ export function App({ transport, now = Date.now }: { transport: Transport; now?:
   const current = Math.max(clock, now());
   const stopped = state.stoppedAt !== null && current - state.stoppedAt < STOP_NOTICE_MS;
   const ring = ringOf(state, current);
+  const threeD = !webglFailed && !overlay && wants3d(settings.threeD, state.profile);
   // Situatives HUD (M3.7): was gerade wichtig ist, steht vorn; im Overlay nur das.
   const { focus, why } = focusOf({ state, tiles, now: current });
   const shown = overlay ? overlayPanels(focus) : { activity: true, tiles: true };
@@ -184,7 +191,12 @@ export function App({ transport, now = Date.now }: { transport: Transport; now?:
       ) : null}
       <main className={`focus-${focus}`} data-why={why}>
         <div className="center">
-          <StateRing ring={ring} mic={micOf(state, current)}>
+          <StateRing ring={ring} mic={micOf(state, current)} flat={!threeD}>
+            {threeD ? (
+              <Suspense fallback={null}>
+                <Hologram ring={ring} onFail={noWebgl} />
+              </Suspense>
+            ) : null}
             <Visualizer level={state.level} now={now} />
           </StateRing>
           <div className="confirms">
