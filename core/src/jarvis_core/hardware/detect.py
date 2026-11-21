@@ -15,10 +15,21 @@ class HardwareInfo:
     is_mac: bool = False  # Apple-Chip mit geteiltem Arbeitsspeicher
 
 
+# Unter Windows ohne sichtbares Konsolenfenster: läuft der Core ohne Konsole (Autostart),
+# blitzten sonst bei jedem Start PowerShell-Fenster auf.
+_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+
 def _run(cmd: list[str], timeout: float = 5.0) -> str | None:
     try:
         result = subprocess.run(  # noqa: S603
-            cmd, capture_output=True, text=True, errors="replace", timeout=timeout, check=False
+            cmd,
+            capture_output=True,
+            text=True,
+            errors="replace",
+            timeout=timeout,
+            check=False,
+            creationflags=_NO_WINDOW,
         )
     except (OSError, ValueError, subprocess.SubprocessError):
         return None

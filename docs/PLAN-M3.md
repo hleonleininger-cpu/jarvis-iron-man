@@ -331,3 +331,5 @@ nicht von selbst, sondern frage Master in der Besprechung um sein Okay.
 - Bewusst offen: Ein Not-Aus während eines Kachel-Abrufs zählt im Audit als "ok" (eine Aufgabe
   abgebrochen) statt "idle"; die Profil-Erkennung kann das Beenden des Core unter Windows um bis
   zu etwa 20 s verzögern und kurz PowerShell-Fenster zeigen, wenn der Core ohne Konsole startet.
+- Nachtrag 21.11. (Nachtschicht): Die Hardware-Erkennung startet ihre Befehle unter Windows
+  jetzt ohne Konsolenfenster (`CREATE_NO_WINDOW`), es blitzen keine PowerShell-Fenster mehr auf.
