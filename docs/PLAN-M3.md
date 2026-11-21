@@ -292,3 +292,10 @@ nicht von selbst, sondern frage Master in der Besprechung um sein Okay.
   Kachel "Fokus" zeigt "keine Daten" (ADR-016 kennt kein aktives Projekt).
 - Geprüft: 8 Core-Tests (Kalender-Attrappe, echter Notizen-Server, Sperre, Not-Aus, Zwischenspeicher),
   HUD-Tests für Lesen, Regeln und Anzeige, Bildschirmfoto mit echten Kacheln im Browser.
+
+## 18. Bau Block E (21.11., Ausnahme-Arbeitstag)
+- Gebaut: `Hologram.tsx` (three.js, nachgeladen), `hologram.ts` (Regeln, Drehen, Farben), Einstellung
+  3D-Ansicht (automatisch/an/aus), Profil im Snapshot (Core, einmal beim Start im Hintergrund).
+- Abhängigkeiten: `three@0.187.0` (im Plan), dazu `@types/three@0.187.0` (Typen, Nachtrag).
+- Geprüft: HUD-Tests (Regeln, Ziehen, Rückfall ohne WebGL), Bildschirmfoto in Chromium mit
+  Software-WebGL nach Ziehen.

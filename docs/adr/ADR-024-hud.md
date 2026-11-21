@@ -87,10 +87,12 @@ auch die Handy-App (PWA) werden, dann entfällt `api/web`.
   Statusstrom.
 - **Situatives HUD (M3.7):** feste Regelliste in `hud/src/situation.ts`; im Overlay nur das
   Gebrauchte.
+- **3D (M3.10):** three.js, nur nachgeladen, wenn die 3D-Ansicht an ist (eigener Baustein);
+  ohne WebGL zurück zum flachen Ring.
 - **Schrift:** keine Schriftdatei; Bahnschrift ist unter Windows eingebaut, sonst Systemschrift.
 
 ## Konsequenzen
 - Zwei Oberflächen bis M8 (HUD am PC, schlichte Web-Oberfläche fürs Handy).
 - Ein neuer CI-Job `hud` (Linux: Lint, Typen, Tests, Bau).
-- Das Hardware-Profil steht noch nicht im `snapshot`: `detect_hardware` startet Unterprozesse
-  und gehört nicht in jeden Verbindungsaufbau. Gebraucht wird es erst für M3.10.
+- Das Hardware-Profil (S/M/L) ermittelt der Core einmal im Hintergrund beim Start und gibt es
+  als Ereignis `profile` und im `snapshot` mit (M3.10: 3D automatisch erst ab Profil M).

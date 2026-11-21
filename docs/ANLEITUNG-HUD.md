@@ -54,7 +54,9 @@ Der Ring zeigt dann "HÖRT ZU", "DENKT", "SPRICHT" usw., darunter, ob das Mikrof
   Steht ein Termin in den nächsten 15 Minuten an, leuchtet die Termin-Kachel orange.
 - Overlay (Desktop-App): dort erscheinen nur Ring und das, was gerade gebraucht wird (Rückfrage,
   laufende Werkzeuge oder der gleich beginnende Termin).
-- Einstellungen (oben rechts): Startanimation, Töne und Lautstärke.
+- Einstellungen (oben rechts): Startanimation, Töne, Lautstärke und 3D-Ansicht. Die 3D-Ansicht
+  ist automatisch nur ab Profil M an; mit "an" auch auf kleineren Rechnern. Mit der Maus ziehen
+  dreht den Ring.
 
 ## Wenn etwas nicht geht
 - "Der Core ist nicht erreichbar": `jarvis serve` läuft nicht oder auf einem anderen Port. Ein
