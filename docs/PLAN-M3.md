@@ -221,3 +221,8 @@ statt neuem Endpunkt, `/v1/tiles` über denselben Weg wie Anfragen, `status.py`,
 CSP `ipc:`, Overlay-Umschalter, Kürzel-Fehlermeldung, Token-Hinweis). Zwei Runden sind
 verbraucht, ein ausdrückliches "perfekt" gab es nicht: nach der Freigabe-Regel baue ich M3 daher
 nicht von selbst, sondern frage Master in der Besprechung um sein Okay.
+
+## 12. Entscheidungen von Master (21.11., Besprechung)
+- Block A wird gebaut (Okay trotz fehlendem "perfekt": die verbleibenden Funde waren mittel/niedrig und sind eingearbeitet).
+- Das HUD-Frontend wird später (M8) auch die Handy-App (PWA); `api/web` entfällt dann. Block A bleibt davon unberührt.
+- Das Repo ist öffentlich: Windows-Minuten kosten nichts. Der Tauri-Job läuft trotzdem nur bei Änderungen unter `hud/`.
