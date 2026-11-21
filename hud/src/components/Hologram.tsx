@@ -37,10 +37,21 @@ export default function Hologram({ ring, onFail }: Props) {
       onFail();
       return;
     }
-    const size = element.clientWidth || 320;
     renderer.setPixelRatio(Math.min(globalThis.devicePixelRatio || 1, 2));
-    renderer.setSize(size, size);
+    const fit = () => {
+      const size = element.clientWidth || 320;
+      renderer.setSize(size, size, false); // Zeichenpuffer zur Größe, CSS bleibt zuständig
+    };
+    fit();
     element.appendChild(renderer.domElement);
+    const resize = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(fit);
+    resize?.observe(element);
+    // GPU-Reset oder Ruhezustand: zurück zum flachen Ring statt eines schwarzen Bildes.
+    const lost = (event: Event) => {
+      event.preventDefault();
+      onFail();
+    };
+    renderer.domElement.addEventListener("webglcontextlost", lost);
 
     const scene = new Scene();
     const camera = new PerspectiveCamera(40, 1, 0.1, 100);
@@ -78,29 +89,36 @@ export default function Hologram({ ring, onFail }: Props) {
     renderer.domElement.addEventListener("pointerup", up);
     renderer.domElement.addEventListener("pointercancel", up);
 
+    // Höchstens 30 Bilder je Sekunde, bei reduzierter Bewegung 4, im Hintergrund keine: das HUD
+    // läuft dauernd und soll die Grafik nicht belasten.
+    const interval = still ? 250 : 33;
     let frame = 0;
     let last = performance.now();
     const draw = (time: number) => {
+      frame = requestAnimationFrame(draw);
+      if (time - last < interval || document.hidden) return;
       const seconds = Math.min(0.1, (time - last) / 1000);
       last = time;
       const current = ringRef.current;
       material.color.setHex(RING_COLORS[current]);
       if (!dragging && !still) rotation = { ...rotation, y: rotation.y + seconds * spinSpeed(current) * Math.PI * 2 * 0.25 };
       group.rotation.set(rotation.x, rotation.y, 0);
-      meshes[3]?.rotation.set(time / 2400, time / 1800, 0);
+      if (!still) meshes[3]?.rotation.set(time / 2400, time / 1800, 0);
       renderer.render(scene, camera);
-      frame = requestAnimationFrame(draw);
     };
     frame = requestAnimationFrame(draw);
 
     return () => {
       cancelAnimationFrame(frame);
+      resize?.disconnect();
+      renderer.domElement.removeEventListener("webglcontextlost", lost);
       renderer.domElement.removeEventListener("pointerdown", down);
       renderer.domElement.removeEventListener("pointermove", move);
       renderer.domElement.removeEventListener("pointerup", up);
       renderer.domElement.removeEventListener("pointercancel", up);
       geometries.forEach((geometry) => geometry.dispose());
       material.dispose();
+      renderer.forceContextLoss(); // dispose() allein gibt den WebGL-Kontext nicht frei
       renderer.dispose();
       renderer.domElement.remove();
     };

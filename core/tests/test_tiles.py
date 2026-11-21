@@ -267,3 +267,64 @@ async def test_hanging_tool_is_stopped_after_the_limit_and_audited_as_timeout(
     with sqlite3.connect(tmp_path / "a.sqlite3") as conn:
         rows = conn.execute("SELECT tool, status FROM audit").fetchall()
     assert rows == [("get_weather", "timeout")]
+
+
+@pytest.mark.anyio
+async def test_second_request_during_teardown_gets_the_normal_busy_path(tmp_path: Path) -> None:
+    """Bricht Anfrage A einen Kachel-Abruf ab, sieht Anfrage B danach die normale Lage: Hinweis
+    "beschäftigt" statt still zu warten, und die Grenze für Wartende gilt."""
+    from jarvis_core.agent import Notice
+
+    service = build_service(
+        Settings(data_dir=tmp_path / "d", mcp_servers={}),
+        AuditLog(tmp_path / "a.sqlite3"),
+        TestModel(),
+        "t",
+    )
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def hold() -> None:
+        async with service.idle_turn() as free:
+            assert free
+            entered.set()
+            try:
+                await asyncio.sleep(30)
+            finally:
+                await release.wait()  # langsamer Abbau (Server beenden)
+
+    refresh = asyncio.create_task(hold())
+    await entered.wait()
+    first = service.stream("eins", channel="api")
+    second = service.stream("zwei", channel="api")
+    first_task = asyncio.create_task(anext(first))
+    await asyncio.sleep(0.05)  # A hat den Abruf abgebrochen, der Abbau läuft noch
+    second_event = await asyncio.wait_for(anext(second), 2)
+    assert isinstance(second_event, Notice)  # B wartet nicht still
+    release.set()
+    await first_task
+    async for _ in first:
+        pass
+    async for _ in second:
+        pass
+    with pytest.raises(asyncio.CancelledError):  # der Kachel-Abruf wurde abgebrochen
+        await refresh
+
+
+@pytest.mark.anyio
+async def test_a_failed_read_keeps_the_last_good_tile(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    service = build_service(settings, AuditLog(settings.audit_db_path), TestModel(), "t")
+    clock = [0.0]
+    tiles = TileService(service, clock=lambda: clock[0], now=lambda: NOW)
+    good = await tiles.tiles()
+    clock[0] += TOOL_SECONDS + 1
+
+    async def timed_out(*_args: object, **_kwargs: object) -> None:
+        return None  # wie nach einer Zeitüberschreitung
+
+    service.hub.read_tool = timed_out  # pyright: ignore[reportAttributeAccessIssue]
+    await tiles.tiles()
+    await asyncio.wait_for(tiles.settle(), 20)
+    again = await tiles.tiles()
+    assert again["missionen"] == good["missionen"] and again["termine"] == good["termine"]

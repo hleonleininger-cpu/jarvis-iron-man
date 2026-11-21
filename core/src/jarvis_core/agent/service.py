@@ -443,7 +443,8 @@ class ChatService:
                     yield True
             finally:
                 self.hub.only = None
-                self._idle = None
+                if self._idle is task:
+                    self._idle = None
                 self._tasks.discard(task)
                 self._stopped.discard(task)
 
@@ -455,6 +456,9 @@ class ChatService:
         Modell (Kacheln) weicht sofort: sie wird abgebrochen, ohne Hinweis "beschäftigt"."""
         idle = self._idle
         if idle is not None and not idle.done():
+            # Nur die erste Anfrage bricht ab; jede weitere sieht danach die normale Lage
+            # (Hinweis "beschäftigt", Grenze für Wartende), auch während die Server noch enden.
+            self._idle = None
             idle.cancel()
         elif self._run_lock.locked():
             if self._waiting >= MAX_WAITING:

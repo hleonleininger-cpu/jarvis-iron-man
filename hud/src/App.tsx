@@ -5,6 +5,7 @@ import { BootSequence } from "./components/BootSequence";
 import { ChatPanel } from "./components/ChatPanel";
 import { ConfirmCard } from "./components/ConfirmCard";
 import { StateRing } from "./components/StateRing";
+import { SafeBoundary } from "./components/SafeBoundary";
 import { SettingsMenu } from "./components/SettingsMenu";
 import { StopButton } from "./components/StopButton";
 import { TileGrid } from "./components/TileGrid";
@@ -80,13 +81,18 @@ export function App({ transport, now = Date.now }: { transport: Transport; now?:
   // Live-Kacheln (M3.6): beim Start und dann einmal je Minute. Fehler lassen den alten Stand stehen.
   useEffect(() => {
     let active = true;
-    const load = () =>
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    const load = (): Promise<void> =>
       transport
         .tiles()
         .then((raw) => {
           if (!active) return;
-          setTiles(parseTiles(raw));
+          const parsed = parseTiles(raw);
+          setTiles(parsed);
           setTilesProblem(null);
+          // Beim allerersten Laden (Server starten, iCloud lesen) bald noch einmal fragen,
+          // statt eine Minute "Noch nicht geladen" zu zeigen.
+          if (parsed.stand === null) retry = setTimeout(() => void load(), 5000);
         })
         .catch((error: unknown) => {
           if (active) setTilesProblem(error instanceof Error ? error.message : "Kacheln nicht erreichbar.");
@@ -96,6 +102,7 @@ export function App({ transport, now = Date.now }: { transport: Transport; now?:
     return () => {
       active = false;
       clearInterval(timer);
+      clearTimeout(retry);
     };
   }, [transport]);
 
@@ -198,9 +205,11 @@ export function App({ transport, now = Date.now }: { transport: Transport; now?:
         <div className="center">
           <StateRing ring={ring} mic={micOf(state, current)} flat={!threeD}>
             {threeD ? (
-              <Suspense fallback={null}>
-                <Hologram ring={ring} onFail={noWebgl} />
-              </Suspense>
+              <SafeBoundary onError={noWebgl}>
+                <Suspense fallback={null}>
+                  <Hologram ring={ring} onFail={noWebgl} />
+                </Suspense>
+              </SafeBoundary>
             ) : null}
             <Visualizer level={state.level} now={now} />
           </StateRing>

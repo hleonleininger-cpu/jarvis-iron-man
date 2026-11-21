@@ -316,3 +316,18 @@ nicht von selbst, sondern frage Master in der Besprechung um sein Okay.
 - Dokumentierte Abweichungen: Kacheln nutzen `read_tool` statt `gated_call` (kein Modell, keine
   Statusmeldung je Abruf); sie warten nie auf die Sperre; "Termin gleich" gilt 15 statt 10 Minuten
   vorher.
+
+## 20. Prüfrunde Block E und Korrekturen (Opus, 21.11.)
+1 hoher, 3 mittlere, 9 niedrige Funde; behoben:
+- Hoch: Ein Fehler im 3D-Baustein (Laden scheitert, Fehler beim Zeichnen) hätte das ganze HUD
+  samt Not-Aus-Knopf ausgehängt; jetzt Fehlergrenze (`SafeBoundary`), Rückfall auf den flachen Ring.
+- Mittel: Eine zweite Anfrage während des Abbaus nach einem abgebrochenen Kachel-Abruf wartete
+  still und umging die Grenze für Wartende; jetzt bricht nur die erste ab, weitere sehen den
+  normalen Weg. WebGL-Kontext wird freigegeben (`forceContextLoss`). Höchstens 30 Bilder je
+  Sekunde (bei reduzierter Bewegung 4, im Hintergrund keine).
+- Niedrig: Größenanpassung (ResizeObserver), Touch dreht statt scrollt, Kontextverlust führt
+  zum flachen Ring, alter guter Kachelstand bleibt bei Zeitüberschreitung, erster Kachelabruf
+  wird nach 5 s wiederholt, Pegel ohne Zeitdrift, Not-Aus-Meldung über der Startanimation.
+- Bewusst offen: Ein Not-Aus während eines Kachel-Abrufs zählt im Audit als "ok" (eine Aufgabe
+  abgebrochen) statt "idle"; die Profil-Erkennung kann das Beenden des Core unter Windows um bis
+  zu etwa 20 s verzögern und kurz PowerShell-Fenster zeigen, wenn der Core ohne Konsole startet.

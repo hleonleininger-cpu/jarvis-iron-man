@@ -186,12 +186,15 @@ class VoiceSession:
         self._report("level", level=audio_level(pcm[:step]), source="speaker")
 
         async def follow() -> None:
+            loop = asyncio.get_running_loop()
+            start = loop.time()
             rest = pcm[step:]
             values = await asyncio.to_thread(
                 lambda: [audio_level(rest[i : i + step]) for i in range(0, len(rest), step)]
             )
-            for value in values:
-                await asyncio.sleep(LEVEL_SECONDS)
+            for index, value in enumerate(values, start=1):
+                # gegen die absolute Zeit planen: sonst läuft der Pegel bei langen Sätzen nach
+                await asyncio.sleep(max(0.0, start + index * LEVEL_SECONDS - loop.time()))
                 if self.state is not State.SPEAKING:
                     return
                 self._report("level", level=value, source="speaker")

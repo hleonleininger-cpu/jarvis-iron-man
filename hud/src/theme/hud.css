@@ -123,6 +123,8 @@ body {
 }
 
 .stopped {
+  position: relative;
+  z-index: 11; /* auch über der Startanimation sichtbar */
   margin: 12px 0 0;
   padding: 8px 12px;
   border: 1px solid var(--red);
@@ -778,6 +780,7 @@ html.overlay body {
   position: absolute;
   inset: 0;
   cursor: grab;
+  touch-action: none; /* Ziehen dreht, statt die Seite zu scrollen */
 }
 
 .hologram:active {

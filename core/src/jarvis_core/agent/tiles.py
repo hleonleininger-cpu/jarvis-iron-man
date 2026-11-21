@@ -206,10 +206,13 @@ class TileService:
             await asyncio.wait({self._loading})
 
     def _loaded(self, task: asyncio.Task[None]) -> None:
-        """Abgebrochen (eine Anfrage hatte Vorrang, Not-Aus): nicht gleich wieder, aber bald.
-        Andere Fehler ins Log, nie still verschlucken."""
+        """Abgebrochen (eine Anfrage hatte Vorrang, Not-Aus): nicht gleich wieder, aber bald;
+        war der neue Stand schon gespeichert, bleibt es bei fünf Minuten. Andere Fehler ins Log,
+        nie still verschlucken."""
+        fresh = self._tools_at is not None and self._clock() - self._tools_at < RETRY_SECONDS
         if task.cancelled():
-            self._tools_at = self._clock() - TOOL_SECONDS + RETRY_SECONDS
+            if not fresh:
+                self._tools_at = self._clock() - TOOL_SECONDS + RETRY_SECONDS
         elif (error := task.exception()) is not None:
             log.warning("tiles_failed", error=type(error).__name__)
             self._tools_at = self._clock() - TOOL_SECONDS + RETRY_SECONDS
@@ -238,6 +241,11 @@ class TileService:
                     tiles["missionen"] = tasks_tile(notes)
                 else:
                     tiles["missionen"] = _none("Keine Aufgabenliste eingerichtet.")
+                # Konnte eine Quelle diesmal nicht gelesen werden, gilt ihr letzter guter Stand.
+                old = self._tools or {}
+                for name, tile in tiles.items():
+                    if not tile.get("ok") and old.get(name, {}).get("ok"):
+                        tiles[name] = old[name]
                 self._tools = tiles
                 self._tools_at = self._clock()
                 self._stand = now.isoformat(timespec="seconds")
