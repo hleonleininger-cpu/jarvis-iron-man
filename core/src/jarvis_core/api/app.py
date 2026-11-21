@@ -32,6 +32,7 @@ from jarvis_core.agent import (
     is_valid_session_id,
 )
 from jarvis_core.agent.confirmation import ConfirmDone, ConfirmRequest
+from jarvis_core.agent.tiles import TileService
 from jarvis_core.audit import AuditLog
 from jarvis_core.config import Settings
 from jarvis_core.status import StatusEvent
@@ -349,6 +350,13 @@ def create_app(
             case "heartbeat":
                 service.status.publish("heartbeat")
         return {"status": "ok"}
+
+    tiles = TileService(service)
+
+    @app.get("/v1/tiles", dependencies=guarded)
+    async def tiles_view() -> dict[str, object]:  # pyright: ignore[reportUnusedFunction]
+        """Live-Kacheln fürs HUD (M3.6): System, Termine, offene Aufgaben, Fokus."""
+        return await tiles.tiles()
 
     @app.get("/v1/events", dependencies=guarded)
     async def events_stream() -> StreamingResponse:  # pyright: ignore[reportUnusedFunction]

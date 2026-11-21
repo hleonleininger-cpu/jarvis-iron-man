@@ -77,6 +77,16 @@ auch die Handy-App (PWA) werden, dann entfällt `api/web`.
   `JARVIS_CORE_URL` beendet die App nicht still, sondern wird angezeigt.
 - **CSP doppelt vermieden:** Das CSP-Meta aus dem Vite-Bau entfällt im Tauri-Bau, dort gilt nur
   die CSP aus `tauri.conf.json` (ein Test prüft sie).
+- **Kacheln (M3.6):** `GET /v1/tiles`. Systemwerte aus `psutil` (nur Zahlen). Termine und
+  Aufgaben über `McpHub.read_tool`: nur als READ deklarierte Werkzeuge, Kanal `hud`, Policy und
+  Audit wie immer, ohne Argumente und Ergebnis. Abruf über `ChatService.idle_turn`: nur wenn
+  keine Anfrage läuft oder wartet (sonst der letzte Stand mit Zeitstempel), unter der
+  Anfrage-Sperre und mit dem Hub der Anfragen, der Not-Aus bricht ihn ab. Höchstens alle fünf
+  Minuten, damit Audit und iCloud nicht jede Minute belastet werden. Die Kacheln tragen Inhalte
+  (Termintitel, Aufgaben) und gehen deshalb nur über diesen autorisierten Endpunkt, nie über den
+  Statusstrom.
+- **Situatives HUD (M3.7):** feste Regelliste in `hud/src/situation.ts`; im Overlay nur das
+  Gebrauchte.
 - **Schrift:** keine Schriftdatei; Bahnschrift ist unter Windows eingebaut, sonst Systemschrift.
 
 ## Konsequenzen

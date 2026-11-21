@@ -165,6 +165,23 @@ impl Core {
         Ok(())
     }
 
+    /// Live-Kacheln (M3.6): GET /v1/tiles als JSON.
+    pub async fn tiles(&self) -> Result<serde_json::Value, String> {
+        let request = self.request(reqwest::Method::GET, "/v1/tiles")?;
+        let response = request
+            .timeout(Duration::from_secs(30))
+            .send()
+            .await
+            .map_err(|_| "Der Core ist nicht erreichbar.".to_string())?;
+        if !response.status().is_success() {
+            return Err(problem_of(response.status().as_u16()));
+        }
+        response
+            .json()
+            .await
+            .map_err(|_| "Die Kacheln waren unlesbar.".to_string())
+    }
+
     pub fn events_request(&self) -> Result<reqwest::RequestBuilder, String> {
         self.request(reqwest::Method::GET, "/v1/events")
     }

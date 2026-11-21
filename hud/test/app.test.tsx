@@ -34,6 +34,17 @@ class FakeTransport implements Transport {
     this.stops += 1;
     return this.stopResult;
   }
+  tilesData: unknown = {
+    stand: "2026-11-21T15:00:00+01:00",
+    aktuell: true,
+    system: { ok: true, cpu: 23, ram: 61, akku: null },
+    termine: { ok: true, eintraege: [{ titel: "Zahnarzt", start: "2026-11-21T15:10:00+01:00", ganztaegig: false, ort: null }] },
+    missionen: { ok: false, grund: "Keine Aufgabenliste eingerichtet." },
+    fokus: { ok: false, grund: "Noch kein aktives Projekt festgelegt." },
+  };
+  async tiles() {
+    return this.tilesData;
+  }
 }
 
 let container: HTMLDivElement;
@@ -147,6 +158,26 @@ describe("Block C", () => {
       vi.useRealTimers();
       localStorage.clear();
     }
+  });
+});
+
+describe("Block D", () => {
+  it("zeigt die Kacheln und hebt einen Termin hervor, der gleich beginnt", async () => {
+    const soon = Date.parse("2026-11-21T15:00:00+01:00");
+    await act(async () => root.render(<App transport={transport} now={() => soon} />));
+    expect(container.querySelector(".tiles")?.textContent).toContain("Zahnarzt");
+    expect(container.querySelector(".tiles")?.textContent).toContain("Keine Aufgabenliste eingerichtet.");
+    expect(container.querySelector(".bar-value")?.textContent).toBe("23 %");
+    expect(container.querySelector("main")?.className).toBe("focus-termin");
+    expect(container.querySelector(".tile-focus h2")?.textContent).toBe("Termine");
+  });
+
+  it("ohne Antwort des Core bleibt die Kachel-Fläche ehrlich leer", async () => {
+    transport.tiles = async () => {
+      throw new Error("Der Core ist nicht erreichbar.");
+    };
+    await act(async () => render());
+    expect(container.querySelector(".tiles")?.textContent).toBe("Der Core ist nicht erreichbar.");
   });
 });
 

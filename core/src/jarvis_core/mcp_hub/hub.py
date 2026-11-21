@@ -514,6 +514,35 @@ class McpHub:
             self._record("system", tool, risk, Decision.ALLOW, "ok")
         return data
 
+    def has_read_tool(self, tool: str) -> bool:
+        """Ist ein Werkzeug als READ deklariert (unabhängig davon, ob der Server gerade läuft)?"""
+        return any(self._risk(server, tool) is RiskClass.READ for server in self._servers)
+
+    async def read_tool(self, tool: str, args: dict[str, Any]) -> Any:
+        """Ein lesendes Werkzeug ohne Modell aufrufen (HUD-Kacheln, M3.6). Nur ausdrücklich als
+        READ deklarierte Werkzeuge; Policy und Audit wie immer (Kanal aus `current_channel`, nie
+        Argumente oder Ergebnis). Gibt None zurück, wenn es nicht geht."""
+        server = next((s for s in self._connected if self._risk(s, tool) is RiskClass.READ), None)
+        if server is None:
+            return None
+        channel = current_channel.get()
+        decision = decide(RiskClass.READ, PolicyContext(channel=channel))
+        if decision is not Decision.ALLOW:
+            self._record(channel, tool, RiskClass.READ, decision, "blocked")
+            return None
+        try:
+            result = await asyncio.wait_for(
+                self._connected[server].client.call_tool(tool, args), self.tool_timeout
+            )
+        except Exception:
+            self._record(channel, tool, RiskClass.READ, decision, "error")
+            return None
+        data: Any = result.data
+        self._record(
+            channel, tool, RiskClass.READ, decision, "error" if _is_failure(data) else "ok"
+        )
+        return data
+
     def record_unknown_tool(self, name: str) -> None:
         """Modell wollte ein unbekanntes Werkzeug aufrufen: abgelehnt und protokolliert."""
         self._record(

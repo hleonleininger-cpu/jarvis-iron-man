@@ -81,6 +81,10 @@ export function createTauriTransport(): Transport {
       }
     },
 
+    async tiles() {
+      return await invoke<unknown>("tiles");
+    },
+
     async stop(timeoutMs = 6000) {
       const timeout = new Promise<boolean>((resolve) => setTimeout(() => resolve(false), timeoutMs));
       try {

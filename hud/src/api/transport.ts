@@ -23,6 +23,8 @@ export interface Transport {
   confirm(id: string, approve: boolean): Promise<boolean>;
   /** Not-Aus. false, wenn der Core nicht in `timeoutMs` antwortet. */
   stop(timeoutMs?: number): Promise<boolean>;
+  /** Live-Kacheln (M3.6), rohe Antwort von GET /v1/tiles; wirft, wenn der Core nicht antwortet. */
+  tiles(): Promise<unknown>;
   /** Nur in der Desktop-App vorhanden. */
   desktop?(handlers: DesktopHandlers): () => void;
 }
@@ -121,6 +123,18 @@ export function createFetchTransport(base = "", fetcher: typeof fetch = fetch.bi
         return response.ok;
       } catch {
         return false;
+      }
+    },
+
+    async tiles() {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 30_000);
+      try {
+        const response = await fetcher(`${base}/v1/tiles`, { signal: controller.signal });
+        if (!response.ok) throw new Error(problemOf(response.status));
+        return (await response.json()) as unknown;
+      } finally {
+        clearTimeout(timer);
       }
     },
 

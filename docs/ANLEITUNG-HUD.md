@@ -49,6 +49,13 @@ Der Ring zeigt dann "HÖRT ZU", "DENKT", "SPRICHT" usw., darunter, ob das Mikrof
 - Sprachclient beenden, während das HUD offen ist: nach etwa 12 Sekunden steht beim Mikrofon
   "unbekannt".
 
+- Unten stehen vier Kacheln: System (CPU, RAM, Akku), die nächsten Termine, offene Aufgaben
+  ("Missionen") und Fokus. Termine und Aufgaben holt JARVIS höchstens alle fünf Minuten neu.
+  Steht ein Termin in den nächsten 15 Minuten an, leuchtet die Termin-Kachel orange.
+- Overlay (Desktop-App): dort erscheinen nur Ring und das, was gerade gebraucht wird (Rückfrage,
+  laufende Werkzeuge oder der gleich beginnende Termin).
+- Einstellungen (oben rechts): Startanimation, Töne und Lautstärke.
+
 ## Wenn etwas nicht geht
 - "Der Core ist nicht erreichbar": `jarvis serve` läuft nicht oder auf einem anderen Port. Ein
   anderer Port geht mit `set JARVIS_CORE_URL=http://127.0.0.1:PORT` vor `npm run dev`.

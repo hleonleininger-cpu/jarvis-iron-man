@@ -283,3 +283,12 @@ nicht von selbst, sondern frage Master in der Besprechung um sein Okay.
   Grenzen).
 - Abweichung vom Plan: kein eigenes Kürzel für den Klick-Durchlass; das Overlay schaltet ihn mit
   ein und aus (Strg+Alt+O), das genügt zum Hinein- und Herauskommen.
+
+## 17. Bau Block D (21.11., Ausnahme-Arbeitstag)
+- Gebaut: `agent/tiles.py` (`TileService`, `events_tile`, `tasks_tile`, `system_tile`),
+  `McpHub.read_tool`/`has_read_tool`, `ChatService.idle_turn`, `GET /v1/tiles`, `psutil==7.2.2`;
+  HUD: `tiles.ts`, `situation.ts`, `TileGrid`, Abruf je Minute; Tauri-Befehl `tiles`.
+- Abweichungen: Termine und Aufgaben höchstens alle 5 Minuten statt 60 s (Audit, iCloud); die
+  Kachel "Fokus" zeigt "keine Daten" (ADR-016 kennt kein aktives Projekt).
+- Geprüft: 8 Core-Tests (Kalender-Attrappe, echter Notizen-Server, Sperre, Not-Aus, Zwischenspeicher),
+  HUD-Tests für Lesen, Regeln und Anzeige, Bildschirmfoto mit echten Kacheln im Browser.

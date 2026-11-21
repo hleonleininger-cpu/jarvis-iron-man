@@ -12,9 +12,9 @@ const STATUS_TEXT: Record<string, string> = {
 };
 
 /** Was Jarvis gerade tut und zuletzt getan hat (M3.8): nur Werkzeugname, Risiko, Ergebnis. */
-export function ActivityList({ activities }: { activities: Activity[] }) {
+export function ActivityList({ activities, focused = false }: { activities: Activity[]; focused?: boolean }) {
   return (
-    <section className="panel activity" aria-label="Aktivität">
+    <section className={`panel activity${focused ? " panel-focus" : ""}`} aria-label="Aktivität">
       <h2>Aktivität</h2>
       {activities.length === 0 ? (
         <p className="empty">Noch keine Werkzeuge benutzt.</p>

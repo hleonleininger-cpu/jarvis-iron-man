@@ -424,6 +424,24 @@ class ChatService:
             log.info("chat_done", channel=channel, model=routed[0], status=status)
 
     @asynccontextmanager
+    async def idle_turn(self) -> AsyncGenerator[bool]:
+        """Kurze Arbeit ohne Modell (HUD-Kacheln, M3.6) auf demselben Weg wie Anfragen: nur,
+        wenn gerade keine Anfrage läuft oder wartet (sonst False, nie warten). Hält die
+        Anfrage-Sperre und den Hub; der Not-Aus bricht sie ab wie eine Anfrage."""
+        task = asyncio.current_task()
+        if self._run_lock.locked() or self._waiting or task is None:
+            yield False
+            return
+        async with self._run_lock:
+            self._tasks.add(task)
+            try:
+                async with self.hub:
+                    yield True
+            finally:
+                self._tasks.discard(task)
+                self._stopped.discard(task)
+
+    @asynccontextmanager
     async def _turn(
         self, queue: asyncio.Queue[StreamEvent | BaseException | None]
     ) -> AsyncGenerator[None]:

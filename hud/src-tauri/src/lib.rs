@@ -252,6 +252,11 @@ async fn stop(app: AppHandle, hud: State<'_, Hud>) -> Result<bool, String> {
 }
 
 #[tauri::command]
+async fn tiles(hud: State<'_, Hud>) -> Result<serde_json::Value, String> {
+    hud.core.tiles().await
+}
+
+#[tauri::command]
 fn shortcut_problems(hud: State<'_, Hud>) -> Vec<String> {
     hud.problems.lock().expect("problems").clone()
 }
@@ -477,7 +482,8 @@ pub fn run() {
             confirm,
             stop,
             shortcut_problems,
-            overlay_state
+            overlay_state,
+            tiles
         ])
         .run(tauri::generate_context!())
         .expect("JARVIS HUD konnte nicht starten");

@@ -7,12 +7,16 @@ import { ConfirmCard } from "./components/ConfirmCard";
 import { StateRing } from "./components/StateRing";
 import { SettingsMenu } from "./components/SettingsMenu";
 import { StopButton } from "./components/StopButton";
+import { TileGrid } from "./components/TileGrid";
 import { Visualizer } from "./components/Visualizer";
 import { loadSettings, saveSettings, type Settings } from "./settings";
 import { createSounds, type SoundName } from "./sound";
+import { focusOf, overlayPanels } from "./situation";
 import { initialState, micOf, reducer, ringOf, type Ring } from "./state";
+import { parseTiles, type Tiles } from "./tiles";
 
 const TICK_MS = 2000; // prüft, ob der Sprachclient noch lebt
+const TILES_MS = 60_000; // Kacheln einmal je Minute (der Core holt Termine/Aufgaben nur alle 5 min)
 const STOP_NOTICE_MS = 4000;
 
 export function App({ transport, now = Date.now }: { transport: Transport; now?: () => number }) {
@@ -20,6 +24,8 @@ export function App({ transport, now = Date.now }: { transport: Transport; now?:
   const [clock, setClock] = useState(now);
   const chatAbort = useRef<AbortController | null>(null);
   const [overlay, setOverlay] = useState(false);
+  const [tiles, setTiles] = useState<Tiles | null>(null);
+  const [tilesProblem, setTilesProblem] = useState<string | null>(null);
   const [settings, setSettings] = useState<Settings>(loadSettings);
   const reducedMotion = useMemo(() => globalThis.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false, []);
   const [booting, setBooting] = useState(() => settings.boot && !reducedMotion);
@@ -63,6 +69,28 @@ export function App({ transport, now = Date.now }: { transport: Transport; now?:
     document.documentElement.classList.toggle("overlay", overlay);
   }, [overlay]);
 
+  // Live-Kacheln (M3.6): beim Start und dann einmal je Minute. Fehler lassen den alten Stand stehen.
+  useEffect(() => {
+    let active = true;
+    const load = () =>
+      transport
+        .tiles()
+        .then((raw) => {
+          if (!active) return;
+          setTiles(parseTiles(raw));
+          setTilesProblem(null);
+        })
+        .catch((error: unknown) => {
+          if (active) setTilesProblem(error instanceof Error ? error.message : "Kacheln nicht erreichbar.");
+        });
+    void load();
+    const timer = setInterval(() => void load(), TILES_MS);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, [transport]);
+
   useEffect(() => {
     const timer = setInterval(() => setClock(now()), TICK_MS);
     return () => clearInterval(timer);
@@ -101,6 +129,9 @@ export function App({ transport, now = Date.now }: { transport: Transport; now?:
   const current = Math.max(clock, now());
   const stopped = state.stoppedAt !== null && current - state.stoppedAt < STOP_NOTICE_MS;
   const ring = ringOf(state, current);
+  // Situatives HUD (M3.7): was gerade wichtig ist, steht vorn; im Overlay nur das.
+  const { focus, why } = focusOf({ state, tiles, now: current });
+  const shown = overlay ? overlayPanels(focus) : { activity: true, tiles: true };
 
   // Töne (M3.3) bei Übergängen: verbunden, Zuhören beginnt, neue Rückfrage, Not-Aus, Fehler.
   const previous = useRef<{ connected: boolean; ring: Ring; confirms: number; stoppedAt: number | null; failed: boolean }>({
@@ -151,7 +182,7 @@ export function App({ transport, now = Date.now }: { transport: Transport; now?:
           Not-Aus: alles angehalten.
         </div>
       ) : null}
-      <main>
+      <main className={`focus-${focus}`} data-why={why}>
         <div className="center">
           <StateRing ring={ring} mic={micOf(state, current)}>
             <Visualizer level={state.level} now={now} />
@@ -162,9 +193,10 @@ export function App({ transport, now = Date.now }: { transport: Transport; now?:
             ))}
           </div>
         </div>
-        <ActivityList activities={state.activities} />
+        {shown.activity ? <ActivityList activities={state.activities} focused={focus === "activity"} /> : null}
         {overlay ? null : <ChatPanel messages={state.messages} busy={state.chatting} onSend={send} />}
       </main>
+      {shown.tiles ? <TileGrid tiles={tiles} focus={focus} problem={tilesProblem} /> : null}
     </div>
   );
 }
