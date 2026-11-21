@@ -53,6 +53,8 @@ jobs:
           cache: npm
           cache-dependency-path: hud/package-lock.json
       - run: npm ci --ignore-scripts --no-fund --no-audit
+      # .npmrc setzt legacy-peer-deps (ADR-024): hier fallen Peer-Konflikte trotzdem auf.
+      - run: npm ls --omit=optional
       - run: npm run lint
       - run: npm run typecheck
       - run: npm test

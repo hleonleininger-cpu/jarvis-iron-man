@@ -32,6 +32,8 @@ FIELDS: Final[dict[str, frozenset[str]]] = {
 }
 # Arten, deren letzter Stand im Snapshot steht.
 SNAPSHOT_KINDS: Final = ("state", "mic", "thinking", "screen_read")
+# Bei vollem Puffer werden zuerst diese Arten verworfen (häufig und ohne bleibende Wirkung).
+DROPPABLE: Final = frozenset({"level", "heartbeat"})
 MAX_TEXT = 64  # Zustands- und Werkzeugnamen sind kurz; längerer Text wäre ein Inhalt
 MAX_QUEUE = 256  # langsamer Zuhörer: alte Ereignisse fallen weg, der Core wartet nie
 
@@ -74,6 +76,8 @@ class StatusBus:
             self._last[kind] = event
         for queue in self._listeners:
             if queue.full():  # ein hängender Client bremst den Core nicht aus
+                if kind in DROPPABLE:
+                    continue  # Pegel und Lebenszeichen sind entbehrlich, Zustände nicht
                 queue.get_nowait()
             queue.put_nowait(event)
 

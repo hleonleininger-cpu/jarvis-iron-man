@@ -32,6 +32,24 @@ describe("fetch-Transport", () => {
     expect(events[1]?.data.message).toBe("Der Core ist nicht erreichbar.");
   });
 
+  it("ein Abbruch (Not-Aus) beendet den Chat still, ohne Fehler", async () => {
+    const controller = new AbortController();
+    const body = new ReadableStream<Uint8Array>({
+      pull: () => new Promise(() => {}), // der Strom liefert nichts mehr
+    });
+    const events: ServerEvent[] = [];
+    const chat = createFetchTransport("", vi.fn(async () => new Response(body))).chat(
+      "x",
+      null,
+      (e) => events.push(e),
+      controller.signal,
+    );
+    controller.abort();
+    await body.cancel().catch(() => {});
+    await expect(chat).resolves.toBeUndefined();
+    expect(events).toEqual([]);
+  });
+
   it("Not-Aus: true bei Erfolg, false wenn der Core nicht antwortet", async () => {
     expect(await createFetchTransport("", vi.fn(async () => new Response("{}"))).stop()).toBe(true);
     const hanging = vi.fn(

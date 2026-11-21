@@ -4,7 +4,7 @@ Unterbrechen, Schlaf- und Flüstermodus, Rückfragen per Stimme, Datenschutz."""
 import asyncio
 import contextlib
 import os
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 
 import pytest
@@ -897,21 +897,29 @@ async def test_shutdown_audits_the_end_of_a_running_dictation() -> None:
 
 
 # ------------------------------------------------------------------- Meldungen ans HUD (M3)
+async def _until(condition: Callable[[], bool], steps: int = 300) -> None:
+    for _ in range(steps):
+        if condition():
+            return
+        await asyncio.sleep(0.01)
+    raise AssertionError("Bedingung nicht erreicht")
+
+
 async def test_run_reports_state_and_microphone_to_the_hud_without_content() -> None:
     source = FakeSource([WAKE] + [SPEECH] * 5 + [QUIET] * 8)
     rig = Rig(stt=FakeStt(("Gute Nacht, Jarvis", "de")), source=source)
     runner = asyncio.create_task(rig.session.run())
-    for _ in range(300):
-        await asyncio.sleep(0.01)
-        if rig.session.state is State.SLEEP and rig.source.closed:
-            break
-    await asyncio.sleep(0.05)  # die Meldeschleife arbeitet nach
+    await _until(lambda: rig.session.state is State.SLEEP and bool(rig.source.closed))
+    # Schlaf: "aus" kommt, solange die Sitzung noch läuft (nicht erst beim Beenden).
+    await _until(lambda: ("mic", {"on": False}) in rig.core.reports)
+    asleep = len(rig.core.reports)
     rig.session.wake()
     await asyncio.wait_for(runner, 5)
     reports = rig.core.reports
-    assert reports[:2] == [("state", {"state": "WARTET"}), ("mic", {"on": True})]
+    assert reports[0] == ("state", {"state": "WARTET"})
+    assert ("mic", {"on": True}) in reports[:2]  # "an" schon beim Öffnen
     assert ("state", {"state": "HÖRT ZU"}) in reports
-    assert ("mic", {"on": False}) in reports  # Schlaf: Mikrofon zu, das HUD sieht es
+    assert ("mic", {"on": True}) in reports[asleep:]  # nach dem Wecken wieder an
     assert reports[-1] == ("mic", {"on": False})  # Ende: Mikrofon zu
     assert all(kind in {"state", "mic", "heartbeat"} for kind, _ in reports)
     assert "Gute Nacht" not in repr(reports)
@@ -922,24 +930,37 @@ async def test_heartbeat_is_sent_when_nothing_happens(monkeypatch: pytest.Monkey
 
     monkeypatch.setattr(session_module, "HEARTBEAT_SECONDS", 0.05)
     rig = Rig()
-    reports: asyncio.Queue[tuple[str, dict[str, str | bool | int]]] = asyncio.Queue()
-    task = asyncio.create_task(rig.session._report_loop(reports))  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
-    await asyncio.sleep(0.2)
+    task = asyncio.create_task(rig.session._report_loop({}))  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
+    await _until(lambda: ("heartbeat", {}) in rig.core.reports)
     task.cancel()
     with contextlib.suppress(asyncio.CancelledError):
         await task
-    assert ("heartbeat", {}) in rig.core.reports
 
 
-async def test_a_hanging_core_does_not_block_listening() -> None:
-    class HangingCore(FakeCore):
+async def test_a_slow_core_gets_only_the_newest_state(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Hängt der Core, staut sich nichts: je Art bleibt nur die neueste Meldung, und jede
+    Meldung hat eine Frist. Das Zuhören läuft unterdessen weiter."""
+    from jarvis_voice import session as session_module
+
+    monkeypatch.setattr(session_module, "REPORT_TIMEOUT_SECONDS", 0.05)
+    gate = asyncio.Event()
+
+    class SlowCore(FakeCore):
         async def status(self, event: str, **fields: str | bool | int) -> None:
-            await asyncio.sleep(3600)
+            self.reports.append((event, fields))
+            await gate.wait()  # hängt, bis die Frist greift
 
-    rig = Rig(core=HangingCore())
-    rig.session._reports = asyncio.Queue()  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
+    rig = Rig(core=SlowCore())
+    reports: dict[str, dict[str, str | bool | int]] = {}
+    rig.session._reports = reports  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
+    task = asyncio.create_task(rig.session._report_loop(reports))  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
     for _ in range(50):
         rig.session._set(State.LISTENING)  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
         rig.session._set(State.WAITING)  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
-    await rig.say_something()  # läuft weiter, obwohl der Core die Meldungen nie annimmt
-    assert rig.session.state is not State.SLEEP
+        assert len(reports) <= 1  # nie mehr als eine Meldung je Art wartet
+    await rig.say_something()  # das Zuhören läuft weiter, obwohl der Core hängt
+    await _until(lambda: not reports)
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+    assert len(rig.core.reports) < 10  # 100 Zustandswechsel, aber nur wenige Meldungen

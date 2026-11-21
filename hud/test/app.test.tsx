@@ -11,6 +11,7 @@ class FakeTransport implements Transport {
   listener: Listener = () => {};
   connection: (up: boolean, problem?: string) => void = () => {};
   confirmed: [string, boolean][] = [];
+  confirmResult = true;
   stops = 0;
   stopResult = true;
   chats: string[] = [];
@@ -27,7 +28,7 @@ class FakeTransport implements Transport {
   }
   async confirm(id: string, approve: boolean) {
     this.confirmed.push([id, approve]);
-    return true;
+    return this.confirmResult;
   }
   async stop() {
     this.stops += 1;
@@ -70,14 +71,23 @@ describe("HUD", () => {
     expect(container.querySelector(".act-ok .act-ms")?.textContent).toBe("1.5 s");
   });
 
-  it("Rückfrage: Ja schickt die Antwort und schließt die Karte", () => {
+  it("Rückfrage: Ja schickt die Antwort und schließt die Karte", async () => {
     render();
     send("confirm", { id: "r1", tool: "create_event", preview: "Zahnarzt <script>", question: "Anlegen?", risk: "WRITE_REVERSIBLE" });
     expect(container.querySelector(".preview")?.textContent).toBe("Zahnarzt <script>");
     expect(container.querySelector("script")).toBeNull();
-    act(() => button("Ja").click());
+    await act(async () => button("Ja").click());
     expect(transport.confirmed).toEqual([["r1", true]]);
     expect(container.querySelector(".confirm")).toBeNull();
+  });
+
+  it("Rückfrage: kommt die Antwort nicht an, bleibt die Karte und Master erfährt es", async () => {
+    render();
+    transport.confirmResult = false;
+    send("confirm", { id: "r2", tool: "create_event", preview: "x", question: "Anlegen?", risk: "WRITE_REVERSIBLE" });
+    await act(async () => button("Nein").click());
+    expect(container.querySelector(".confirm")).not.toBeNull();
+    expect(container.querySelector(".msg-error")?.textContent).toContain("nicht beim Core an");
   });
 
   it("Not-Aus per Knopf und per Strg+.; Hinweis, wenn der Core nicht antwortet", async () => {

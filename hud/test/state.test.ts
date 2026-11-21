@@ -49,6 +49,20 @@ describe("Status-Ereignisse", () => {
     expect(state.confirms).toEqual([]);
   });
 
+  it("ein neuer Snapshot (Neuverbindung, Core-Neustart) ersetzt den alten Stand", () => {
+    const stale = run(
+      server("thinking", { active: true, run: 1 }),
+      server("tool_start", { call: 1, tool: "lesen", risk: "READ" }),
+      server("confirm", { id: "alt", tool: "t", preview: "", question: "", risk: "WRITE_REVERSIBLE" }),
+      server("state", { state: "SPRICHT" }),
+    );
+    const fresh = reducer(stale, server("snapshot", {}));
+    expect(fresh.thinking).toBe(false);
+    expect(fresh.activities).toEqual([]);
+    expect(fresh.confirms).toEqual([]);
+    expect(fresh.voiceState).toBeNull();
+  });
+
   it("übergeht unbekannte Ereignisse", () => {
     expect(run(server("neu_in_spaeterer_version", { x: 1 }))).toEqual(initialState);
   });

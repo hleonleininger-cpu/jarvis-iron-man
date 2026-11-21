@@ -42,8 +42,8 @@ from jarvis_voice.sentences import SentenceChunker
 
 WAKE_PHRASE_FRAMES = 40  # ca. 1,3 s: so lang ist "Hey Jarvis" samt Nachlauf höchstens
 MIN_CONTEXT_FRAMES = 6  # so viel Sprache davor gilt als Gespräch (ca. 0,2 s)
-type Report = tuple[str, dict[str, str | bool | int]]  # Art und Angaben einer Meldung
 HEARTBEAT_SECONDS = 5.0  # Lebenszeichen ans HUD, wenn sonst nichts zu melden ist
+REPORT_TIMEOUT_SECONDS = 2.0  # höchstens so lange wartet eine Meldung auf den Core
 MAX_TEXT_CHARS = 500  # so viel Text tippt das Diktat je Äußerung höchstens
 MAX_TURNS = 50  # so viele Zeitmessungen bleiben für `jarvis voice bench` im Speicher
 BARGE_IN_FRAMES = 4  # so viele Sprach-Frames in Folge (ca. 130 ms) unterbrechen die Ausgabe
@@ -142,7 +142,10 @@ class VoiceSession:
         self._listen_after_wake = False
         self._waking = False
         # Meldungen ans HUD (M3): laufen über eine eigene Schleife, damit `_set` nie wartet.
-        self._reports: asyncio.Queue[Report] | None = None
+        # Je Art nur die neueste Meldung (begrenzt, nie gestaut): ein langsamer Core bekommt
+        # den aktuellen Zustand, nicht eine Schlange veralteter.
+        self._reports: dict[str, dict[str, str | bool | int]] | None = None
+        self._report_ready = asyncio.Event()
         self._reporter: asyncio.Task[None] | None = None
         self.parts.indicator.show(self.state)
 
@@ -157,18 +160,26 @@ class VoiceSession:
 
     def _report(self, event: str, **fields: str | bool | int) -> None:
         if self._reports is not None:
-            self._reports.put_nowait((event, fields))
+            self._reports.pop(event, None)  # neu einreihen: Reihenfolge der letzten Änderung
+            self._reports[event] = fields
+            self._report_ready.set()
 
-    async def _report_loop(self, reports: asyncio.Queue[Report]) -> None:
-        """Schickt Meldungen der Reihe nach; ist länger nichts passiert, ein Lebenszeichen,
-        damit das HUD einen abgestürzten Sprachclient erkennt."""
+    async def _report_loop(self, reports: dict[str, dict[str, str | bool | int]]) -> None:
+        """Schickt die neuesten Meldungen; ist länger nichts passiert, ein Lebenszeichen, damit
+        das HUD einen abgestürzten Sprachclient erkennt. Jede Meldung hat eine kurze Frist."""
         while True:
             try:
-                event, fields = await asyncio.wait_for(reports.get(), HEARTBEAT_SECONDS)
+                await asyncio.wait_for(self._report_ready.wait(), HEARTBEAT_SECONDS)
             except TimeoutError:
-                event, fields = "heartbeat", {}
-            with contextlib.suppress(Exception):
-                await self.parts.core.status(event, **fields)
+                reports.setdefault("heartbeat", {})
+            self._report_ready.clear()
+            while reports:
+                event = next(iter(reports))
+                fields = reports.pop(event)
+                with contextlib.suppress(Exception):
+                    await asyncio.wait_for(
+                        self.parts.core.status(event, **fields), REPORT_TIMEOUT_SECONDS
+                    )
 
     def _begin_listening(
         self, state: State, timeout: float, seed: list[bytes] | None = None
@@ -199,11 +210,13 @@ class VoiceSession:
     # ------------------------------------------------------------------------ Hauptschleife
     async def run(self) -> None:
         """Liest Frames, bis die Quelle endet. In SCHLAF wird das Mikrofon geschlossen."""
-        self._reports = asyncio.Queue()
+        self._reports = {}
         self._reporter = asyncio.create_task(self._report_loop(self._reports))
         self._report("state", state=self.state.value)
-        await self.parts.source.open()
+        # "an" schon vor dem Öffnen: das HUD zeigt nie "aus", während das Mikrofon offen ist.
+        # Scheitert das Öffnen, meldet `shutdown` "aus".
         self._report("mic", on=True)
+        await self.parts.source.open()
         try:
             while True:
                 if self.state is State.SLEEP:
@@ -211,8 +224,8 @@ class VoiceSession:
                     self._report("mic", on=False)
                     self._wake_event.clear()
                     await self._wake_event.wait()
-                    await self.parts.source.open()
                     self._report("mic", on=True)
+                    await self.parts.source.open()
                     self._waking = True
                     self._to_waiting()
                     self._waking = False

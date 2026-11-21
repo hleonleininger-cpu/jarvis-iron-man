@@ -41,7 +41,8 @@ HUD braucht einen Strom über alles, auch über Anfragen anderer Clients (zum Be
 
 - **Entschieden (Prüfrunde 2, Fund 3): die Status-Ereignisse kommen in den vorhandenen Strom
   `GET /v1/events`.** Kein zweiter Dauerstrom, kleinerer Diff; Rückfragen und Erinnerungen laufen
-  dort ohnehin. Test, dass `api/web/app.js` unbekannte Ereignisse ignoriert. Beim Verbinden
+  dort ohnehin. `api/web/app.js` übergeht unbekannte Ereignisse (if/else-Kette, beim Bau geprüft,
+  ohne eigenen Test: die Web-Oberfläche hat keine JS-Tests). Beim Verbinden
   sendet der Strom zusätzlich einen `snapshot` (aktueller Stand, inkl. Profil S/M/L), danach:
   `state` (Zustand des Sprachclients), `tool_start`/`tool_end` (Lauf-ID, Werkzeugname,
   Risikoklasse, Dauer, Ergebnis ok/Fehler/abgelehnt), `thinking` (Schrittzähler), `stop`
@@ -237,3 +238,9 @@ nicht von selbst, sondern frage Master in der Besprechung um sein Okay.
   (Bahnschrift ist unter Windows eingebaut); Hardware-Profil noch nicht im `snapshot` (erst M3.10);
   der Sprachclient meldet `level` noch nicht (kommt mit M3.4); `vite.config.ts` ist von `tsc`
   ausgenommen (bräuchte Node-Typen), ESLint prüft sie.
+- Prüfrunde Block A (Opus, 21.11.): 1 hoher, 3 mittlere, 8 niedrige Funde, alle behoben. Hoch: der
+  Dev-Proxy entfernte die Herkunft bedingungslos, damit hätte jede Webseite über ihn den Not-Aus
+  auslösen und Anfragen stellen können; jetzt Herkunftsprüfung vor dem Proxy, `cors` aus, am
+  laufenden System mit 403 belegt. Mittel: `thinking` bei überlappenden Anfragen (jetzt Menge
+  aktiver Läufe), HUD-Zustand nach Neuverbindung (Snapshot ersetzt alles), Meldeschleife des
+  Sprachclients (je Art nur die neueste Meldung, Frist 2 s).

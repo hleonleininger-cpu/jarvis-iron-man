@@ -94,7 +94,12 @@ export function createFetchTransport(base = "", fetcher: typeof fetch = fetch.bi
         onEvent({ event: "error", data: { message: problemOf(response.status) } });
         return;
       }
-      await readStream(response, onEvent, signal);
+      try {
+        await readStream(response, onEvent, signal);
+      } catch {
+        // Not-Aus bricht den Strom absichtlich ab; sonst ist die Verbindung abgerissen.
+        if (!signal?.aborted) onEvent({ event: "error", data: { message: "Die Verbindung zum Core ist abgerissen." } });
+      }
     },
 
     async confirm(id, approve) {

@@ -50,6 +50,17 @@ def test_bus_snapshot_keeps_only_the_last_state_and_never_tool_events() -> None:
     assert bus.snapshot() == {"state": {"state": "HÖRT ZU"}, "mic": {"on": True}}
 
 
+def test_full_buffer_drops_heartbeats_before_state_changes() -> None:
+    bus = StatusBus()
+    with bus.listen() as queue:
+        for _ in range(MAX_QUEUE):
+            bus.publish("heartbeat")
+        bus.publish("heartbeat")  # verworfen, kein Platz
+        bus.publish("thinking", active=False, run=1)  # verdrängt das älteste Ereignis
+        items = [queue.get_nowait() for _ in range(queue.qsize())]
+    assert items[-1].kind == "thinking" and len(items) == MAX_QUEUE
+
+
 def test_slow_listener_loses_old_events_but_never_blocks() -> None:
     bus = StatusBus()
     with bus.listen() as queue:
@@ -142,6 +153,32 @@ async def test_hub_reports_blocked_denied_error_and_aborted(hub: McpHub) -> None
 
 # ------------------------------------------------------------------------------ ChatService
 @pytest.mark.anyio
+async def test_thinking_stays_on_while_another_request_runs(tmp_path: Path) -> None:
+    settings = Settings(data_dir=tmp_path / "data", mcp_servers={})
+    service = build_service(settings, AuditLog(tmp_path / "a.sqlite3"), TestModel(), "t")
+    with service.status.listen() as queue:
+        first = service.stream("eins", channel="api")
+        second = service.stream("zwei", channel="voice")
+        await anext(first)  # beide Anfragen sind angenommen
+        await anext(second)
+        async for _ in first:
+            pass
+        async for _ in second:
+            pass
+        flags = [e.data["active"] for e in _drain(queue) if e.kind == "thinking"]
+    assert flags == [True, True, True, False]  # erst das Ende der letzten Anfrage zählt
+    assert service.status.snapshot()["thinking"]["active"] is False
+
+
+def test_service_and_hub_share_one_bus(tmp_path: Path) -> None:
+    hub = McpHub({}, AuditLog(tmp_path / "a.sqlite3"), "m", status=StatusBus())
+    with pytest.raises(ValueError, match="denselben Status-Bus"):
+        ChatService(
+            TestModel(), "t", "http://x", AuditLog(tmp_path / "b.sqlite3"), hub, status=StatusBus()
+        )
+
+
+@pytest.mark.anyio
 async def test_service_reports_thinking_and_stop(tmp_path: Path) -> None:
     settings = Settings(data_dir=tmp_path / "data", mcp_servers={})
     service = build_service(settings, AuditLog(tmp_path / "a.sqlite3"), TestModel(), "t")
@@ -197,6 +234,7 @@ def _read_events(lines: Any, until: str) -> list[tuple[str, dict[str, object]]]:
     """Liest SSE-Ereignisse vom Zeilen-Iterator, bis eines `until` heißt (Daten zählen nicht)."""
     events: list[tuple[str, dict[str, object]]] = []
     name = ""
+    deadline = time.monotonic() + 20  # Lebenszeichen alle 15 s halten die Schleife in Gang
     for line in lines:
         if line.startswith("event: "):
             name = line[7:]
@@ -204,6 +242,8 @@ def _read_events(lines: Any, until: str) -> list[tuple[str, dict[str, object]]]:
             events.append((name, json.loads(line[6:])))
             if name == until and events[-1][1].get("active") is not True:
                 break
+        if time.monotonic() > deadline:
+            raise AssertionError(f"'{until}' kam nicht rechtzeitig: {events}")
     return events
 
 
@@ -213,15 +253,16 @@ def test_events_stream_sends_snapshot_then_live_status_without_content(tmp_path:
     assert client.post("/v1/voice/event", json={"event": "state", "state": "WARTET"}).is_success
 
     def chat() -> None:
-        time.sleep(0.3)  # erst zuhören, dann fragen
         with client.stream("POST", "/v1/chat", json={"message": SECRET}) as r:
             for _ in r.iter_lines():
                 pass
 
+    thread = threading.Thread(target=chat)
     with client.stream("GET", "/v1/events") as response:
-        thread = threading.Thread(target=chat)
+        lines = response.iter_lines()
+        events = _read_events(lines, until="snapshot")  # erst zuhören, dann fragen
         thread.start()
-        events = _read_events(response.iter_lines(), until="thinking")
+        events += _read_events(lines, until="thinking")
     thread.join(timeout=10)
     kinds = [name for name, _ in events]
     assert kinds[:2] == ["ready", "snapshot"]

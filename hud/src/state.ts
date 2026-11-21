@@ -68,6 +68,7 @@ export type Action =
   | { type: "chat"; event: ServerEvent }
   | { type: "chat_end" }
   | { type: "confirm_answered"; id: string }
+  | { type: "confirm_failed"; id: string }
   | { type: "stop_result"; ok: boolean; now: number };
 
 const str = (value: unknown, fallback = ""): string => (typeof value === "string" ? value : fallback);
@@ -95,16 +96,21 @@ function withConfirm(confirms: ConfirmItem[], item: ConfirmItem): ConfirmItem[] 
 function applyServer(state: HudState, { event, data }: ServerEvent, now: number): HudState {
   switch (event) {
     case "snapshot": {
+      // Kommt bei jedem (Neu-)Verbinden und ersetzt den alten Stand: nach einem Abriss oder
+      // Neustart des Core gelten alte Rückfragen, Werkzeuge und Denk-Zustände nicht mehr. Offene
+      // Rückfragen schickt der Core direkt danach erneut; Werkzeug-Nummern beginnen neu.
       const voice = data.state as Record<string, unknown> | undefined;
       const mic = data.mic as Record<string, unknown> | undefined;
       const thinking = data.thinking as Record<string, unknown> | undefined;
       return {
         ...state,
-        voiceState: voice ? str(voice.state) || null : state.voiceState,
-        mic: mic && typeof mic.on === "boolean" ? mic.on : state.mic,
+        voiceState: voice ? str(voice.state) || null : null,
+        mic: mic && typeof mic.on === "boolean" ? mic.on : null,
         // Ein Snapshot sagt nichts darüber, ob der Sprachclient noch lebt: erst seine nächste
         // Meldung zählt.
-        thinking: thinking ? thinking.active === true : state.thinking,
+        thinking: thinking?.active === true,
+        confirms: [],
+        activities: [],
       };
     }
     case "state":
@@ -200,6 +206,14 @@ export function reducer(state: HudState, action: Action): HudState {
       return { ...state, chatting: false };
     case "confirm_answered":
       return { ...state, confirms: state.confirms.filter((c) => c.id !== action.id) };
+    case "confirm_failed":
+      return {
+        ...state,
+        messages: addMessage(state.messages, {
+          role: "error",
+          text: "Die Antwort auf die Rückfrage kam nicht beim Core an (abgelaufen oder keine Verbindung).",
+        }),
+      };
     case "stop_result":
       return action.ok
         ? { ...state, stoppedAt: action.now, stopFailed: false }

@@ -28,8 +28,19 @@ auch die Handy-App (PWA) werden, dann entfällt `api/web`.
   HUD, sonst flutete das Audit) an `POST /v1/voice/event`. Ohne Meldung seit 12 s zeigt das HUD
   Zustand und Mikrofon als "unbekannt" (Absturz erkennbar). Das HUD öffnet nie ein Mikrofon.
 - **Herkunft:** Der CSRF-Schutz des Core (fremder `Origin` wird abgelehnt, ADR-018) bleibt
-  unverändert. Im Entwicklungsmodus entfernt der Vite-Proxy `Origin` und `Sec-Fetch-*`; er
-  lauscht nur auf 127.0.0.1. Die Desktop-App (Block B) ruft den Core aus dem Rust-Teil.
+  unverändert. Im Entwicklungsmodus (`npm run dev`, nur 127.0.0.1) prüft zuerst eine Middleware
+  (`hud/src/dev/originGuard.ts`): nur Anfragen ohne Browser-Herkunft oder mit Origin
+  `http://127.0.0.1:5173`/`http://localhost:5173` und `Sec-Fetch-Site` `same-origin`/`none`
+  kommen durch, alle anderen bekommen 403. Erst danach entfernt der Proxy `Origin` und
+  `Sec-Fetch-*`. `server.cors` ist aus, damit keine fremde Seite Antworten des Dev-Servers lesen
+  kann. Ohne diese Prüfung hätte jede Webseite über den Proxy den Not-Aus auslösen oder Anfragen
+  stellen können (Fund der Prüfrunde, behoben). Die Desktop-App (Block B) ruft den Core aus dem
+  Rust-Teil.
+- **Content-Security-Policy:** Der gebaute Stand (`npm run build`) bekommt eine strenge CSP als
+  Meta-Tag (`default-src 'self'`, keine Fremdquellen). Im Entwicklungsmodus geht das nicht, Vite
+  braucht dort Inline-Skripte. Die CSP der Desktop-App kommt mit Block B in `tauri.conf.json`.
+- **Kürzel:** Das HUD kennt in Block A nur Strg+. (Not-Aus, solange das Fenster den Fokus hat).
+  Das systemweite Not-Aus-Kürzel folgt mit Block B (PLAN-M3 §5).
 - **Keine HTML-Einfügung:** Text nur als Text (React), ESLint verbietet
   `dangerouslySetInnerHTML`, `innerHTML`, `eval`; ein Test prüft den Quelltext.
 - **npm:** `hud/.npmrc` setzt `legacy-peer-deps=true`. npm 10 (mit Node 22) bricht bei den

@@ -55,8 +55,8 @@ export function App({ transport, now = Date.now }: { transport: Transport; now?:
   };
 
   const answer = (id: string, approve: boolean) => {
-    dispatch({ type: "confirm_answered", id });
-    void transport.confirm(id, approve);
+    // Die Karte verschwindet erst, wenn der Core die Antwort angenommen hat.
+    void transport.confirm(id, approve).then((ok) => dispatch({ type: ok ? "confirm_answered" : "confirm_failed", id }));
   };
 
   const current = Math.max(clock, now());

@@ -259,10 +259,12 @@ class ChatService:
     ) -> None:
         # Status-Ereignisse fürs HUD (M3): was gerade läuft, nie Inhalte. Der Hub meldet seine
         # Werkzeugaufrufe auf denselben Bus.
-        self.status = status or hub.status or StatusBus()
-        if hub.status is None:
-            hub.status = self.status
+        if status is not None and hub.status is not None and status is not hub.status:
+            raise ValueError("Service und Hub brauchen denselben Status-Bus.")
+        self.status = hub.status or status or StatusBus()
+        hub.status = self.status
         self._runs = itertools.count(1)
+        self._active_runs: set[int] = set()  # Anfragen, die laufen oder an der Sperre warten
         self._subagent_parallel = subagent_parallel
         self._cloud = cloud_config or CloudConfig()
         self._cloud_model = cloud_model  # baut das Cloud-Modell erst, wenn es gebraucht wird
@@ -383,6 +385,7 @@ class ChatService:
             current_confirmer.reset(confirmer_token)
         self._tasks.add(task)
         run = next(self._runs)
+        self._active_runs.add(run)
         self.status.publish("thinking", active=True, run=run)
 
         def finished(done: asyncio.Task[None]) -> None:
@@ -413,7 +416,9 @@ class ChatService:
                 task.cancel()
             with suppress(asyncio.CancelledError, Exception):
                 await task
-            self.status.publish("thinking", active=False, run=run)
+            self._active_runs.discard(run)
+            # "denkt" bleibt, solange irgendeine Anfrage läuft (z. B. Stimme und HUD zugleich).
+            self.status.publish("thinking", active=bool(self._active_runs), run=run)
             self._stopped.discard(task)
             self._audit.record(channel=channel, model=routed[0], tokens=usage[0], status=status)
             log.info("chat_done", channel=channel, model=routed[0], status=status)
