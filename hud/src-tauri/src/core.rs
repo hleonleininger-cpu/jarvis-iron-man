@@ -1,8 +1,8 @@
 //! Zugang zum JARVIS-Core. Nur dieser Rechner (ADR-003): die Adresse muss auf 127.0.0.1,
 //! localhost oder ::1 zeigen. Die Webview spricht nie selbst mit dem Core (ADR-024), deshalb gibt
-//! es keinen Browser-Origin und der CSRF-Schutz des Core bleibt unverändert.
+//! es keinen Browser-Origin und der CSRF-Schutz des Core bleibt unverändert. Ein Zugangstoken
+//! (`require_api_token = true`) kann das HUD noch nicht senden (ADR-024).
 
-use std::sync::Mutex;
 use std::time::Duration;
 
 use futures_util::StreamExt;
@@ -78,50 +78,49 @@ impl Utf8Buffer {
 
 pub fn problem_of(status: u16) -> String {
     match status {
-        401 => "Der Core verlangt ein Zugangstoken.".into(),
+        401 => "Der Core verlangt ein Zugangstoken; das HUD kann noch keins senden (localhost ohne Token nutzen).".into(),
         403 => "Der Core lehnt die Anfrage ab.".into(),
         _ => format!("Der Core antwortet mit Status {status}."),
     }
 }
 
+/// Höchstens so lange Funkstille im Strom: der Core schickt alle 15 s ein Lebenszeichen. Hängt
+/// er bei offener Verbindung, merkt das HUD es so nach spätestens 45 s.
+const READ_TIMEOUT: Duration = Duration::from_secs(45);
+
 pub struct Core {
-    pub base: String,
+    /// Err: die eingestellte Adresse war nicht lokal; dann geht keine Anfrage hinaus, und das HUD
+    /// zeigt den Grund (statt still zu verschwinden).
+    base: Result<String, String>,
     http: reqwest::Client,
-    /// Nur im Arbeitsspeicher, nie auf der Platte oder im Log (ADR-024).
-    token: Mutex<Option<String>>,
 }
 
 impl Core {
-    pub fn new(base: String) -> Self {
+    pub fn new(base: Result<String, String>) -> Self {
         let http = reqwest::Client::builder()
             .no_proxy() // localhost nie über einen Proxy
+            .redirect(reqwest::redirect::Policy::none()) // nie auf einen anderen Host umleiten lassen
             .connect_timeout(Duration::from_secs(3))
+            .read_timeout(READ_TIMEOUT)
             .build()
             .expect("HTTP-Client");
-        Self {
-            base,
-            http,
-            token: Mutex::new(None),
-        }
+        Self { base, http }
     }
 
-    pub fn set_token(&self, token: Option<String>) {
-        *self.token.lock().expect("token") = token.filter(|t| !t.trim().is_empty());
-    }
-
-    fn request(&self, method: reqwest::Method, path: &str) -> reqwest::RequestBuilder {
-        let builder = self.http.request(method, format!("{}{}", self.base, path));
-        match self.token.lock().expect("token").as_deref() {
-            Some(token) => builder.bearer_auth(token),
-            None => builder,
-        }
+    fn request(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+    ) -> Result<reqwest::RequestBuilder, String> {
+        let base = self.base.as_ref().map_err(Clone::clone)?;
+        Ok(self.http.request(method, format!("{base}{path}")))
     }
 
     pub async fn stop(&self, timeout: Duration) -> bool {
-        let request = self
-            .request(reqwest::Method::POST, "/v1/stop")
-            .timeout(timeout);
-        matches!(request.send().await, Ok(response) if response.status().is_success())
+        let Ok(request) = self.request(reqwest::Method::POST, "/v1/stop") else {
+            return false;
+        };
+        matches!(request.timeout(timeout).send().await, Ok(response) if response.status().is_success())
     }
 
     pub async fn confirm(&self, id: &str, approve: bool) -> bool {
@@ -129,8 +128,10 @@ impl Core {
             .chars()
             .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
             .collect();
-        let request = self
-            .request(reqwest::Method::POST, &format!("/v1/confirm/{id}"))
+        let Ok(request) = self.request(reqwest::Method::POST, &format!("/v1/confirm/{id}")) else {
+            return false;
+        };
+        let request = request
             .json(&serde_json::json!({ "approve": approve }))
             .timeout(Duration::from_secs(5));
         matches!(request.send().await, Ok(response) if response.status().is_success())
@@ -140,11 +141,11 @@ impl Core {
     /// nicht annimmt; Ok, wenn der Strom endet.
     pub async fn stream(
         &self,
-        request: reqwest::RequestBuilder,
+        request: Result<reqwest::RequestBuilder, String>,
         mut on_event: impl FnMut(ServerEvent),
         mut on_open: impl FnMut(),
     ) -> Result<(), String> {
-        let response = request
+        let response = request?
             .send()
             .await
             .map_err(|_| "Der Core ist nicht erreichbar.".to_string())?;
@@ -164,16 +165,20 @@ impl Core {
         Ok(())
     }
 
-    pub fn events_request(&self) -> reqwest::RequestBuilder {
+    pub fn events_request(&self) -> Result<reqwest::RequestBuilder, String> {
         self.request(reqwest::Method::GET, "/v1/events")
     }
 
-    pub fn chat_request(&self, message: &str, session_id: Option<&str>) -> reqwest::RequestBuilder {
+    pub fn chat_request(
+        &self,
+        message: &str,
+        session_id: Option<&str>,
+    ) -> Result<reqwest::RequestBuilder, String> {
         let mut body = serde_json::json!({ "message": message });
         if let Some(id) = session_id {
             body["session_id"] = serde_json::Value::from(id);
         }
-        self.request(reqwest::Method::POST, "/v1/chat").json(&body)
+        Ok(self.request(reqwest::Method::POST, "/v1/chat")?.json(&body))
     }
 }
 

@@ -1,5 +1,5 @@
 """Globale Tastenkürzel (M2.13) über pynput. Sie laufen in einem eigenen Thread und reichen die
-Aktion an die Event-Loop weiter. Standard: Strg+Alt+J hören, Strg+Alt+M Mikrofon stumm/an,
+Aktion an die Event-Loop weiter. Standard: Strg+Alt+J hören, Strg+Alt+S Mikrofon stumm/an,
 Strg+Alt+X unterbrechen, Strg+Alt+D Diktat an/aus."""
 
 import asyncio
@@ -15,9 +15,21 @@ HOTKEY_PATTERN = re.compile(
 )
 
 
+# Tasten mit AltGr-Zeichen auf der deutschen Tastatur (@ € µ ² ³ { [ ] }). Windows meldet AltGr
+# als Strg+Alt: Strg+Alt+M wäre also jedes getippte "µ".
+ALTGR_KEYS = frozenset("qem237890")
+
+
+def altgr_clash(text: str) -> bool:
+    """Strg+Alt (ohne Umschalt) plus eine Taste, die AltGr mit einem Zeichen belegt."""
+    plain = "<ctrl>" in text and "<alt>" in text and "<shift>" not in text
+    return plain and text.rsplit("+", 1)[-1] in ALTGR_KEYS
+
+
 def valid_hotkey(text: str) -> bool:
-    """Nur mit Strg, Alt oder Cmd: <shift>+j löste bei jedem großen J aus (auch beim Diktat)."""
-    if not HOTKEY_PATTERN.fullmatch(text):
+    """Nur mit Strg, Alt oder Cmd: <shift>+j löste bei jedem großen J aus (auch beim Diktat).
+    Keine AltGr-Zeichen der deutschen Tastatur: sie lösten beim Tippen aus."""
+    if not HOTKEY_PATTERN.fullmatch(text) or altgr_clash(text):
         return False
     return any(mod in text for mod in ("<ctrl>", "<alt>", "<cmd>", "<alt_gr>"))
 

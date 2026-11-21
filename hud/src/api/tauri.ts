@@ -26,8 +26,14 @@ export function isDesktop(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
+/** Zufällige Chat-Nummer: nach einem Neuladen der Seite dürfen alte und neue Chats nie
+ *  dieselbe Nummer tragen. Unter 2^53, damit sie als Zahl sicher bis Rust kommt. */
+function chatId(): number {
+  const [high = 0, low = 0] = crypto.getRandomValues(new Uint32Array(2));
+  return (high % 0x200000) * 0x100000000 + low;
+}
+
 export function createTauriTransport(): Transport {
-  let nextChat = 1;
   return {
     subscribe(onEvent, onConnection) {
       const pending = [
@@ -40,7 +46,7 @@ export function createTauriTransport(): Transport {
     },
 
     async chat(message, sessionId, onEvent: Listener, signal) {
-      const id = nextChat++;
+      const id = chatId();
       let finish: () => void = () => {};
       const ended = new Promise<void>((resolve) => (finish = resolve));
       const pending = [
@@ -90,7 +96,10 @@ export function createTauriTransport(): Transport {
         listen<string>("hud://notice", (e) => handlers.notice(e.payload)),
         listen<boolean>("hud://stop_result", (e) => handlers.stopResult(e.payload)),
       ];
-      // Hinweise vom Start (bevor die Oberfläche zuhörte) einmal nachholen.
+      // Stand vom Start (bevor die Oberfläche zuhörte) einmal nachholen: Overlay und Hinweise.
+      void invoke<boolean>("overlay_state")
+        .then((on) => handlers.overlay(on))
+        .catch(() => {});
       void invoke<string[]>("shortcut_problems")
         .then((problems) => problems.forEach(handlers.notice))
         .catch(() => {});

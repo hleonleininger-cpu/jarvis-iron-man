@@ -134,3 +134,16 @@ def test_hotkeys_need_a_modifier_and_must_differ() -> None:
         VoiceConfig(hotkey_listen="<shift>+j")
     with pytest.raises(ValidationError):
         VoiceConfig(hotkey_listen="<ctrl>+<alt>+j", hotkey_mute="<ctrl>+<alt>+j")
+
+
+def test_hotkeys_reject_altgr_characters_of_the_german_keyboard() -> None:
+    from pydantic import ValidationError
+
+    from jarvis_core.config.settings import VoiceConfig
+
+    for combo in ("<ctrl>+<alt>+q", "<ctrl>+<alt>+m", "<ctrl>+<alt>+e", "<ctrl>+<alt>+7"):
+        assert not hotkeys.valid_hotkey(combo)
+        with pytest.raises(ValidationError, match="AltGr"):
+            VoiceConfig(hotkey_listen=combo)
+    assert hotkeys.valid_hotkey("<ctrl>+<alt>+<shift>+m")  # AltGr+Umschalt+M tippt nichts
+    assert VoiceConfig().hotkey_mute == "<ctrl>+<alt>+s"

@@ -1,10 +1,12 @@
 //! JARVIS HUD als Desktop-App (M3.2, M3.5, Rest von M0.5). Der Rust-Teil spricht mit dem Core,
-//! die Oberfläche bekommt nur Ereignisse (ADR-024). Systemweit: Not-Aus Strg+Alt+Q, Overlay
-//! Strg+Alt+O. Tray-Menü mit HUD zeigen, Overlay, Not-Aus, Autostart, Beenden.
+//! die Oberfläche bekommt nur Ereignisse (ADR-024). Systemweit: Not-Aus Strg+Alt+N, Overlay
+//! Strg+Alt+O. Tray-Menü mit HUD zeigen, Overlay, Not-Aus, Autostart, Beenden. Das Schließen des
+//! Fensters versteckt es nur: Kürzel und Not-Aus bleiben aktiv, Beenden geht über das Tray.
 
 mod core;
 mod sse;
 
+use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -14,7 +16,7 @@ use serde::Serialize;
 use tauri::async_runtime::JoinHandle;
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State, WindowEvent};
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
@@ -24,17 +26,48 @@ use crate::sse::ServerEvent;
 const STOP_TIMEOUT: Duration = Duration::from_secs(5);
 const RETRY_MIN: Duration = Duration::from_secs(1);
 const RETRY_MAX: Duration = Duration::from_secs(10);
-pub const DEFAULT_STOP_KEY: &str = "ctrl+alt+q";
+/// N wie Not-Aus: auf deutscher Tastatur ohne AltGr-Zeichen. Windows meldet AltGr als Strg+Alt;
+/// Strg+Alt+Q (= AltGr+Q = "@") würde jedes getippte @ schlucken. Strg+Alt+F12 öffnet auf vielen
+/// Windows-Rechnern die Intel-Grafiksteuerung und ist unter X11 ein Konsolenwechsel.
+pub const DEFAULT_STOP_KEY: &str = "ctrl+alt+n";
 pub const OVERLAY_KEY: &str = "ctrl+alt+o";
 /// Kürzel des Sprachclients (M2.13): das HUD darf sie nie belegen.
-const VOICE_KEYS: [&str; 4] = ["ctrl+alt+j", "ctrl+alt+m", "ctrl+alt+x", "ctrl+alt+d"];
+const VOICE_KEYS: [&str; 4] = ["ctrl+alt+j", "ctrl+alt+s", "ctrl+alt+x", "ctrl+alt+d"];
+/// Tasten mit AltGr-Zeichen auf der deutschen Tastatur (@ € µ ² ³ { [ ] } \ ~ |).
+const ALTGR_KEYS: [&str; 22] = [
+    "q",
+    "e",
+    "m",
+    "2",
+    "3",
+    "7",
+    "8",
+    "9",
+    "0",
+    "digit2",
+    "digit3",
+    "digit7",
+    "digit8",
+    "digit9",
+    "digit0",
+    "minus",
+    "ß",
+    "bracketright",
+    "+",
+    "intlbackslash",
+    "<",
+    "keyq",
+];
 
 struct Hud {
     core: Arc<Core>,
-    events_started: AtomicBool,
+    /// Der laufende Ereignisstrom; ein neuer Aufruf (Neuladen der Seite) ersetzt ihn.
+    events: Mutex<Option<JoinHandle<()>>>,
     chats: Mutex<HashMap<u64, JoinHandle<()>>>,
     overlay: AtomicBool,
     stop_key: Mutex<Option<Shortcut>>,
+    /// Anzeige des Not-Aus-Kürzels im Tray, z. B. "ctrl+alt+n".
+    stop_label: Mutex<String>,
     overlay_key: Mutex<Option<Shortcut>>,
     /// Kürzel, die sich nicht registrieren ließen (z. B. von einem anderen Programm belegt).
     problems: Mutex<Vec<String>>,
@@ -65,9 +98,17 @@ pub fn stop_key_from(raw: Option<&str>) -> Result<String, String> {
             "Das Not-Aus-Kürzel {key} ist schon belegt (Sprachclient/Overlay)."
         ));
     }
-    if !(key.contains("ctrl") || key.contains("alt") || key.contains("super")) {
+    let parts: Vec<&str> = key.split('+').collect();
+    // Strg UND Alt: sonst würden systemweit Kürzel wie Strg+C oder Alt+F4 gekapert.
+    if !(parts.contains(&"ctrl") && parts.contains(&"alt")) {
         return Err(format!(
-            "Das Not-Aus-Kürzel {key} braucht Strg, Alt oder die Windows-Taste."
+            "Das Not-Aus-Kürzel {key} braucht Strg und Alt (z. B. ctrl+alt+n)."
+        ));
+    }
+    let last = parts.last().copied().unwrap_or_default();
+    if !parts.contains(&"shift") && ALTGR_KEYS.contains(&last) {
+        return Err(format!(
+            "Das Not-Aus-Kürzel {key} ist auf deutscher Tastatur ein AltGr-Zeichen (z. B. @) und würde beim Tippen auslösen."
         ));
     }
     key.parse::<Shortcut>()
@@ -81,12 +122,15 @@ fn emit<T: Serialize + Clone>(app: &AppHandle, name: &str, payload: T) {
 
 // ------------------------------------------------------------------------------------ Befehle
 #[tauri::command]
+/// Startet den Ereignisstrom. Ein erneuter Aufruf (Neuladen der Seite, Absturz der Webview)
+/// beendet den alten Strom und die Chats der alten Seite und verbindet neu; der Core schickt
+/// dann einen frischen `snapshot`.
 fn events_start(app: AppHandle, hud: State<'_, Hud>) {
-    if hud.events_started.swap(true, Ordering::SeqCst) {
-        return; // läuft schon (z. B. nach Neuladen der Seite): einfach weiter empfangen
+    for (_, task) in hud.chats.lock().expect("chats").drain() {
+        task.abort();
     }
     let core = hud.core.clone();
-    tauri::async_runtime::spawn(async move {
+    let task = tauri::async_runtime::spawn(async move {
         let mut delay = RETRY_MIN;
         loop {
             let opened = AtomicBool::new(false);
@@ -126,6 +170,9 @@ fn events_start(app: AppHandle, hud: State<'_, Hud>) {
             delay = (delay * 2).min(RETRY_MAX);
         }
     });
+    if let Some(old) = hud.events.lock().expect("events").replace(task) {
+        old.abort();
+    }
 }
 
 #[tauri::command]
@@ -138,13 +185,13 @@ fn chat_start(
     message: String,
     session_id: Option<String>,
 ) -> Result<(), String> {
-    if hud.chats.lock().expect("chats").contains_key(&id) {
-        return Err(format!("Chat {id} läuft schon."));
-    }
     let core = hud.core.clone();
-    // Sperre über das Starten hinweg: ein sehr schneller Chat trägt sich sonst aus, bevor er
-    // eingetragen ist, und bliebe als Leiche in der Liste.
+    // Prüfen und Eintragen unter einer Sperre, auch über das Starten hinweg: ein sehr schneller
+    // Chat trägt sich sonst aus, bevor er eingetragen ist, und bliebe als Leiche in der Liste.
     let mut chats = hud.chats.lock().expect("chats");
+    let Entry::Vacant(slot) = chats.entry(id) else {
+        return Err(format!("Chat {id} läuft schon."));
+    };
     let task = tauri::async_runtime::spawn(async move {
         let request = core.chat_request(&message, session_id.as_deref());
         let result = core
@@ -182,7 +229,7 @@ fn chat_start(
             hud.chats.lock().expect("chats").remove(&id);
         }
     });
-    chats.insert(id, task);
+    slot.insert(task);
     Ok(())
 }
 
@@ -205,18 +252,13 @@ async fn stop(app: AppHandle, hud: State<'_, Hud>) -> Result<bool, String> {
 }
 
 #[tauri::command]
-fn set_token(hud: State<'_, Hud>, token: Option<String>) {
-    hud.core.set_token(token);
-}
-
-#[tauri::command]
 fn shortcut_problems(hud: State<'_, Hud>) -> Vec<String> {
     hud.problems.lock().expect("problems").clone()
 }
 
 #[tauri::command]
-fn overlay_set(app: AppHandle, hud: State<'_, Hud>, on: bool) {
-    set_overlay(&app, &hud, on);
+fn overlay_state(hud: State<'_, Hud>) -> bool {
+    hud.overlay.load(Ordering::SeqCst)
 }
 
 // ---------------------------------------------------------------------------- Not-Aus, Overlay
@@ -242,6 +284,7 @@ fn set_overlay(app: &AppHandle, hud: &Hud, on: bool) {
         let _ = window.set_always_on_top(on);
         let _ = window.set_ignore_cursor_events(on);
         if on {
+            let _ = window.unminimize();
             let _ = window.show();
         }
     }
@@ -275,10 +318,16 @@ fn show_main(app: &AppHandle) {
 // ------------------------------------------------------------------------------- Kürzel, Tray
 fn register_shortcuts(app: &AppHandle, hud: &Hud) {
     let mut problems = Vec::new();
+    if let Err(problem) =
+        local_base(&std::env::var("JARVIS_CORE_URL").unwrap_or_else(|_| DEFAULT_CORE_URL.into()))
+    {
+        problems.push(problem);
+    }
     match stop_key_from(std::env::var("JARVIS_HUD_STOP_KEY").ok().as_deref()) {
         Ok(key) => match key.parse::<Shortcut>() {
             Ok(shortcut) if app.global_shortcut().register(shortcut).is_ok() => {
                 *hud.stop_key.lock().expect("key") = Some(shortcut);
+                *hud.stop_label.lock().expect("label") = key.clone();
             }
             _ => problems.push(format!(
                 "Not-Aus-Kürzel {key} nicht verfügbar (von einem anderen Programm belegt?). Not-Aus über das Tray-Symbol oder den roten Knopf."
@@ -326,12 +375,25 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
         true,
         None::<&str>,
     )?;
-    let stop = MenuItem::with_id(app, "stop", "NOT-AUS (Strg+Alt+Q)", true, None::<&str>)?;
+    let stop_label = match app
+        .try_state::<Hud>()
+        .and_then(|hud| hud.stop_label.lock().ok().map(|l| l.clone()))
+    {
+        Some(label) => format!("NOT-AUS ({label})"),
+        None => "NOT-AUS".to_string(),
+    };
+    let stop = MenuItem::with_id(app, "stop", stop_label, true, None::<&str>)?;
+    // Im Entwicklungsmodus (`tauri dev`) nicht: Windows startete sonst die Debug-Exe ohne Vite.
+    let installed = !cfg!(debug_assertions);
     let start = CheckMenuItem::with_id(
         app,
         "autostart",
-        "Mit Windows starten",
-        true,
+        if installed {
+            "Mit Windows starten"
+        } else {
+            "Mit Windows starten (nur installierte App)"
+        },
+        installed,
         autostart,
         None::<&str>,
     )?;
@@ -370,13 +432,9 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let raw = std::env::var("JARVIS_CORE_URL").unwrap_or_else(|_| DEFAULT_CORE_URL.into());
-    let base = match local_base(&raw) {
-        Ok(base) => base,
-        Err(problem) => {
-            eprintln!("{problem}");
-            std::process::exit(2);
-        }
-    };
+    // Eine nicht lokale Adresse beendet die App nicht still (im fertigen Bau gibt es keine
+    // Konsole): sie startet, verbindet sich nicht und zeigt den Grund.
+    let base = local_base(&raw);
     tauri::Builder::default()
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
@@ -390,7 +448,8 @@ pub fn run() {
         ))
         .manage(Hud {
             core: Arc::new(Core::new(base)),
-            events_started: AtomicBool::new(false),
+            events: Mutex::new(None),
+            stop_label: Mutex::new(String::new()),
             chats: Mutex::new(HashMap::new()),
             overlay: AtomicBool::new(false),
             stop_key: Mutex::new(None),
@@ -399,10 +458,17 @@ pub fn run() {
         })
         .setup(|app| {
             let handle = app.handle().clone();
-            build_tray(&handle)?;
             let hud = app.state::<Hud>();
             register_shortcuts(&handle, &hud);
+            build_tray(&handle)?;
             Ok(())
+        })
+        // X versteckt das Fenster nur: Tray, Not-Aus-Kürzel und Overlay bleiben aktiv.
+        .on_window_event(|window, event| {
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = window.hide();
+            }
         })
         .invoke_handler(tauri::generate_handler![
             events_start,
@@ -410,9 +476,8 @@ pub fn run() {
             chat_cancel,
             confirm,
             stop,
-            set_token,
             shortcut_problems,
-            overlay_set
+            overlay_state
         ])
         .run(tauri::generate_context!())
         .expect("JARVIS HUD konnte nicht starten");
@@ -424,11 +489,30 @@ mod tests {
 
     #[test]
     fn stop_key_defaults_and_rejects_collisions() {
-        assert_eq!(stop_key_from(None).unwrap(), "ctrl+alt+q");
+        assert_eq!(stop_key_from(None).unwrap(), "ctrl+alt+n");
         assert_eq!(stop_key_from(Some("Ctrl + Alt + P")).unwrap(), "ctrl+alt+p");
         assert!(stop_key_from(Some("ctrl+alt+x")).is_err()); // Sprachclient "unterbrechen"
         assert!(stop_key_from(Some("ctrl+alt+o")).is_err()); // Overlay
         assert!(stop_key_from(Some("shift+q")).is_err()); // ohne Strg/Alt: tippt man versehentlich
+        assert!(stop_key_from(Some("ctrl+c")).is_err()); // gekaperte Systemkürzel
+        assert!(stop_key_from(Some("alt+f4")).is_err());
         assert!(stop_key_from(Some("ctrl+alt+")).is_err());
+    }
+
+    #[test]
+    fn stop_key_rejects_altgr_characters_on_german_keyboards() {
+        for key in [
+            "ctrl+alt+q",
+            "ctrl+alt+e",
+            "ctrl+alt+m",
+            "ctrl+alt+7",
+            "ctrl+alt+0",
+        ] {
+            assert!(
+                stop_key_from(Some(key)).is_err(),
+                "{key} ist ein AltGr-Zeichen"
+            );
+        }
+        assert!(stop_key_from(Some("ctrl+alt+shift+q")).is_ok()); // AltGr+Shift+Q tippt nichts
     }
 }

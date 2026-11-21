@@ -56,7 +56,9 @@ describe("Tauri-Transport", () => {
     const events: unknown[] = [];
     await createTauriTransport().chat("Hi", "s1", (e) => events.push(e.data));
     expect(events).toEqual([{ text: "Hallo" }]);
-    expect(invoked).toContainEqual(["chat_start", { id: 1, message: "Hi", sessionId: "s1" }]);
+    const start = invoked.find(([c]) => c === "chat_start")?.[1] as { id: number; message: string; sessionId: string };
+    expect(start).toMatchObject({ message: "Hi", sessionId: "s1" });
+    expect(Number.isSafeInteger(start.id)).toBe(true);
     expect(handlers.get("hud://chat")).toEqual([]);
   });
 
@@ -76,7 +78,8 @@ describe("Tauri-Transport", () => {
   });
 
   it("meldet Overlay, Hinweise und belegte Kürzel vom Start", async () => {
-    invokeImpl = (cmd) => (cmd === "shortcut_problems" ? ["Not-Aus-Kürzel nicht verfügbar"] : undefined);
+    invokeImpl = (cmd) =>
+      cmd === "shortcut_problems" ? ["Not-Aus-Kürzel nicht verfügbar"] : cmd === "overlay_state" ? false : undefined;
     const seen: string[] = [];
     createTauriTransport().desktop?.({
       overlay: (on) => seen.push(`overlay:${on}`),
@@ -85,8 +88,9 @@ describe("Tauri-Transport", () => {
     });
     await vi.waitFor(() => expect(seen).toContain("Not-Aus-Kürzel nicht verfügbar"));
     await vi.waitFor(() => expect(handlers.get("hud://overlay")?.length).toBe(1));
+    expect(seen).toContain("overlay:false"); // Stand nach Neuladen der Seite
     fire("hud://overlay", true);
     fire("hud://stop_result", false);
-    expect(seen).toEqual(["Not-Aus-Kürzel nicht verfügbar", "overlay:true", "stop:false"]);
+    expect(seen.slice(-2)).toEqual(["overlay:true", "stop:false"]);
   });
 });

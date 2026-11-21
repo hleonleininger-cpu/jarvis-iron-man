@@ -113,7 +113,7 @@ Linux und Windows, Prüfrunde (Opus-Untersession, höchstens eine je Block), Anl
 - **Mikrofon sichtbar aktiv und sofort abschaltbar:** Der Client zeigt in der Konsole jederzeit
   den Zustand (SCHLAF / WARTET / HÖRT ZU / DENKT / SPRICHT) und gibt beim Aufwachen und bei
   Aufnahmebeginn einen kurzen Ton. Abschalten: "Gute Nacht" (Mikrofon-Stream wird geschlossen,
-  nicht nur ignoriert), Tastenkürzel Strg+Alt+M (harte Stummschaltung), `jarvis voice stop`,
+  nicht nur ignoriert), Tastenkürzel Strg+Alt+S (harte Stummschaltung; ursprünglich Strg+Alt+M, geändert 21.11.: das ist auf deutscher Tastatur AltGr+M = µ), `jarvis voice stop`,
   und der Not-Aus des Core (`/v1/stop`) beendet auch das Sprechen.
 - **Kein Audio auf der Platte:** Aufnahmen bleiben im Arbeitsspeicher und werden nach der
   Erkennung verworfen. Im Log und im Audit stehen nie Gesprächsinhalte oder Transkripte, nur

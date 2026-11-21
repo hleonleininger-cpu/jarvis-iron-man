@@ -8,9 +8,13 @@ on:
   pull_request:
     paths: ["hud/**", ".github/workflows/hud-tauri.yml"]
 
+permissions:
+  contents: read
+
 jobs:
   tauri-windows:
     runs-on: windows-latest
+    timeout-minutes: 45
     defaults:
       run:
         working-directory: hud
@@ -27,6 +31,8 @@ jobs:
       - run: npm ci --ignore-scripts --no-fund --no-audit
       # Tauri prüft beim Kompilieren, ob das gebaute Frontend (frontendDist) da ist.
       - run: npm run build
+      - run: cargo fmt --check
+        working-directory: hud/src-tauri
       - run: cargo test
         working-directory: hud/src-tauri
       - run: cargo clippy --all-targets -- -D warnings

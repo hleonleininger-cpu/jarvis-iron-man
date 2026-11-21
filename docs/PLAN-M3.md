@@ -124,7 +124,8 @@ Ein Block je Nacht, jeder mit Commit, Tests, CI und Anleitung.
 - **M3.2 Tauri 2:** Fenster lädt das gebaute Frontend; Core-Aufrufe nur aus dem Rust-Teil (siehe 2).
   Keine Secrets im Repo oder in der App-Datei. Tray-Symbol, "beim Start von Windows starten"
   (wie beim Core, M0.9) als Schalter.
-- **Systemweite Not-Aus-Taste:** eigenes, einstellbares Kürzel (Standard Strg+Alt+Q), geprüft gegen
+- **Systemweite Not-Aus-Taste:** eigenes, einstellbares Kürzel (Standard Strg+Alt+Q; beim Bau
+  geändert auf Strg+Alt+N, siehe §16), geprüft gegen
   Kollision mit den Kürzeln des Sprachclients (J/M/X/D; Strg+Alt+X ist dort "unterbrechen", nicht
   Core-Not-Aus). Der Handler sitzt im Rust-Teil und schickt `POST /v1/stop` direkt, auch bei
   hängender Webview. Reagiert der Core nach 5 s nicht, zeigt das HUD den Hinweis auf `jarvis stop`
@@ -264,3 +265,21 @@ nicht von selbst, sondern frage Master in der Besprechung um sein Okay.
   `SettingsMenu`), Augensymbol.
 - Abweichungen: Töne werden erzeugt statt als Dateien mitgeliefert (keine Lizenzfrage); der Pegel
   der Ausgabe wird je Satzstück gemessen (grob, wie geplant).
+
+## 16. Prüfrunde Block B (Opus, 21.11.)
+2 hohe, 5 mittlere, 7 niedrige Funde; behoben:
+- Hoch: Strg+Alt+Q ist auf deutscher Tastatur AltGr+Q (@) und hätte jedes @ geschluckt. Neuer
+  Standard Strg+Alt+N (Strg+Alt+F12 schied aus: Intel-Grafiksteuerung unter Windows, Konsolenwechsel
+  unter X11, beim Test unter Xvfb aufgefallen); das Kürzel verlangt Strg und Alt und darf keine AltGr-Taste sein.
+  Derselbe Fehler im Sprachclient (M2): Stumm-Kürzel jetzt Strg+Alt+S statt Strg+Alt+M (µ);
+  `valid_hotkey` und `VoiceConfig` lehnen AltGr-Tasten ab. Plan §5 war hier fehlerhaft.
+- Hoch: Fenster schließen beendete die App samt Not-Aus-Kürzel; jetzt versteckt X nur.
+- Mittel: doppelte CSP (Vite-Meta im Tauri-Bau entfällt, Test der Tauri-CSP), Neuladen der Seite
+  (Strom wird ersetzt, zufällige Chat-Nummern, Overlay-Zustand nachgefragt), Token (toter Befehl
+  entfernt, Grenze dokumentiert), Autostart nur in der installierten App, falsche Adresse wird
+  angezeigt statt still zu beenden, Lese-Frist 45 s.
+- Niedrig: Prüfen und Eintragen der Chats unter einer Sperre, keine Umleitungen, Overlay holt ein
+  minimiertes Fenster zurück, CI mit Rechte- und Zeitgrenze, Anleitung (PowerShell, X versteckt,
+  Grenzen).
+- Abweichung vom Plan: kein eigenes Kürzel für den Klick-Durchlass; das Overlay schaltet ihn mit
+  ein und aus (Strg+Alt+O), das genügt zum Hinein- und Herauskommen.

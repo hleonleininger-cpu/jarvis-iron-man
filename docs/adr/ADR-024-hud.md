@@ -53,16 +53,30 @@ auch die Handy-App (PWA) werden, dann entfällt `api/web`.
   Tauri-Ereignisse an die Oberfläche. Die Webview darf nur die eigenen Befehle aufrufen und
   Ereignisse empfangen (`capabilities/default.json`), CSP `connect-src ipc: http://ipc.localhost`.
   Die Chat-Nummer vergibt die Oberfläche, damit frühe Ereignisse zuordenbar sind.
-- **Kürzel und Tray:** Strg+Alt+Q Not-Aus (einstellbar über `JARVIS_HUD_STOP_KEY`, nie eines
-  der Kürzel des Sprachclients J/M/X/D), Strg+Alt+O Overlay. Der Not-Aus-Handler sitzt in Rust
+- **Kürzel und Tray:** Strg+Alt+N Not-Aus (N wie Not-Aus) (einstellbar über `JARVIS_HUD_STOP_KEY`; verlangt
+  Strg und Alt, nie eines der Kürzel des Sprachclients J/S/X/D, nie eine Taste mit AltGr-Zeichen
+  der deutschen Tastatur), Strg+Alt+O Overlay. Windows meldet AltGr als Strg+Alt: das geplante
+  Strg+Alt+Q wäre AltGr+Q = "@" gewesen und hätte jedes getippte @ geschluckt (Fund der
+  Prüfrunde Block B). Strg+Alt+F12 schied ebenfalls aus: unter Windows öffnet es auf vielen
+  Rechnern die Intel-Grafiksteuerung, unter X11 ist es ein Konsolenwechsel. Aus demselben Grund wie bei Q ist das Stumm-Kürzel des Sprachclients jetzt Strg+Alt+S
+  statt Strg+Alt+M (= µ). Der Not-Aus-Handler sitzt in Rust
   und ruft `POST /v1/stop` direkt, wirkt also auch bei hängender Oberfläche. Lässt sich ein
   Kürzel nicht registrieren, meldet das HUD es sichtbar. Tray: HUD zeigen, Overlay, Not-Aus,
-  "Mit Windows starten" (Standard aus), Beenden.
+  "Mit Windows starten" (Standard aus, nur in der installierten App), Beenden. Das Schließen des
+  Fensters versteckt es nur, damit Not-Aus-Kürzel und Tray nicht still verschwinden.
 - **Overlay:** rahmenlos, immer vorn, Klicks gehen durch; ohne Gesprächsfeld. Der rote Knopf ist
   dort nicht klickbar, Not-Aus und Verlassen gehen über Kürzel und Tray.
-- **Token:** Kein Speicher auf der Platte. Der Befehl `set_token` hält ein Token nur im
-  Arbeitsspeicher (für `require_api_token = true`; die Oberfläche fragt in Block B noch nicht
-  danach, Standard ist localhost ohne Token).
+- **Token:** Das HUD sendet noch kein Zugangstoken. Mit `require_api_token = true` bekommt es
+  401 (auch der Not-Aus aus dem HUD); es zeigt das, und `jarvis stop` hilft weiter. Standard ist
+  localhost ohne Token. Eine Token-Abfrage (nur im Arbeitsspeicher) kommt, wenn sie gebraucht wird.
+- **Neuladen der Seite:** `events_start` ersetzt den alten Strom und beendet Chats der alten
+  Seite; der Core schickt einen frischen `snapshot`. Chat-Nummern sind zufällig, der
+  Overlay-Zustand wird nachgefragt.
+- **Robustheit:** keine HTTP-Umleitungen (sonst könnte ein lokaler Fremdprozess auf einen
+  anderen Host umleiten), Lese-Frist 45 s im Strom (der Core pingt alle 15 s), eine nicht lokale
+  `JARVIS_CORE_URL` beendet die App nicht still, sondern wird angezeigt.
+- **CSP doppelt vermieden:** Das CSP-Meta aus dem Vite-Bau entfällt im Tauri-Bau, dort gilt nur
+  die CSP aus `tauri.conf.json` (ein Test prüft sie).
 - **Schrift:** keine Schriftdatei; Bahnschrift ist unter Windows eingebaut, sonst Systemschrift.
 
 ## Konsequenzen

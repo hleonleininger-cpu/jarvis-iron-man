@@ -138,7 +138,8 @@ class VoiceConfig(BaseModel):
     hotkey_listen: str = (
         "<ctrl>+<alt>+j"  # sofort zuhören (wie das Wake Word), weckt aus dem Schlaf
     )
-    hotkey_mute: str = "<ctrl>+<alt>+m"  # Mikrofon ganz schließen / wieder öffnen
+    # Mikrofon ganz schließen / wieder öffnen. Nicht Strg+Alt+M: das ist AltGr+M ("µ").
+    hotkey_mute: str = "<ctrl>+<alt>+s"
     hotkey_interrupt: str = "<ctrl>+<alt>+x"  # Sprechen und laufende Anfrage beenden
     hotkey_dictation: str = "<ctrl>+<alt>+d"  # Diktiermodus an/aus
     # Doppelklatschen als Start (aus, weil es auch auf Geräusche anspricht); Schwelle 0 bis 1.
@@ -178,6 +179,12 @@ class VoiceConfig(BaseModel):
         ):
             raise ValueError(
                 "Tastenkürzel wie <ctrl>+<alt>+j, mit Strg, Alt oder Cmd (oder leer lassen)."
+            )
+        plain = "<ctrl>" in value and "<alt>" in value and "<shift>" not in value
+        if plain and value.rsplit("+", 1)[-1] in "qem237890":
+            raise ValueError(
+                f"{value} ist auf deutscher Tastatur ein AltGr-Zeichen (z. B. @, €, µ) und "
+                "würde beim Tippen auslösen. Bitte eine andere Taste wählen."
             )
         return value
 

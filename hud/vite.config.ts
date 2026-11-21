@@ -37,7 +37,9 @@ function originGuard(): Plugin {
 function contentSecurityPolicy(): Plugin {
   return {
     name: "jarvis-csp",
-    apply: "build",
+    // Nur für den Browser-Bau. In der Desktop-App setzt Tauri die CSP (tauri.conf.json); ein
+    // zweites Meta-Tag würde dort die IPC (ipc:, http://ipc.localhost) sperren.
+    apply: (_config, { command }) => command === "build" && process.env.TAURI_ENV_PLATFORM === undefined,
     transformIndexHtml: () => [
       { tag: "meta", attrs: { "http-equiv": "Content-Security-Policy", content: CSP }, injectTo: "head-prepend" },
     ],

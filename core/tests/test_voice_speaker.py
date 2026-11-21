@@ -246,7 +246,7 @@ async def test_start_hotkeys_binds_all_four_and_skips_empty_ones(
     assert listener is not None and captured["started"]
     assert set(k for k in captured if k != "started") == {
         "<ctrl>+<alt>+j",
-        "<ctrl>+<alt>+m",
+        "<ctrl>+<alt>+s",
         "<ctrl>+<alt>+x",
     }
     assert (

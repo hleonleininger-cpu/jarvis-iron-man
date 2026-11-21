@@ -23,7 +23,7 @@ export function StateRing({ ring, mic, children }: Props) {
       </div>
       <div className={`mic mic-${mic === "an" ? "on" : mic === "aus" ? "off" : "unknown"}`}>
         Mikrofon: {mic}
-        {mic === "an" ? <span className="mic-hint"> · aus mit Strg+Alt+M</span> : null}
+        {mic === "an" ? <span className="mic-hint"> · aus mit Strg+Alt+S</span> : null}
       </div>
     </section>
   );

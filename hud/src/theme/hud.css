@@ -543,7 +543,7 @@ main {
 
 /* ------------------------------------------------------------------------------- Overlay
    Desktop-App (M3.5): durchsichtig über dem Desktop, Klicks gehen durch. Ohne Gespräch; Not-Aus
-   und Verlassen über Strg+Alt+Q, Strg+Alt+O und das Tray-Symbol. */
+   und Verlassen über Strg+Alt+N, Strg+Alt+O und das Tray-Symbol. */
 html.overlay,
 html.overlay body {
   background: transparent;
@@ -562,7 +562,7 @@ html.overlay body {
 }
 
 .hud.overlay .stop-button::after {
-  content: " · Strg+Alt+Q";
+  content: " · Strg+Alt+N";
   font-weight: 400;
   letter-spacing: 0;
 }

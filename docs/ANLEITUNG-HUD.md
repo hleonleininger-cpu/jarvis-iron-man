@@ -1,7 +1,8 @@
-# Anleitung: HUD ausprobieren (M3, Block A)
+# Anleitung: HUD ausprobieren (M3)
 
-Das HUD läuft in diesem Schritt noch im Browser (die Desktop-App mit Tauri folgt in Block B).
-Es zeigt den Zustand von JARVIS, laufende Werkzeuge, Rückfragen und hat einen Not-Aus-Knopf.
+Das HUD gibt es auf zwei Wegen: im Browser (schnell zum Ausprobieren, unten) und als
+Desktop-App mit Tray, systemweitem Not-Aus und Overlay (weiter unten). Es zeigt den Zustand von
+JARVIS, laufende Werkzeuge, Rückfragen und hat einen Not-Aus-Knopf.
 
 ## Einmalig: Node.js installieren
 1. Node.js 22 LTS von nodejs.org herunterladen und installieren (Standardoptionen genügen).
@@ -52,7 +53,8 @@ Der Ring zeigt dann "HÖRT ZU", "DENKT", "SPRICHT" usw., darunter, ob das Mikrof
 - "Der Core ist nicht erreichbar": `jarvis serve` läuft nicht oder auf einem anderen Port. Ein
   anderer Port geht mit `set JARVIS_CORE_URL=http://127.0.0.1:PORT` vor `npm run dev`.
 - "Der Core verlangt ein Zugangstoken": in `jarvis.toml` ist `require_api_token = true` gesetzt.
-  Das HUD spricht in Block A nur mit localhost ohne Token.
+  Das HUD kann noch kein Token senden; für das HUD die Einstellung weglassen (localhost braucht
+  kein Token).
 - "Der Core lehnt die Herkunft ab": das HUD wurde nicht über `npm run dev` geöffnet.
 
 # Desktop-App (M3, Block B)
@@ -95,11 +97,33 @@ Der Installer liegt danach in `hud\src-tauri\target\release\bundle\nsis\`.
 
 ## Was du prüfen kannst
 - Fenster mit "Core verbunden", Tray-Symbol unten rechts (Ring-Symbol).
-- Strg+Alt+Q löst den Not-Aus aus, auch wenn ein anderes Programm vorne ist.
+- Strg+Alt+N löst den Not-Aus aus, auch wenn ein anderes Programm vorne ist. (Nicht Strg+Alt+Q:
+  das ist auf deutscher Tastatur das @-Zeichen.)
+- Das X oben rechts versteckt das Fenster nur; JARVIS HUD läuft im Tray weiter, Not-Aus-Kürzel
+  inklusive. Ganz beenden: Tray-Symbol, "Beenden". Zurückholen: Tray, "HUD zeigen".
 - Strg+Alt+O schaltet das Overlay ein: rahmenlos, durchsichtig, immer vorne, Klicks gehen durch.
   Noch einmal Strg+Alt+O (oder Tray: "Overlay an/aus") schaltet es aus.
-- Tray: "Mit Windows starten" an und wieder aus (Standard ist aus).
-- Belegt ein anderes Programm Strg+Alt+Q, steht ein Hinweis im Gespräch. Dann ein anderes Kürzel
-  setzen, z. B. `set JARVIS_HUD_STOP_KEY=ctrl+alt+p` vor `npm run tauri dev`.
-- JARVIS läuft auf einem anderen Port: `set JARVIS_CORE_URL=http://127.0.0.1:PORT`. Andere
-  Rechner lehnt die App ab.
+- Tray: "Mit Windows starten" an und wieder aus (Standard ist aus). Das geht nur mit der
+  installierten App (`npm run tauri build`, dann den Installer ausführen), nicht mit
+  `npm run tauri dev`.
+- Belegt ein anderes Programm Strg+Alt+N, steht ein Hinweis im Gespräch. Dann vor dem Start ein
+  anderes Kürzel setzen (Strg und Alt sind Pflicht, keine Taste mit AltGr-Zeichen), in der
+  Eingabeaufforderung (cmd):
+
+```bash
+set JARVIS_HUD_STOP_KEY=ctrl+alt+k
+```
+
+  oder in PowerShell (Standard im Windows-Terminal):
+
+```bash
+$env:JARVIS_HUD_STOP_KEY = "ctrl+alt+k"
+```
+
+- JARVIS läuft auf einem anderen Port: genauso `JARVIS_CORE_URL` auf `http://127.0.0.1:PORT`
+  setzen. Andere Rechner lehnt die App ab und zeigt das im Gespräch.
+- Diese Einstellungen gelten nur für die Eingabeaufforderung, aus der du startest. Die
+  installierte App und der Autostart nutzen die Standardwerte (Port 8765, Strg+Alt+N).
+- `npm run tauri build` lädt beim ersten Mal das Installer-Werkzeug NSIS aus dem Netz.
+- Hinweis zum Sprachclient: das Stumm-Kürzel ist jetzt Strg+Alt+S (vorher Strg+Alt+M, das ist auf
+  deutscher Tastatur das µ-Zeichen).

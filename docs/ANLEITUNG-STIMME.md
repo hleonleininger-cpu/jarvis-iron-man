@@ -38,7 +38,7 @@ hilft "Stopp", sobald das Mikrofon zuhört.
 ## Block C: Tastenkürzel, Klatschen, Diktat, Stimmerkennung, Gespräch davor
 
 - **Tastenkürzel** (laufen, solange `jarvis voice run` läuft; ändern in `[voice]`, leer = aus):
-  Strg+Alt+J = sofort zuhören (wie das Wake Word, weckt auch aus dem Schlaf), Strg+Alt+M =
+  Strg+Alt+J = sofort zuhören (wie das Wake Word, weckt auch aus dem Schlaf), Strg+Alt+S =
   Mikrofon ganz schließen oder wieder öffnen, Strg+Alt+X = Sprechen und laufende Anfrage beenden,
   Strg+Alt+D = Diktat an/aus. Auf dem iPhone gibt es keine Kürzel; das kommt mit M8.
 - **Doppelklatschen** (`clap_wake = true`, `clap_threshold` 0,05 bis 0,95): zweimal kurz
