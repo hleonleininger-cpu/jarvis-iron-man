@@ -1,4 +1,4 @@
-# Anleitung: Sprachsteuerung ausprobieren (M2, Block B)
+# Anleitung: Sprachsteuerung ausprobieren (M2)
 
 Alle Befehle im Ordner `core` auf deinem Windows-PC, in der Eingabeaufforderung. JARVIS-Server
 (`uv run jarvis serve`) und Ollama müssen laufen, wenn JARVIS antworten soll.
@@ -24,13 +24,12 @@ Alle Befehle im Ordner `core` auf deinem Windows-PC, in der Eingabeaufforderung.
    - "Hey Jarvis" sagen: ein kurzer Ton, dann sprechen. Nach der Antwort bleibt das Mikrofon
      8 Sekunden offen (Folgefrage ohne Wake Word).
    - "Stopp" beendet das Sprechen. "Not-Aus" löst den Not-Aus des ganzen Cores aus.
-   - "Gute Nacht, Jarvis" schließt das Mikrofon ganz. Aufwecken geht erst mit dem Tastenkürzel
-     (kommt in Block C); bis dahin hilft nur Strg+C und `uv run jarvis voice run` neu starten. "Flüstere" macht Antworten leise und kurz,
+   - "Gute Nacht, Jarvis" schließt das Mikrofon ganz. Aufwecken mit Strg+Alt+J. "Flüstere" macht Antworten leise und kurz,
      "Normal sprechen" stellt es zurück.
    - Strg+C beendet den Sprachclient.
 7. **Mit Kopfhörern** kannst du in `[voice]` `barge_in = "voice"` setzen: dann unterbricht deine
-   Stimme JARVIS mitten im Satz. Mit Lautsprechern bleibt es bei `key`: Unterbrechen per Tastenkürzel kommt in Block C; bis dahin
-hilft "Stopp", sobald das Mikrofon zuhört.
+   Stimme JARVIS mitten im Satz. Mit Lautsprechern bleibt es bei `key`: Unterbrechen mit Strg+Alt+X oder "Stopp", sobald das
+Mikrofon zuhört.
 8. **Andere Stimme:** Dateien im Piper-Format (`.onnx` und `.onnx.json`) in den Modellordner legen und
    in `[voice]` unter `tts_voice_en` bzw. `tts_voice_de` den Dateinamen ohne `.onnx` eintragen.
    Fehlt die Datei, sagt JARVIS es mit dem Hinweis auf `jarvis voice setup`.
