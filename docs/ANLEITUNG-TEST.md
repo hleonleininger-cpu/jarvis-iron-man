@@ -10,7 +10,35 @@ dasteht.
 
 ## T0 Vorbereitung (einmalig, ca. 10 Minuten)
 
-1. Neuesten Stand holen (im Repo-Ordner):
+1. Repo-Ordner finden. Liegt das Repo schon auf dem PC, dorthin wechseln, z. B.:
+
+```bash
+cd C:\Users\nilsl\jarvis-iron-man
+```
+
+   Gibt es den Ordner noch nicht ("Das System kann den angegebenen Pfad nicht finden"), einmal
+   holen (bei einem privaten Repo öffnet sich ein GitHub-Anmeldefenster):
+
+```bash
+cd C:\Users\nilsl
+```
+
+```bash
+git clone https://github.com/hleonleininger-cpu/jarvis-iron-man.git
+```
+
+```bash
+cd jarvis-iron-man
+```
+
+   Fehlt `uv` (`uv --version` meldet "nicht gefunden"), installieren und danach ein neues Fenster
+   öffnen:
+
+```bash
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+   Dann im Repo-Ordner den neuesten Stand holen:
 
 ```bash
 git fetch origin
