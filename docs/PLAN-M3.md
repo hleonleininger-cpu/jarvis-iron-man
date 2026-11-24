@@ -333,3 +333,4 @@ nicht von selbst, sondern frage Master in der Besprechung um sein Okay.
   zu etwa 20 s verzögern und kurz PowerShell-Fenster zeigen, wenn der Core ohne Konsole startet.
 - Nachtrag 21.11. (Nachtschicht): Die Hardware-Erkennung startet ihre Befehle unter Windows
   jetzt ohne Konsolenfenster (`CREATE_NO_WINDOW`), es blitzen keine PowerShell-Fenster mehr auf.
+- Nachtrag 24.11.: Das Repo ist jetzt öffentlich; die CI (Linux, Windows, HUD-Desktop) läuft wieder. Erster Lauf auf dem Stand nach M3.
