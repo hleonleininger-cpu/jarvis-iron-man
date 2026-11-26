@@ -13,6 +13,8 @@ data_dir = "data"
 # Braucht ebenfalls das Embedding-Modell; ohne model_fast bleibt alles beim Modell "model".
 # model_fast = "qwen3:4b"
 # model_strong = "qwen3:14b"
+# Nachdenken (Thinking) der Modelle: Standard aus (schnell). true = langsamer, bei schweren Fragen besser.
+# model_thinking = false
 # home_location = "Dortmund"  # Wohnort: gilt, wenn eine Frage keinen Ort nennt (z. B. Wetter)
 log_level = "INFO"
 # Gesprächsverlauf je Sitzung (nur im Arbeitsspeicher). 0 Runden schaltet ihn ab.

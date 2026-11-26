@@ -30,7 +30,7 @@ from pydantic_ai.messages import (
     TextPartDelta,
 )
 from pydantic_ai.models import Model
-from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.models.openai import OpenAIChatModel, OpenAIChatModelSettings
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import UsageLimits
@@ -844,6 +844,20 @@ def _ollama_client(settings: Settings) -> AsyncOpenAI:
     )
 
 
+def _ollama_model(name: str, settings: Settings) -> OpenAIChatModel:
+    """Lokales Ollama-Modell. Ohne `model_thinking` bekommt es `reasoning_effort="none"`: Ollama
+    schaltet das Nachdenken von Modellen wie qwen3.5 sonst von selbst ein, und ein 4B-Modell
+    braucht dafür auf kleinen Geräten Minuten (/plan lief in das 300-s-Limit)."""
+    model_settings = (
+        None if settings.model_thinking else OpenAIChatModelSettings(openai_reasoning_effort="none")
+    )
+    return OpenAIChatModel(
+        name,
+        provider=OpenAIProvider(openai_client=_ollama_client(settings)),
+        settings=model_settings,
+    )
+
+
 def _tool_selector(settings: Settings) -> ToolSelector | None:
     """Werkzeugauswahl, wenn eingeschaltet (tool_select_limit > 0). Auch der Router braucht die
     Bewertung der Werkzeuge; ohne Auswahl-Limit werden dann nur bewertet, nicht gekürzt."""
@@ -888,14 +902,10 @@ def build_service(
 ) -> ChatService:
     name = model_name or resolve_model_name(settings)
     if model is None:
-        model = OpenAIChatModel(
-            name, provider=OpenAIProvider(openai_client=_ollama_client(settings))
-        )
+        model = _ollama_model(name, settings)
     fast = None
     if settings.model_fast:
-        fast_model = OpenAIChatModel(
-            settings.model_fast, provider=OpenAIProvider(openai_client=_ollama_client(settings))
-        )
+        fast_model = _ollama_model(settings.model_fast, settings)
         fast = (fast_model, settings.model_fast)
     status = StatusBus()
     hub = hub or McpHub(

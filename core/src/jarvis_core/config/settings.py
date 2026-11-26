@@ -235,6 +235,9 @@ class Settings(BaseSettings):
     # `model_strong` (Alias für `model`). Ohne `model_fast` gibt es keinen Router.
     model_fast: str | None = None
     model_strong: str | None = None
+    # Nachdenken (Thinking) von Modellen wie qwen3.5: aus, damit Antworten in Sekunden statt Minuten
+    # kommen. Auf schnellerer Hardware einschaltbar (bessere Antworten bei schweren Aufgaben).
+    model_thinking: bool = False
     # Sub-Agenten (M1.2): so viele laufen zugleich. 1 = nacheinander (ein lokales Modell).
     subagent_parallel: int = Field(default=1, ge=1, le=4)
     router_tool_match: float = Field(default=0.6, gt=0.0, le=1.0)
