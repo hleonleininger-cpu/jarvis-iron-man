@@ -252,6 +252,47 @@ npm run tauri build
 **Was du mir schickst:** ob der Bau durchläuft (falls nicht: die letzten 30 Zeilen der Ausgabe),
 ob Overlay und Kürzel wie beschrieben wirken.
 
+## Mac und iCloud-Kalender: Stolpersteine aus dem ersten Test
+
+**Mac (Apple M1, 8 GB):** Läuft: Server, Browser-Oberfläche, HUD im Browser, Gedächtnis. Läuft
+nicht: Wake Word, Fensterwechsel-Erkennung beim Diktat, Autostart (nur Windows). Kurzbefehle
+(einmal in `~/.zshrc`): `jarvis ...` (aus jedem Ordner), `jstart` (Server starten), `jhud`
+(HUD im Browser). Ollama braucht `launchctl setenv OLLAMA_CONTEXT_LENGTH 8192` und einen
+Neustart. Strg heißt auf dem Mac **control** (Programm beenden: control+C), Kopieren/Einfügen
+ist Cmd+C/Cmd+V.
+
+**Server läuft schon ("Address already in use"):** `lsof -i :8765` zeigt die PID, `kill PID`
+beendet ihn. Nach dem Ablegen neuer Zugangsdaten muss der Server neu starten.
+
+**iCloud-Kalender einrichten:**
+1. Bei `account.apple.com` ein **App-spezifisches Passwort** erzeugen (Name z. B. `JARVIS`). Es
+   wird nur einmal angezeigt: vier Gruppen aus Kleinbuchstaben, z. B. `abcd-efgh-ijkl-mnop`.
+   Der Name des Eintrags in der Liste ist **nicht** das Passwort.
+2. **Apple-ID** = die Adresse des Apple-Kontos, in genau dieser Schreibweise.
+3. Vor dem Ablegen gegen Apple prüfen (Antwort **207** = Zugangsdaten stimmen, 401 = abgelehnt).
+   Die Eingabe bleibt lokal, das Passwort ist unsichtbar:
+
+```bash
+read "AID?Apple-ID: "; read -s "APW?App-Passwort: "; echo
+curl -s -o /dev/null -w "Antwort: %{http_code}\n" -u "$AID:$APW" -X PROPFIND -H "Depth: 0" https://caldav.icloud.com/; unset APW
+```
+
+4. Erst bei 207 ablegen: `jarvis secrets set apple_caldav`, dann `jarvis secrets status`.
+
+**Häufigste Fehler:**
+- **`@` im Terminal wird zu `^[l`:** Auf der deutschen Mac-Tastatur ist das `@` Option+L. Das
+  Terminal schickt dann eine Steuerfolge statt des Zeichens, die Apple-ID stimmt nicht, iCloud
+  antwortet 401. Lösung: die Adresse **einfügen** (Cmd+V) statt tippen, oder dauerhaft im
+  Terminal unter Einstellungen, Profile, Tastatur den Haken bei "Option-Taste als Meta-Taste
+  verwenden" entfernen.
+- **Termin nur auf einem Gerät:** Ein Warndreieck in der Kalender-Liste des iPhones (z. B.
+  "Accountinfos bestätigen") heißt, dass das Konto nicht synchronisiert. Dort das Konto bestätigen,
+  dann die Kalenderliste nach unten ziehen.
+- **Falscher Kalender:** Ohne Vorgabe schreibt JARVIS in den ersten iCloud-Kalender (oft
+  "Arbeit"). Festlegen in `jarvis.toml` unter `[mcp_servers.calendar]`:
+  `args = ["-m", "mcp_servers.calendar", "--kalender", "Privat"]`, dann `jarvis stop` und
+  `jstart`. Geteilte Kalender (z. B. "Familie") nicht als Ziel nehmen: andere sehen die Einträge.
+
 ## Wenn etwas hängt
 
 - Alles stoppen: `uv run jarvis stop` (im Ordner `core`).
