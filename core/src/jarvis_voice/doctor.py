@@ -49,7 +49,9 @@ def package_checks() -> list[Check]:
     return checks
 
 
-OPTIONAL_MODELS = frozenset({"speaker_titanet"})  # nur nötig, wenn die Funktion eingeschaltet ist
+# Nur nötig, wenn die Funktion genutzt wird: die Sprecherkennung, und die englische Stimme
+# (lädt erst, wenn Englisch gesprochen wird; die deutsche Stimme genügt sonst).
+OPTIONAL_MODELS = frozenset({"speaker_titanet", "piper_en"})
 
 
 def model_checks(models_dir: Path, deep: bool = False) -> list[Check]:
