@@ -174,8 +174,9 @@ def test_wake_detector_buffers_frames_into_80ms_chunks(monkeypatch: pytest.Monke
 
     class FakeModel:
         def __init__(self, **kwargs: Any) -> None:
-            assert kwargs["inference_framework"] == "onnx"
-            assert kwargs["wakeword_models"] == ["w.onnx"]
+            assert kwargs["wakeword_model_paths"] == ["w.onnx"]
+            assert kwargs["melspec_onnx_model_path"] == "m.onnx"
+            assert kwargs["embedding_onnx_model_path"] == "e.onnx"
 
         def predict(self, chunk: Any) -> dict[str, float]:
             calls.append(len(chunk))

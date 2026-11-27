@@ -15,9 +15,10 @@ class OpenWakeWordDetector:
     ) -> None:
         self._np = need("numpy", "Signalverarbeitung")
         module = need("openwakeword.model", "Wake Word (nur Windows)")
+        # Schnittstelle von openwakeword 0.4.0 (uv.lock). Neuere Versionen nennen Argumente anders.
         self._model = module.Model(
-            wakeword_models=[str(wake)], inference_framework="onnx",
-            melspec_model_path=str(melspectrogram), embedding_model_path=str(embedding),
+            wakeword_model_paths=[str(wake)],
+            melspec_onnx_model_path=str(melspectrogram), embedding_onnx_model_path=str(embedding),
         )  # fmt: skip
         self.threshold = threshold
         self.last_score = 0.0
