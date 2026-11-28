@@ -509,5 +509,5 @@ async def test_source_falls_back_to_device_rate_and_resamples(
     )
     await asyncio.sleep(0.05)
     frame = await source._queue.get()  # pyright: ignore[reportPrivateUsage]  # noqa: SLF001
-    assert len(frame) == FRAME_SAMPLES * 2
+    assert frame is not None and len(frame) == FRAME_SAMPLES * 2
     source.close()
