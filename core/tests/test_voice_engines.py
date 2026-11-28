@@ -472,3 +472,42 @@ def test_piper_reports_a_missing_voice_file_in_german(tmp_path: Path) -> None:
     tts = PiperTts({"de": tmp_path / "gibt-es-nicht.onnx"})
     with pytest.raises(ModelError, match="jarvis voice setup"):
         tts.warm_up("de")
+
+
+async def test_source_falls_back_to_device_rate_and_resamples(
+    fake_sd: FakeSd, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Gerät nimmt 16 kHz nicht an (Windows WDM-KS): Öffnen mit 48 kHz, Frames auf 16 kHz umrechnen."""
+
+    class DeviceRejected(Exception):
+        pass
+
+    real_query = fake_sd.query_devices
+    real_stream = fake_sd.RawInputStream
+    monkeypatch.setattr(fake_sd, "PortAudioError", DeviceRejected, raising=False)
+
+    def query(*args: Any, **kwargs: Any) -> Any:
+        if args:  # query_devices(index, "input"): Infos eines Geräts
+            return {"default_samplerate": 48_000.0}
+        return real_query(*args, **kwargs)
+
+    def stream(**kwargs: Any) -> FakeStream:
+        if kwargs["samplerate"] == 16_000:
+            raise DeviceRejected("Invalid device")
+        return real_stream(**kwargs)
+
+    monkeypatch.setattr(fake_sd, "query_devices", query)
+    monkeypatch.setattr(fake_sd, "RawInputStream", stream)
+    source = SoundDeviceSource("Mikrofon")
+    await source.open()
+    opened = fake_sd.inputs[0]
+    assert opened.kwargs["samplerate"] == 48_000
+    assert opened.kwargs["blocksize"] == FRAME_SAMPLES * 3
+    # 1536 Samples bei 48 kHz werden zu 512 Samples bei 16 kHz
+    opened.kwargs["callback"](
+        np.zeros(FRAME_SAMPLES * 3, dtype=np.int16).tobytes(), 1536, None, None
+    )
+    await asyncio.sleep(0.05)
+    frame = await source._queue.get()  # pyright: ignore[reportPrivateUsage]  # noqa: SLF001
+    assert len(frame) == FRAME_SAMPLES * 2
+    source.close()

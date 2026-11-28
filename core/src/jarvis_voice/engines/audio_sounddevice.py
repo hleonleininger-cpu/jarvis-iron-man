@@ -74,6 +74,14 @@ class _Converting:
         self._stream.write(out.astype(np.int16).reshape(-1, 1))
 
 
+def resample_pcm(np: Any, pcm: bytes, rate: int) -> bytes:
+    """int16-Mono von `rate` auf die Modellrate (SAMPLE_RATE) umrechnen."""
+    samples = np.frombuffer(pcm, dtype=np.int16).astype(np.float32)
+    count = max(1, int(len(samples) * SAMPLE_RATE / rate))
+    out = np.interp(np.linspace(0, len(samples) - 1, count), np.arange(len(samples)), samples)
+    return out.astype(np.int16).tobytes()
+
+
 class SoundDeviceSource:
     def __init__(self, device: str | None = None) -> None:
         self._sd = need("sounddevice", "Mikrofon und Lautsprecher")
@@ -93,16 +101,36 @@ class SoundDeviceSource:
         self._queue = asyncio.Queue()
         index = find_device(self._sd, self._device, "input")
 
-        def callback(indata: Any, frames: int, time: Any, status: Any) -> None:
-            del frames, time, status
-            loop = self._loop
-            if loop is not None:
-                loop.call_soon_threadsafe(self._put, bytes(indata))
+        np = need("numpy", "Signalverarbeitung")
 
-        self._stream = self._sd.RawInputStream(
-            samplerate=SAMPLE_RATE, channels=1, dtype="int16", blocksize=FRAME_SAMPLES,
-            device=index, callback=callback,
-        )  # fmt: skip
+        def make_callback(rate: int) -> Any:
+            def callback(indata: Any, frames: int, time: Any, status: Any) -> None:
+                del frames, time, status
+                loop = self._loop
+                if loop is not None:
+                    pcm = (
+                        bytes(indata)
+                        if rate == SAMPLE_RATE
+                        else resample_pcm(np, bytes(indata), rate)
+                    )
+                    loop.call_soon_threadsafe(self._put, pcm)
+
+            return callback
+
+        try:
+            self._stream = self._sd.RawInputStream(
+                samplerate=SAMPLE_RATE, channels=1, dtype="int16", blocksize=FRAME_SAMPLES,
+                device=index, callback=make_callback(SAMPLE_RATE),
+            )  # fmt: skip
+        except self._sd.PortAudioError:
+            # Manche Windows-Treiber (WDM-KS) nehmen 16 kHz nicht an: dann mit der eigenen Rate des
+            # Geräts öffnen und die Frames auf 16 kHz umrechnen.
+            rate = int(self._sd.query_devices(index, "input")["default_samplerate"])
+            self._stream = self._sd.RawInputStream(
+                samplerate=rate, channels=1, dtype="int16",
+                blocksize=FRAME_SAMPLES * rate // SAMPLE_RATE,
+                device=index, callback=make_callback(rate),
+            )  # fmt: skip
         self._stream.start()
 
     def _put(self, data: bytes) -> None:
