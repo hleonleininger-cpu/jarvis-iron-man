@@ -36,3 +36,19 @@ def test_parse_nvidia_smi() -> None:
 @pytest.mark.parametrize("raw", [None, "", "kaputt", "name, [N/A]"])
 def test_parse_nvidia_smi_unreadable(raw: str | None) -> None:
     assert parse_nvidia_smi(raw) is None
+
+
+def test_hardware_commands_run_without_a_console_window(monkeypatch: pytest.MonkeyPatch) -> None:
+    import subprocess
+
+    from jarvis_core.hardware import detect
+
+    seen: dict[str, object] = {}
+
+    def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        seen.update(kwargs)
+        return subprocess.CompletedProcess(cmd, 0, stdout="ok", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    assert detect._run(["egal"]) == "ok"  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
+    assert seen["creationflags"] == getattr(subprocess, "CREATE_NO_WINDOW", 0)

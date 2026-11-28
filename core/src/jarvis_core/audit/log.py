@@ -9,9 +9,12 @@ import hashlib
 import json
 import sqlite3
 import threading
+from collections.abc import Iterable
+from contextlib import closing
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 GENESIS_HASH = "0" * 64
 
@@ -62,12 +65,25 @@ def _compute_hash(
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+class AuditError(Exception):
+    """Audit-Log nicht nutzbar (beschädigt, gesperrt, nicht schreibbar). Ohne Audit kein Betrieb."""
+
+
 class AuditLog:
     def __init__(self, path: Path) -> None:
         self._path = path
         self._lock = threading.Lock()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with self._connect() as conn:
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            self._init_schema()
+        except (sqlite3.DatabaseError, OSError) as exc:
+            raise AuditError(
+                f"Das Audit-Log {path} ist nicht nutzbar ({exc}). Ohne Audit-Log arbeitet JARVIS "
+                "nicht; Datei prüfen oder umbenennen (dann wird ein neues angelegt)."
+            ) from None
+
+    def _init_schema(self) -> None:
+        with closing(self._connect()) as conn:  # `with conn` allein schließt nicht
             conn.execute(_SCHEMA)
             existing = {row[1] for row in conn.execute("PRAGMA table_info(audit)")}
             for column in _TOOL_COLUMNS:
@@ -131,29 +147,36 @@ class AuditLog:
         """Prüft die Kette von vorn; meldet die erste ungültige Zeile."""
         conn = self._connect()
         try:
-            rows = conn.execute(
-                "SELECT id, ts, channel, model, tokens, status, prev_hash, hash, "
-                "tool, risk, decision FROM audit ORDER BY id"
-            ).fetchall()
+            return self._verify_rows(
+                conn.execute(
+                    "SELECT id, ts, channel, model, tokens, status, prev_hash, hash, "
+                    "tool, risk, decision FROM audit ORDER BY id"
+                )
+            )
         finally:
             conn.close()
 
+    @staticmethod
+    def _verify_rows(rows: Iterable[tuple[Any, ...]]) -> VerifyResult:
+        """Zeile für Zeile, ohne das ganze Log in den Speicher zu laden."""
         expected_prev = GENESIS_HASH
-        expected_id = rows[0][0] if rows else 1
-        for count, row in enumerate(rows):
+        expected_id = 1
+        checked = 0
+        for row in rows:
             (row_id, ts, channel, model, tokens, status, prev_hash, row_hash) = row[:8]
             tool, risk, decision = row[8:]
-            if count == 0 and row_id != 1:
-                return VerifyResult(False, count, row_id, "Vorherige Einträge fehlen")
+            if checked == 0 and row_id != 1:
+                return VerifyResult(False, checked, row_id, "Vorherige Einträge fehlen")
             if row_id != expected_id:
-                return VerifyResult(False, count, row_id, "Lücke in der Zeilenfolge")
+                return VerifyResult(False, checked, row_id, "Lücke in der Zeilenfolge")
             if prev_hash != expected_prev:
-                return VerifyResult(False, count, row_id, "Verweis auf Vorgänger stimmt nicht")
+                return VerifyResult(False, checked, row_id, "Verweis auf Vorgänger stimmt nicht")
             if (
                 _compute_hash(prev_hash, ts, channel, model, tokens, status, tool, risk, decision)
                 != row_hash
             ):
-                return VerifyResult(False, count, row_id, "Inhalt passt nicht zum Hash")
+                return VerifyResult(False, checked, row_id, "Inhalt passt nicht zum Hash")
             expected_prev = row_hash
             expected_id = row_id + 1
-        return VerifyResult(True, len(rows))
+            checked += 1
+        return VerifyResult(True, checked)

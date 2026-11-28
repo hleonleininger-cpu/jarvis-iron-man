@@ -1,8 +1,10 @@
 """iCalendar (RFC 5545): nur die benötigten Felder lesen; VEVENT für neue Termine erzeugen."""
 
+import re
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from mcp_servers.calendar.timeutil import TZ
 
@@ -13,6 +15,13 @@ class Event:
     start: datetime | date
     end: datetime | date | None
     location: str | None = None
+    calendar: str | None = None  # Anzeigename des Kalenders, aus dem der Termin stammt
+    # True, wenn der Server eine Serie nicht in Einzeltermine aufgelöst hat (RRULE im Termin).
+    unexpanded: bool = False
+    # Kennung fürs Ändern/Löschen ("<Kalenderordner>/<Datei>.ics") und ob der Termin zu einer
+    # Serie gehört (RRULE oder RECURRENCE-ID): Serien werden nicht geändert (ADR-014).
+    event_id: str | None = None
+    recurring: bool = False
 
     @property
     def all_day(self) -> bool:
@@ -45,10 +54,11 @@ def _unescape(text: str) -> str:
 
 
 def _escape(text: str) -> str:
+    text = text.replace("\r\n", "\n").replace("\r", "\n")  # auch ein einzelnes \r ist ein Umbruch
     text = text.replace(_BACKSLASH, _BACKSLASH * 2)
     for char in (";", ","):
         text = text.replace(char, _BACKSLASH + char)
-    return text.replace("\r\n", "\n").replace("\n", _BACKSLASH + "n")
+    return text.replace("\n", _BACKSLASH + "n")
 
 
 def _to_value(value: str, params: dict[str, str]) -> datetime | date | None:
@@ -63,12 +73,57 @@ def _to_value(value: str, params: dict[str, str]) -> datetime | date | None:
             )  # fmt: skip
             if value.endswith("Z"):
                 return naive.replace(tzinfo=UTC).astimezone(TZ)
-            tzid = params.get("TZID")
-            zone = ZoneInfo(tzid) if tzid else TZ
-            return naive.replace(tzinfo=zone).astimezone(TZ)
-    except (ValueError, KeyError, OSError):
+            return naive.replace(tzinfo=_zone(params.get("TZID"))).astimezone(TZ)
+    except (ValueError, KeyError, OSError, OverflowError):  # Overflow: z. B. Jahr 9999 + Zeitzone
         return None
     return None
+
+
+# Windows-/Outlook-Zonennamen, die in iCloud-Kalendern vorkommen, auf IANA-Namen.
+_WINDOWS_ZONES = {
+    "w. europe standard time": "Europe/Berlin", "central europe standard time": "Europe/Budapest",
+    "romance standard time": "Europe/Paris", "central european standard time": "Europe/Warsaw",
+    "gmt standard time": "Europe/London", "greenwich standard time": "Atlantic/Reykjavik",
+    "e. europe standard time": "Europe/Chisinau", "fle standard time": "Europe/Kyiv",
+    "gtb standard time": "Europe/Bucharest", "russian standard time": "Europe/Moscow",
+    "turkey standard time": "Europe/Istanbul",
+    "pacific standard time": "America/Los_Angeles", "mountain standard time": "America/Denver",
+    "central standard time": "America/Chicago", "eastern standard time": "America/New_York",
+    "atlantic standard time": "America/Halifax", "utc": "UTC",
+    "india standard time": "Asia/Kolkata", "china standard time": "Asia/Shanghai",
+    "tokyo standard time": "Asia/Tokyo", "aus eastern standard time": "Australia/Sydney",
+}  # fmt: skip
+
+
+def _zone(tzid: str | None) -> ZoneInfo:
+    """Zeitzone eines TZID. Windows-Namen werden übersetzt; ganz unbekannte Namen gelten als
+    Europe/Berlin, statt den ganzen Termin zu verwerfen."""
+    if not tzid:
+        return TZ
+    tzid = _WINDOWS_ZONES.get(tzid.strip().lower(), tzid)
+    try:
+        return ZoneInfo(tzid)
+    except (ZoneInfoNotFoundError, ValueError, OSError):
+        return TZ
+
+
+_DURATION = re.compile(
+    r"^(?P<sign>[+-])?P(?:(?P<weeks>\d+)W)?(?:(?P<days>\d+)D)?"
+    r"(?:T(?:(?P<hours>\d+)H)?(?:(?P<minutes>\d+)M)?(?:(?P<seconds>\d+)S)?)?$"
+)
+
+
+def _duration(value: str) -> timedelta | None:
+    """ICS-DURATION (RFC 5545 §3.3.6), z. B. PT1H30M oder P1D; Unlesbares -> None."""
+    match = _DURATION.match(value.strip().upper())
+    if match is None or value.strip().upper() in ("P", "PT", "+P", "-P"):
+        return None
+    parts = {k: int(v) for k, v in match.groupdict().items() if v and k != "sign"}
+    try:
+        delta = timedelta(**parts)
+    except OverflowError:
+        return None
+    return -delta if match.group("sign") == "-" else delta
 
 
 def _split_key(raw_key: str) -> tuple[str, dict[str, str]]:
@@ -85,22 +140,41 @@ def parse_events(ics_blocks: list[str]) -> list[Event]:
     events: list[Event] = []
     for ics in ics_blocks:
         current: dict[str, object] | None = None
+        nested = 0  # Tiefe innerhalb von VALARM & Co.: deren SUMMARY/DTSTART gehören nicht dazu
         for line in _unfold(ics):
             if line == "BEGIN:VEVENT":
-                current = {}
+                current, nested = {}, 0
+                continue
+            if current is not None and line.startswith("BEGIN:"):
+                nested += 1
+                continue
+            if current is not None and nested and line.startswith("END:"):
+                nested -= 1
+                continue
+            if nested:
                 continue
             if line == "END:VEVENT":
-                if current and isinstance(current.get("start"), datetime | date):
+                cancelled = (
+                    str(current.get("status", "")).upper() == "CANCELLED" if current else False
+                )
+                start = current.get("start") if current else None
+                if current and not cancelled and isinstance(start, datetime | date):
                     summary = str(current.get("summary") or "").strip() or "Ohne Titel"
-                    start = current["start"]
-                    end = current.get("end")
+                    raw_end = current.get("end")
+                    end = raw_end if isinstance(raw_end, datetime | date) else None
+                    duration = current.get("duration")
+                    if end is None and isinstance(duration, timedelta) and duration >= timedelta():
+                        with suppress(OverflowError):  # Dauer über das Jahr 9999 hinaus
+                            end = start + duration
                     location = current.get("location")
                     events.append(
                         Event(
                             summary,
-                            start,  # pyright: ignore[reportArgumentType]
-                            end if isinstance(end, datetime | date) else None,
+                            start,
+                            end,
                             str(location) if location else None,
+                            unexpanded="rrule" in current,
+                            recurring="rrule" in current or "recurrence_id" in current,
                         )
                     )
                 current = None
@@ -113,10 +187,18 @@ def parse_events(ics_blocks: list[str]) -> list[Event]:
                 current["summary"] = _unescape(value)
             elif name == "LOCATION":
                 current["location"] = _unescape(value).strip()
+            elif name == "STATUS":
+                current["status"] = value.strip()
             elif name == "DTSTART":
                 current["start"] = _to_value(value, params)
             elif name == "DTEND":
                 current["end"] = _to_value(value, params)
+            elif name == "RRULE":
+                current["rrule"] = value
+            elif name == "RECURRENCE-ID":
+                current["recurrence_id"] = value
+            elif name == "DURATION":
+                current["duration"] = _duration(value)
     return events
 
 
@@ -179,3 +261,76 @@ def build_vevent(
 
 def default_end(start: datetime | date) -> datetime | date:
     return start + timedelta(hours=1) if isinstance(start, datetime) else start + timedelta(days=1)
+
+
+# Felder, die modify_vevent ersetzt; alle anderen Zeilen (UID, VALARM, Teilnehmer ...) bleiben.
+_REPLACED = {"SUMMARY", "DTSTART", "DTEND", "DURATION", "LOCATION", "DESCRIPTION", "DTSTAMP",
+             "LAST-MODIFIED", "SEQUENCE"}  # fmt: skip
+_TIME_FIELDS = {"DTSTART", "DTEND", "DURATION"}
+
+
+def _date_lines(start: datetime | date, end: datetime | date) -> list[str]:
+    if isinstance(start, datetime) and isinstance(end, datetime):
+        return [f"DTSTART:{_utc(start)}", f"DTEND:{_utc(end)}"]
+    return [f"DTSTART;VALUE=DATE:{start:%Y%m%d}", f"DTEND;VALUE=DATE:{end:%Y%m%d}"]
+
+
+def modify_vevent(
+    ics: str,
+    title: str,
+    times: tuple[datetime | date, datetime | date] | None,
+    location: str | None,
+    note: str | None,
+    now: datetime,
+) -> str:
+    """Ändert genau einen (nicht wiederkehrenden) VEVENT; alles Übrige bleibt erhalten.
+
+    Ersetzt den Titel, setzt DTSTAMP/LAST-MODIFIED neu und zählt SEQUENCE hoch. `times` (Start,
+    Ende): None = Zeiten samt Zeitzone unangetastet lassen. Ort und Notiz: None = unverändert
+    lassen, "" = entfernen, sonst ersetzen. Serien (RRULE, RECURRENCE-ID) oder mehrere VEVENTs
+    lehnt sie ab.
+    """
+    replaced = set(_REPLACED)
+    if times is None:
+        replaced -= _TIME_FIELDS
+    if location is None:
+        replaced.discard("LOCATION")
+    if note is None:
+        replaced.discard("DESCRIPTION")
+    lines = _unfold(ics)
+    starts = [i for i, line in enumerate(lines) if line == "BEGIN:VEVENT"]
+    if len(starts) != 1:
+        raise ValueError("Die Termindatei enthält mehrere Termine (Serie); nicht änderbar.")
+    begin = starts[0]
+    finish = lines.index("END:VEVENT", begin)
+    sequence = 0
+    kept: list[str] = []
+    nested = 0
+    for line in lines[begin + 1 : finish]:
+        if line.startswith("BEGIN:"):
+            nested += 1
+        elif line.startswith("END:") and nested:
+            nested -= 1
+        name = _split_key(line.partition(":")[0])[0] if ":" in line else ""
+        if not nested and name in ("RRULE", "RECURRENCE-ID", "RDATE", "EXDATE"):
+            raise ValueError("Serientermine können nicht geändert werden.")
+        if not nested and name == "SEQUENCE":
+            with suppress(ValueError):
+                sequence = int(line.partition(":")[2].strip())
+        if nested or name not in replaced:
+            kept.append(line)
+    stamp = _utc(now)
+    fresh = [
+        f"DTSTAMP:{stamp}",
+        f"LAST-MODIFIED:{stamp}",
+        f"SEQUENCE:{sequence + 1}",
+        *(_date_lines(*times) if times else []),
+        f"SUMMARY:{_escape(title)}",
+        *([f"LOCATION:{_escape(location)}"] if location else []),
+        *([f"DESCRIPTION:{_escape(note)}"] if note else []),
+    ]
+    # Neue Felder vor eingebetteten Komponenten (VALARM), damit die Datei übersichtlich bleibt.
+    split = next((i for i, line in enumerate(kept) if line.startswith("BEGIN:")), len(kept))
+    body = [*lines[: begin + 1], *kept[:split], *fresh, *kept[split:], *lines[finish:]]
+    folded = [part for line in body if line for part in _fold(line)]
+    return "\r\n".join(folded) + "\r\n"

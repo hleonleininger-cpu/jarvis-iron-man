@@ -1,0 +1,330 @@
+"""Live-Kacheln fürs HUD (M3.6): Umformung, Abruf über den Hub, Zwischenspeicher, Sperre, Not-Aus."""
+
+import asyncio
+import sqlite3
+from datetime import datetime
+from pathlib import Path
+
+import pytest
+from fastapi.testclient import TestClient
+from pydantic_ai.models.test import TestModel
+
+from jarvis_core.agent import build_service
+from jarvis_core.agent.tiles import (
+    MAX_EVENTS,
+    TOOL_SECONDS,
+    TZ,
+    TileService,
+    events_tile,
+    system_tile,
+    tasks_tile,
+)
+from jarvis_core.api import create_app
+from jarvis_core.audit import AuditLog
+from jarvis_core.config import Settings
+from jarvis_core.evals.runner import eval_servers
+from mcp_servers.notes.store import NoteStore
+
+NOW = datetime(2026, 11, 21, 15, 0, tzinfo=TZ)
+
+
+# ---------------------------------------------------------------------------- Umformung
+def test_events_tile_keeps_running_and_upcoming_events_in_order() -> None:
+    data = {
+        "ok": True,
+        "termine": [
+            {
+                "titel": "Später",
+                "start": "2026-11-22T09:00:00+01:00",
+                "ende": "2026-11-22T10:00:00+01:00",
+            },
+            {
+                "titel": "Vorbei",
+                "start": "2026-11-21T08:00:00+01:00",
+                "ende": "2026-11-21T09:00:00+01:00",
+            },
+            {
+                "titel": "Läuft gerade",
+                "start": "2026-11-21T14:30:00+01:00",
+                "ende": "2026-11-21T16:00:00+01:00",
+            },
+            {
+                "titel": "Heute ganztägig",
+                "start": "2026-11-21",
+                "ende": "2026-11-21",
+                "ganztaegig": True,
+            },
+            {"titel": "x" * 200, "start": "2026-11-23T09:00:00+01:00"},
+            {"titel": "kaputt", "start": "gestern"},
+        ],
+    }
+    tile = events_tile(data, NOW)
+    titles = [entry["titel"] for entry in tile["eintraege"]]
+    assert titles == ["Läuft gerade", "Heute ganztägig", "Später"]  # mit Uhrzeit vor ganztägig
+    assert len(tile["eintraege"]) == MAX_EVENTS
+    assert events_tile({"ok": False, "fehler": "iCloud weg"}, NOW)["ok"] is False
+    assert events_tile("Unsinn", NOW)["ok"] is False
+
+
+def test_tasks_tile_shortens_and_limits() -> None:
+    data = {
+        "ok": True,
+        "anzahl": 7,
+        "eintraege": [
+            {"id": i, "text": "A" * 100, "faellig": "2026-11-20", "ueberfaellig": True}
+            for i in range(7)
+        ]
+        + [{"id": 9, "text": "WLAN-Passwort Gast: geheim"}],  # Merkzettel: nie auf den Bildschirm
+    }
+    tile = tasks_tile(data)
+    assert tile["anzahl"] == 7 and len(tile["eintraege"]) == 5
+    assert "WLAN" not in repr(tile)
+    assert len(tile["eintraege"][0]["text"]) == 80 and tile["eintraege"][0]["ueberfaellig"] is True
+    assert "id" not in tile["eintraege"][0]
+    assert tasks_tile(None)["ok"] is False
+
+
+def test_system_tile_has_only_numbers() -> None:
+    tile = system_tile()
+    assert tile["ok"] is True and 0 <= tile["cpu"] <= 100 and 0 <= tile["ram"] <= 100
+    assert tile["akku"] is None or set(tile["akku"]) == {"prozent", "laedt"}
+
+
+# ------------------------------------------------------------------------- über den Hub
+def _settings(tmp_path: Path) -> Settings:
+    notes = tmp_path / "notizen.sqlite3"
+    store = NoteStore(notes)
+    store.add("Steuererklärung abgeben", NOW.date())
+    store.add("Gast-WLAN: geheim", None)  # Merkzettel ohne Fälligkeit
+    servers = eval_servers(tmp_path / "writes.log", notes)
+    keep = {name: servers[name] for name in ("calendar", "notes")}
+    return Settings(data_dir=tmp_path / "data", mcp_servers=keep)
+
+
+def _audit_rows(settings: Settings) -> list[tuple[str, str, str]]:
+    with sqlite3.connect(settings.audit_db_path) as conn:
+        return conn.execute("SELECT channel, tool, status FROM audit ORDER BY id").fetchall()
+
+
+def test_tiles_endpoint_reads_calendar_and_tasks_once_per_interval(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    client = TestClient(create_app(settings, TestModel(), "t"), base_url="http://127.0.0.1")
+    first = client.get("/v1/tiles").json()
+    assert first["aktuell"] is True and first["system"]["ok"] is True
+    assert first["termine"]["ok"] is True and isinstance(first["termine"]["eintraege"], list)
+    assert [t["text"] for t in first["missionen"]["eintraege"]] == ["Steuererklärung abgeben"]
+    assert first["fokus"] == {"ok": False, "grund": "Noch kein aktives Projekt festgelegt."}
+    rows = _audit_rows(settings)
+    assert rows == [("hud", "list_events", "ok"), ("hud", "list_notes", "ok")]  # ohne Inhalte
+    second = client.get("/v1/tiles").json()  # innerhalb von fünf Minuten: aus dem Speicher
+    assert second["missionen"] == first["missionen"] and _audit_rows(settings) == rows
+
+
+def test_tiles_without_sources_say_so(tmp_path: Path) -> None:
+    settings = Settings(data_dir=tmp_path / "data", mcp_servers={})
+    tiles = (
+        TestClient(create_app(settings, TestModel(), "t"), base_url="http://127.0.0.1")
+        .get("/v1/tiles")
+        .json()
+    )
+    assert tiles["termine"] == {"ok": False, "grund": "Kein Kalender eingerichtet."}
+    assert tiles["missionen"] == {"ok": False, "grund": "Keine Aufgabenliste eingerichtet."}
+
+
+def test_tiles_need_the_token(tmp_path: Path) -> None:
+    settings = Settings(data_dir=tmp_path / "data", mcp_servers={}, require_api_token=True)
+    client = TestClient(
+        create_app(settings, TestModel(), "t", api_token="geheim"), base_url="http://127.0.0.1"
+    )
+    assert client.get("/v1/tiles").status_code == 401
+
+
+# ------------------------------------------------------------ Sperre, Not-Aus, Zeitraster
+@pytest.mark.anyio
+async def test_busy_core_returns_the_old_state_without_waiting(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    service = build_service(settings, AuditLog(settings.audit_db_path), TestModel(), "t")
+    clock = [0.0]
+    tiles = TileService(service, clock=lambda: clock[0], now=lambda: NOW)
+    loaded = await tiles.tiles()
+    assert loaded["missionen"]["ok"] is True
+    clock[0] += TOOL_SECONDS + 1  # fällig, aber eine Anfrage läuft
+    async with service._run_lock:  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
+        stale = await asyncio.wait_for(tiles.tiles(), 2)
+    assert stale["aktuell"] is False and stale["missionen"] == loaded["missionen"]
+    assert stale["stand"] == loaded["stand"]
+
+
+@pytest.mark.anyio
+async def test_emergency_stop_cancels_a_tile_refresh(tmp_path: Path) -> None:
+    service = build_service(
+        Settings(data_dir=tmp_path / "d", mcp_servers={}),
+        AuditLog(tmp_path / "a.sqlite3"),
+        TestModel(),
+        "t",
+    )
+    entered = asyncio.Event()
+
+    async def hold() -> None:
+        async with service.idle_turn() as free:
+            assert free
+            entered.set()
+            await asyncio.sleep(30)
+
+    task = asyncio.create_task(hold())
+    await entered.wait()
+    assert service.emergency_stop("hud") == 1
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    async with service.idle_turn() as free:  # die Sperre ist wieder frei
+        assert free
+
+
+def test_events_without_end_count_as_running_for_an_hour() -> None:
+    data = {"ok": True, "termine": [{"titel": "Anruf", "start": "2026-11-21T14:30:00+01:00"}]}
+    assert events_tile(data, NOW)["eintraege"][0]["titel"] == "Anruf"
+
+
+def test_system_tile_survives_a_broken_sensor(monkeypatch: pytest.MonkeyPatch) -> None:
+    import psutil
+
+    def broken() -> None:
+        raise OSError("Sensor kaputt")
+
+    monkeypatch.setattr(psutil, "sensors_battery", broken)
+    assert system_tile() == {"ok": False, "grund": "Systemwerte nicht lesbar."}
+
+
+@pytest.mark.anyio
+async def test_a_request_takes_priority_over_a_tile_refresh(tmp_path: Path) -> None:
+    """Eine echte Anfrage bricht den Kachel-Abruf ab und bekommt keinen Hinweis "beschäftigt"."""
+    from jarvis_core.agent import Notice
+
+    service = build_service(
+        Settings(data_dir=tmp_path / "d", mcp_servers={}),
+        AuditLog(tmp_path / "a.sqlite3"),
+        TestModel(),
+        "t",
+    )
+    entered = asyncio.Event()
+
+    async def hold() -> None:
+        async with service.idle_turn() as free:
+            assert free
+            entered.set()
+            await asyncio.sleep(30)
+
+    refresh = asyncio.create_task(hold())
+    await entered.wait()
+    events = [event async for event in service.stream("Wie spät ist es?", channel="voice")]
+    assert refresh.done()
+    assert not any(isinstance(e, Notice) for e in events)
+
+
+@pytest.mark.anyio
+async def test_cached_tiles_come_at_once_while_reloading_in_the_background(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    service = build_service(settings, AuditLog(settings.audit_db_path), TestModel(), "t")
+    clock = [0.0]
+    tiles = TileService(service, clock=lambda: clock[0], now=lambda: NOW)
+    first = await tiles.tiles()
+    clock[0] += TOOL_SECONDS + 1
+    gate = asyncio.Event()
+
+    async def hanging(*_args: object, **_kwargs: object) -> object:
+        await gate.wait()
+        return None
+
+    service.hub.read_tool = hanging  # pyright: ignore[reportAttributeAccessIssue]
+    try:
+        cached = await asyncio.wait_for(tiles.tiles(), 2)  # wartet nicht auf das Neuladen
+        assert cached["missionen"] == first["missionen"] and cached["aktuell"] is False
+    finally:
+        gate.set()
+        await asyncio.wait_for(tiles.settle(), 20)  # Server des Nachladens sauber beenden
+
+
+@pytest.mark.anyio
+async def test_hanging_tool_is_stopped_after_the_limit_and_audited_as_timeout(
+    tmp_path: Path,
+) -> None:
+    from jarvis_core.config.settings import McpServerConfig
+    from jarvis_core.mcp_hub import McpHub
+    from jarvis_core.policy import RiskClass
+
+    fake = str(Path(__file__).parent / "fake_mcp_server.py")
+    cfg = McpServerConfig(
+        command="python",
+        args=[fake, str(tmp_path / "w.log")],
+        tools={"get_weather": RiskClass.READ},
+    )
+    audit = AuditLog(tmp_path / "a.sqlite3")
+    hub = McpHub({"fake": cfg}, audit, "m")
+    async with hub:
+        assert await hub.read_tool("get_weather", {"ort": "Berlin"}, limit_seconds=1e-6) is None
+    with sqlite3.connect(tmp_path / "a.sqlite3") as conn:
+        rows = conn.execute("SELECT tool, status FROM audit").fetchall()
+    assert rows == [("get_weather", "timeout")]
+
+
+@pytest.mark.anyio
+async def test_second_request_during_teardown_gets_the_normal_busy_path(tmp_path: Path) -> None:
+    """Bricht Anfrage A einen Kachel-Abruf ab, sieht Anfrage B danach die normale Lage: Hinweis
+    "beschäftigt" statt still zu warten, und die Grenze für Wartende gilt."""
+    from jarvis_core.agent import Notice
+
+    service = build_service(
+        Settings(data_dir=tmp_path / "d", mcp_servers={}),
+        AuditLog(tmp_path / "a.sqlite3"),
+        TestModel(),
+        "t",
+    )
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def hold() -> None:
+        async with service.idle_turn() as free:
+            assert free
+            entered.set()
+            try:
+                await asyncio.sleep(30)
+            finally:
+                await release.wait()  # langsamer Abbau (Server beenden)
+
+    refresh = asyncio.create_task(hold())
+    await entered.wait()
+    first = service.stream("eins", channel="api")
+    second = service.stream("zwei", channel="api")
+    first_task = asyncio.create_task(anext(first))
+    await asyncio.sleep(0.05)  # A hat den Abruf abgebrochen, der Abbau läuft noch
+    second_event = await asyncio.wait_for(anext(second), 2)
+    assert isinstance(second_event, Notice)  # B wartet nicht still
+    release.set()
+    await first_task
+    async for _ in first:
+        pass
+    async for _ in second:
+        pass
+    with pytest.raises(asyncio.CancelledError):  # der Kachel-Abruf wurde abgebrochen
+        await refresh
+
+
+@pytest.mark.anyio
+async def test_a_failed_read_keeps_the_last_good_tile(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    service = build_service(settings, AuditLog(settings.audit_db_path), TestModel(), "t")
+    clock = [0.0]
+    tiles = TileService(service, clock=lambda: clock[0], now=lambda: NOW)
+    good = await tiles.tiles()
+    clock[0] += TOOL_SECONDS + 1
+
+    async def timed_out(*_args: object, **_kwargs: object) -> None:
+        return None  # wie nach einer Zeitüberschreitung
+
+    service.hub.read_tool = timed_out  # pyright: ignore[reportAttributeAccessIssue]
+    await tiles.tiles()
+    await asyncio.wait_for(tiles.settle(), 20)
+    again = await tiles.tiles()
+    assert again["missionen"] == good["missionen"] and again["termine"] == good["termine"]

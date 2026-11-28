@@ -1,7 +1,10 @@
 """Konfiguration: jarvis.toml + Umgebungsvariablen (Präfix JARVIS_)."""
 
+import ipaddress
+import os
 from pathlib import Path
-from typing import Self
+from typing import Literal, Self
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from pydantic_settings import (
@@ -14,7 +17,36 @@ from pydantic_settings import (
 from jarvis_core.policy import RiskClass
 
 # Wildcard-Adressen würden den Server in jedem Netz erreichbar machen (ADR-003).
+# Pfad der Konfigurationsdatei; ohne Angabe `jarvis.toml` im aktuellen Ordner.
+CONFIG_ENV = "JARVIS_CONFIG"
+DEFAULT_CONFIG_FILE = "jarvis.toml"
+
+
+def config_path() -> Path:
+    return Path(os.environ.get(CONFIG_ENV) or DEFAULT_CONFIG_FILE)
+
+
 FORBIDDEN_HOSTS = frozenset({"0.0.0.0", "::", "[::]", "*", ""})  # noqa: S104
+
+
+LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
+
+
+# Namen, die nur im eigenen Netz bzw. Tailnet auflösen.
+PRIVATE_SUFFIXES = (".local", ".lan", ".home.arpa", ".internal", ".ts.net")
+TAILNET = ipaddress.ip_network("100.64.0.0/10")
+
+
+def is_private_host(host: str) -> bool:
+    """localhost, private/Loopback-/Tailnet-Adressen oder Rechnernamen ohne öffentliche Domain."""
+    name = host.strip("[]").lower().rstrip(".")
+    if not name:
+        return False
+    try:
+        ip = ipaddress.ip_address(name)
+    except ValueError:
+        return name == "localhost" or "." not in name or name.endswith(PRIVATE_SUFFIXES)
+    return ip.is_loopback or ip.is_private or ip in TAILNET
 
 
 class McpServerConfig(BaseModel):
@@ -34,9 +66,21 @@ class McpServerConfig(BaseModel):
     # Optional: CONFIRM-Werkzeug -> Vorschau-Werkzeug desselben Servers (schreibt nichts). Das
     # Vorschau-Werkzeug steht nicht in `tools` und wird dem Modell nie angeboten.
     previews: dict[str, str] = {}
+    # Optional: internes Werkzeug, das fällige Erinnerungen abholt (ADR-013). Der Core ruft es
+    # selbst auf; dem Modell wird es nie angeboten.
+    reminders: str | None = None
+
+    @property
+    def internal_tools(self) -> list[str]:
+        """Werkzeuge, die nur der Core aufruft (Vorschau, Erinnerungen)."""
+        return [*self.previews.values(), *([self.reminders] if self.reminders else [])]
 
     @model_validator(mode="after")
     def _previews_belong_to_tools(self) -> "McpServerConfig":
+        if self.reminders and self.reminders in self.tools:
+            raise ValueError(
+                f"reminders: '{self.reminders}' darf nicht selbst als Werkzeug angeboten werden"
+            )
         for tool, preview in self.previews.items():
             if tool not in self.tools:
                 raise ValueError(f"previews: '{tool}' ist nicht in tools deklariert")
@@ -45,6 +89,135 @@ class McpServerConfig(BaseModel):
                     f"previews: '{preview}' darf nicht selbst als Werkzeug angeboten werden"
                 )
         return self
+
+
+class CloudConfig(BaseModel):
+    """Abschnitt `[cloud]` in jarvis.toml. Ohne Anbieter bleibt die Stufe unbenutzbar."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    provider: str | None = Field(default=None, max_length=40)  # nur Anzeigename
+    model: str | None = Field(default=None, max_length=80)
+    # OpenAI-kompatible Schnittstelle des Anbieters; nur verschlüsselt (https).
+    base_url: str | None = None
+
+    @field_validator("base_url")
+    @classmethod
+    def _https_only(cls, value: str | None) -> str | None:
+        if value is not None and not value.startswith("https://"):
+            raise ValueError("cloud.base_url muss mit https:// beginnen.")
+        return value.rstrip("/") if value else value
+
+    @property
+    def usable(self) -> bool:
+        """Eingeschaltet UND vollständig eingerichtet."""
+        return self.enabled and bool(self.provider and self.model and self.base_url)
+
+
+class VoiceConfig(BaseModel):
+    """Abschnitt `[voice]` in jarvis.toml (M2, ADR-023). Der Sprachclient ist standardmäßig aus."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    # Adresse des Cores; wie ollama_base_url nur eigener Rechner, Heimnetz oder Tailnet.
+    core_url: str = "http://127.0.0.1:8765"
+    language: Literal["auto", "de", "en"] = "auto"
+    # Sprechpausen: so lange Stille beendet einen Satz (nur der Platzhalter-Erkenner; M2.4).
+    end_silence_seconds: float = Field(default=0.8, ge=0.2, le=3.0)
+    listen_timeout_seconds: float = Field(default=6.0, ge=1.0, le=30.0)
+    max_utterance_seconds: float = Field(default=30.0, ge=5.0, le=120.0)
+    # Folgefragen ohne Wake Word: so lange bleibt das Mikrofon nach der Antwort offen.
+    follow_up_seconds: float = Field(default=8.0, ge=0.0, le=60.0)
+    # Unterbrechen: "off" gar nicht, "key" nur per Tastenkürzel, "voice" per Stimme (Kopfhörer).
+    barge_in: Literal["off", "key", "voice"] = "key"
+    # Per Stimme bestätigen (nur WRITE_REVERSIBLE, nur mit Sprecherprüfung; ADR-023).
+    confirm_by_voice: bool = False
+    # Globale Tastenkürzel (pynput-Schreibweise). Leer = ausgeschaltet.
+    hotkey_listen: str = (
+        "<ctrl>+<alt>+j"  # sofort zuhören (wie das Wake Word), weckt aus dem Schlaf
+    )
+    # Mikrofon ganz schließen / wieder öffnen. Nicht Strg+Alt+M: das ist AltGr+M ("µ").
+    hotkey_mute: str = "<ctrl>+<alt>+s"
+    hotkey_interrupt: str = "<ctrl>+<alt>+x"  # Sprechen und laufende Anfrage beenden
+    hotkey_dictation: str = "<ctrl>+<alt>+d"  # Diktiermodus an/aus
+    # Doppelklatschen als Start (aus, weil es auch auf Geräusche anspricht); Schwelle 0 bis 1.
+    clap_wake: bool = False
+    clap_threshold: float = Field(default=0.3, ge=0.05, le=0.95)
+    # Wake Word mitten im Satz (M2.10): so viele Sekunden Audio vor dem Wake Word bleiben NUR im
+    # Arbeitsspeicher und gehen mit in die Erkennung. 0 = aus (es wird dann nichts vorgehalten).
+    pre_roll_seconds: float = Field(default=0.0, ge=0.0, le=15.0)
+    # Sprecherprüfung (M2.9): nur Masters Stimme zählt. Braucht `jarvis voice anlernen`.
+    speaker_check: bool = False
+    speaker_threshold: float = Field(default=0.5, ge=0.1, le=0.95)
+    # Diktiermodus (M2.12): endet nach so vielen Sekunden Stille von selbst.
+    dictation_idle_seconds: float = Field(default=60.0, ge=5.0, le=600.0)
+    # Geräte (Name oder Teil davon); None = Standardgerät.
+    mic_device: str | None = None
+    speaker_device: str | None = None
+    models_dir: Path = Path("voice")
+    stt_model: str = "base"
+    # Spracherkennung auf "cpu" oder der NVIDIA-Grafikkarte ("cuda", braucht CUDA 12 und cuDNN 9).
+    stt_device: Literal["cpu", "cuda"] = "cpu"
+    # Ab diesem Wert (0 bis 1) gilt das Wake Word als erkannt; niedriger = empfindlicher.
+    wake_threshold: float = Field(default=0.5, ge=0.05, le=0.99)
+    tts_voice_de: str = "de_DE-thorsten-medium"
+    tts_voice_en: str = "en_GB-northern_english_male-medium"
+
+    @field_validator("hotkey_listen", "hotkey_mute", "hotkey_interrupt", "hotkey_dictation")
+    @classmethod
+    def _hotkey_format(cls, value: str) -> str:
+        import re
+
+        pattern = (
+            r"(<(ctrl|alt|shift|cmd|alt_gr)>\+)+"
+            r"([a-z0-9]|<f([1-9]|1[0-9]|2[0-4])>|<(space|home|end|insert|delete|page_up|page_down)>)"
+        )
+        if value and not (
+            re.fullmatch(pattern, value) and any(m in value for m in ("ctrl", "alt", "cmd"))
+        ):
+            raise ValueError(
+                "Tastenkürzel wie <ctrl>+<alt>+j, mit Strg, Alt oder Cmd (oder leer lassen)."
+            )
+        plain = "<ctrl>" in value and "<alt>" in value and "<shift>" not in value
+        if plain and value.rsplit("+", 1)[-1] in "qem237890":
+            raise ValueError(
+                f"{value} ist auf deutscher Tastatur ein AltGr-Zeichen (z. B. @, €, µ) und "
+                "würde beim Tippen auslösen. Bitte eine andere Taste wählen."
+            )
+        return value
+
+    @model_validator(mode="after")
+    def _hotkeys_are_distinct(self) -> "VoiceConfig":
+        used = [
+            k
+            for k in (
+                self.hotkey_listen,
+                self.hotkey_mute,
+                self.hotkey_interrupt,
+                self.hotkey_dictation,
+            )
+            if k
+        ]
+        if len(used) != len(set(used)):
+            raise ValueError("Jedes Tastenkürzel darf nur einmal vergeben sein.")
+        return self
+
+    @field_validator("core_url")
+    @classmethod
+    def _local_core(cls, value: str) -> str:
+        if not value.startswith(("http://", "https://")):
+            raise ValueError("voice.core_url muss mit http:// oder https:// beginnen.")
+        if not is_private_host(urlsplit(value).hostname or ""):
+            raise ValueError(
+                "voice.core_url muss auf diesen Rechner, das Heimnetz oder das Tailnet zeigen."
+            )
+        return value.rstrip("/")
+
+
+class ConfigFileMissing(Exception):
+    """Die über JARVIS_CONFIG genannte Datei fehlt (deutsche Meldung)."""
 
 
 class Settings(BaseSettings):
@@ -58,9 +231,40 @@ class Settings(BaseSettings):
     port: int = Field(default=8765, ge=1, le=65535)
     ollama_base_url: str = "http://127.0.0.1:11434/v1"
     model: str | None = None
+    # Zwei Modelle (M1.1): kurze Fragen ohne Werkzeugbedarf gehen an `model_fast`, alles andere an
+    # `model_strong` (Alias für `model`). Ohne `model_fast` gibt es keinen Router.
+    model_fast: str | None = None
+    model_strong: str | None = None
+    # Nachdenken (Thinking) von Modellen wie qwen3.5: aus, damit Antworten in Sekunden statt Minuten
+    # kommen. Auf schnellerer Hardware einschaltbar (bessere Antworten bei schweren Aufgaben).
+    model_thinking: bool = False
+    # Sub-Agenten (M1.2): so viele laufen zugleich. 1 = nacheinander (ein lokales Modell).
+    subagent_parallel: int = Field(default=1, ge=1, le=4)
+    router_tool_match: float = Field(default=0.6, gt=0.0, le=1.0)
     data_dir: Path = Path("data")
     log_level: str = "INFO"
+    # Gesprächsverlauf je Sitzung (nur im Arbeitsspeicher, ADR-009). 0 Runden = kein Verlauf.
+    history_max_turns: int = Field(default=10, ge=0, le=100)
+    history_max_chars: int = Field(default=16_000, ge=1_000, le=200_000)
+    # Kontextfenster des Modells in Tokens. Ollama nutzt über die OpenAI-Schnittstelle seinen
+    # Server-Standard (4096, außer OLLAMA_CONTEXT_LENGTH ist gesetzt) und kürzt längere Prompts
+    # still von vorn, also zuerst die Systemanweisung. Der Verlauf wird daran angepasst.
+    context_tokens: int = Field(default=4096, ge=2048, le=1_048_576)
     mcp_servers: dict[str, McpServerConfig] = {}
+    # Werkzeugauswahl (M1.4): so viele der passendsten Werkzeuge bekommt das Modell je Anfrage.
+    # 0 = alle anbieten. Braucht das Embedding-Modell von Ollama; ohne es werden alle angeboten.
+    tool_select_limit: int = Field(default=0, ge=0, le=100)
+    embed_model: str = Field(default="nomic-embed-text", min_length=1, max_length=80)
+    # Wohnort für Fragen ohne Ortsangabe (z. B. "Wie ist das Wetter?"), etwa "Dortmund".
+    home_location: str | None = Field(default=None, max_length=80)
+    # Wie JARVIS den Nutzer anspricht (Masterauftrag: "Master").
+    anrede: str = Field(default="Master", min_length=1, max_length=40)
+    # Cloud-Stufe (M1.6, ADR-021): ein abgeschaltetes Gerüst, standardmäßig aus und ohne Anbieter.
+    cloud: CloudConfig = CloudConfig()
+    # Sprachclient (M2, ADR-023): standardmäßig aus.
+    voice: VoiceConfig = VoiceConfig()
+    # Zugangstoken für /v1/* (ADR-011). None = automatisch: Pflicht, sobald host nicht lokal ist.
+    require_api_token: bool | None = None
 
     @field_validator("host")
     @classmethod
@@ -72,12 +276,40 @@ class Settings(BaseSettings):
             )
         return value.strip()
 
+    @field_validator("log_level")
+    @classmethod
+    def _known_log_level(cls, value: str) -> str:
+        level = value.strip().upper()
+        if level not in LOG_LEVELS:
+            raise ValueError(f"log_level muss eines von {', '.join(LOG_LEVELS)} sein.")
+        return level
+
     @field_validator("ollama_base_url")
     @classmethod
     def _require_http_url(cls, value: str) -> str:
         if not value.startswith(("http://", "https://")):
             raise ValueError("ollama_base_url muss mit http:// oder https:// beginnen.")
+        if not is_private_host(urlsplit(value).hostname or ""):
+            # Gesprächsinhalte verlassen nie das eigene Netz: keine Cloud-Modelle (ADR-003).
+            raise ValueError(
+                "ollama_base_url muss auf diesen Rechner, das Heimnetz oder das Tailnet zeigen "
+                "(keine Cloud-Modelle)."
+            )
         return value.rstrip("/")
+
+    @model_validator(mode="after")
+    def _tool_names_are_unique(self) -> Self:
+        """Werkzeugnamen sind global: das Modell ruft sie ohne Servernamen auf."""
+        owner: dict[str, str] = {}
+        for server, cfg in self.mcp_servers.items():
+            for tool in (*cfg.tools, *cfg.internal_tools):
+                if tool in owner:
+                    raise ValueError(
+                        f"Werkzeug '{tool}' ist doppelt deklariert "
+                        f"(mcp_servers.{owner[tool]} und mcp_servers.{server})."
+                    )
+                owner[tool] = server
+        return self
 
     @property
     def audit_db_path(self) -> Path:
@@ -93,11 +325,23 @@ class Settings(BaseSettings):
         file_secret_settings: PydanticBaseSettingsSource,
     ) -> tuple[PydanticBaseSettingsSource, ...]:
         # Reihenfolge = Priorität: init > Umgebung > jarvis.toml. Kein .env-Laden.
-        return (init_settings, env_settings, TomlConfigSettingsSource(settings_cls))
+        toml = TomlConfigSettingsSource(settings_cls, toml_file=config_path())
+        return (init_settings, env_settings, toml)
 
     @classmethod
     def load(cls) -> Self:
-        return cls()
+        explicit = os.environ.get(CONFIG_ENV)
+        if explicit and not Path(explicit).is_file():
+            # Eine ausdrücklich genannte Datei darf nicht still durch Standardwerte ersetzt werden.
+            raise ConfigFileMissing(
+                f"{CONFIG_ENV} zeigt auf '{explicit}', die Datei gibt es nicht."
+            )
+        settings = cls()
+        path = config_path()
+        if not settings.data_dir.is_absolute() and path.is_file():
+            # Ein Audit-Log je Installation, nicht eins je Ordner, aus dem `jarvis` gestartet wird.
+            settings.data_dir = path.resolve().parent / settings.data_dir
+        return settings
 
 
 def load_settings() -> Settings:

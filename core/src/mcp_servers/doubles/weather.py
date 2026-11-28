@@ -22,6 +22,15 @@ CURRENT = {
 }
 
 
+DAILY = {
+    "time": ["2026-11-09", "2026-11-10", "2026-11-11", "2026-11-12"],
+    "weather_code": [3, 61, 2, 0],
+    "temperature_2m_min": [7.0, 6.0, 4.0, 2.0],
+    "temperature_2m_max": [12.0, 9.5, 10.0, 8.0],
+    "precipitation_probability_max": [20, 85, 10, 0],
+}
+
+
 def fake_fetch(url: str, params: dict[str, str]) -> bytes:
     if url == server.GEOCODING_URL:
         place = PLACES.get(params["name"].strip().lower())
@@ -30,7 +39,7 @@ def fake_fetch(url: str, params: dict[str, str]) -> bytes:
         name, lat, lon = place
         result = {"name": name, "country": "Deutschland", "latitude": lat, "longitude": lon}
         return json.dumps({"results": [result]}).encode()
-    return json.dumps({"current": CURRENT}).encode()
+    return json.dumps({"current": CURRENT, "daily": DAILY}).encode()
 
 
 def main() -> None:

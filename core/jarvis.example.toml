@@ -5,12 +5,60 @@ port = 8765
 ollama_base_url = "http://127.0.0.1:11434/v1"
 # model = "qwen3.5:4b"       # ohne Eintrag gilt die Empfehlung von `jarvis doctor`
 data_dir = "data"
+# anrede = "Master"  # wie JARVIS dich anspricht (Standard: Master)
+# Werkzeugauswahl: nur die N passendsten Werkzeuge je Anfrage ans Modell geben (spart Kontext).
+# 0 = alle. Braucht "ollama pull nomic-embed-text"; ohne das Modell werden alle angeboten.
+# tool_select_limit = 12
+# Zwei Modelle (Router): kurze Fragen ohne Werkzeugbedarf gehen an das schnelle Modell.
+# Braucht ebenfalls das Embedding-Modell; ohne model_fast bleibt alles beim Modell "model".
+# model_fast = "qwen3:4b"
+# model_strong = "qwen3:14b"
+# Nachdenken (Thinking) der Modelle: Standard aus (schnell). true = langsamer, bei schweren Fragen besser.
+# model_thinking = false
+# home_location = "Dortmund"  # Wohnort: gilt, wenn eine Frage keinen Ort nennt (z. B. Wetter)
 log_level = "INFO"
+# Gesprächsverlauf je Sitzung (nur im Arbeitsspeicher). 0 Runden schaltet ihn ab.
+history_max_turns = 10
+history_max_chars = 16000
+# Kontextfenster des Modells in Tokens. Ollama nutzt standardmäßig nur 4096 und kürzt längere
+# Prompts still von vorn. Die Werkzeuge dieser Vorlage brauchen zusammen schon rund 3000 Tokens:
+# Ollama deshalb mit OLLAMA_CONTEXT_LENGTH=8192 (für längere Gespräche 16384) starten
+# (Windows: Umgebungsvariable setzen, Ollama neu starten) und hier denselben Wert eintragen.
+context_tokens = 8192
 
 # MCP-Server: nur hier deklarierte werden gestartet. `tools` ist die einzige Stelle für
 # Werkzeug-Metadaten; nicht aufgeführte Werkzeuge werden dem Modell nie angeboten.
-# Risikoklassen: READ, WRITE_REVERSIBLE, IRREVERSIBLE, EXTERNAL_COMMUNICATION, FINANCIAL.
+# Risikoklassen: READ, WRITE_LOCAL (nur lokale Datei, ohne Rückfrage), WRITE_REVERSIBLE,
+# IRREVERSIBLE, EXTERNAL_COMMUNICATION, FINANCIAL. READ und WRITE_LOCAL laufen direkt, die
+# übrigen Schreibklassen nur nach Rückfrage, FINANCIAL nie.
 # command = "python" steht für den Interpreter des Cores (venv).
+# Cloud-Stufe (nur Gerüst, standardmäßig AUS, siehe ADR-021): `/cloud <Frage>` schickt NUR die Frage
+# nach ausdrücklicher Freigabe an einen Anbieter. Nie mit Kalender, Notizen, Gedächtnis oder Verlauf.
+# Schlüssel: `jarvis secrets set cloud_api_key`. Ohne diesen Abschnitt bleibt alles lokal.
+# [cloud]
+# enabled = false
+# provider = "Name des Anbieters"
+# model = "modellname"
+# base_url = "https://api.example.com/v1"
+
+# Sprachclient (M2, ADR-023; Befehl `jarvis voice ...`, Pakete mit `uv sync --extra voice`).
+# Standardmäßig aus. Unterbrechen per Stimme ("voice") nur mit Kopfhörern sinnvoll.
+# [voice]
+# enabled = true
+# language = "auto"        # auto, de oder en
+# follow_up_seconds = 8    # Folgefrage ohne Wake Word
+# barge_in = "key"         # off, key (Tastenkürzel) oder voice
+# confirm_by_voice = false # nur WRITE_REVERSIBLE und nur mit Sprecherprüfung
+# wake_threshold = 0.5     # Wake Word: niedriger = empfindlicher
+# hotkey_listen = "<ctrl>+<alt>+j"  # Kürzel (leer = aus): zuhören, mute, interrupt, dictation
+# clap_wake = false        # Doppelklatschen als Start
+# pre_roll_seconds = 0     # Gespräch vor dem Wake Word (Sekunden, nur im Arbeitsspeicher)
+# speaker_check = false    # nur Masters Stimme (erst `jarvis voice anlernen`)
+# speaker_threshold = 0.5
+# stt_device = "cpu"       # "cuda" nur mit NVIDIA-Karte, CUDA 12 und cuDNN 9
+# mic_device = "Headset"   # Teil des Gerätenamens; `jarvis voice doctor` listet sie
+# speaker_device = "Headset"
+
 [mcp_servers.weather]
 command = "python"
 args = ["-m", "mcp_servers.weather"]
@@ -18,29 +66,106 @@ args = ["-m", "mcp_servers.weather"]
 [mcp_servers.weather.tools]
 get_weather = "READ"
 
+# Websuche über DuckDuckGo (ohne Konto und Schlüssel, ADR-015). Nur der Suchbegriff geht ins
+# Netz, nie der Gesprächsverlauf. Wer das nicht will, löscht diese drei Blöcke.
+[mcp_servers.websearch]
+command = "python"
+args = ["-m", "mcp_servers.websearch"]
+
+[mcp_servers.websearch.tools]
+web_search = "READ"
+
 # Apple-Kalender (iCloud/CalDAV). Zugangsdaten: `jarvis secrets set apple_caldav` (OS-Schlüsselbund).
-# create_event ist WRITE_REVERSIBLE -> Policy: CONFIRM (Vorschau + Rückfrage vor dem Anlegen).
+# Schreibende Werkzeuge -> Policy: CONFIRM (Vorschau + Rückfrage vor dem Anlegen/Ändern/Löschen).
 # `previews` nennt das Vorschau-Werkzeug (schreibt nichts, wird dem Modell nicht angeboten).
-# Optional: einen bestimmten Kalender wählen mit args = [..., "--kalender", "Privat"].
+# Gelesen werden alle Kalender, neue Termine landen im ersten. Mit
+# args = [..., "--kalender", "Privat"] wird nur dieser eine gelesen und beschrieben.
 [mcp_servers.calendar]
 command = "python"
 args = ["-m", "mcp_servers.calendar"]
-previews = { create_event = "preview_create_event" }
+previews = { create_event = "preview_create_event", update_event = "preview_update_event", delete_event = "preview_delete_event" }
 
 [mcp_servers.calendar.tools]
 list_events = "READ"
 create_event = "WRITE_REVERSIBLE"
+# Ändern und Löschen (ADR-014): immer mit Vorschau und Rückfrage. Wer JARVIS nur lesen und
+# anlegen lassen will, löscht die beiden Zeilen.
+update_event = "WRITE_REVERSIBLE"
+delete_event = "IRREVERSIBLE"
 
-# Notion (NUR LESEN, JARVIS-OS-Daten). Token: `jarvis secrets set notion` (OS-Schlüsselbund).
+# Notizen und Aufgaben, lokal (SQLite, kein Netz). Standard-Datei: ~/.jarvis/notizen.sqlite3,
+# andere mit args = [..., "--datei", "D:/jarvis/notizen.sqlite3"]. WRITE_LOCAL: ohne Rückfrage;
+# wer vorher gefragt werden will, setzt WRITE_REVERSIBLE (die Vorschau-Werkzeuge sind da).
+[mcp_servers.notes]
+command = "python"
+args = ["-m", "mcp_servers.notes"]
+previews = { add_note = "preview_add_note", complete_note = "preview_complete_note" }
+# Erinnerungen ("Erinnere mich um 18 Uhr an ..."): der Core holt fällige ab und meldet sie in der
+# Web-Oberfläche bzw. im CLI-Dialog, solange JARVIS läuft (ADR-013).
+reminders = "take_due_reminders"
+
+[mcp_servers.notes.tools]
+add_note = "WRITE_LOCAL"
+list_notes = "READ"
+complete_note = "WRITE_LOCAL"
+
+# Langzeitgedächtnis und Tagesjournal, lokal (ADR-019): JARVIS merkt sich, was du ausdrücklich
+# sagst ("Merk dir ..."), findet es wieder und vergisst es auf Wunsch (nach Rückfrage). Gespeichert
+# in ~/.jarvis/gedaechtnis.sqlite3, Journal als Textdatei je Tag in ~/.jarvis/journal/.
+# Die Suche versteht Bedeutung (nicht nur Wörter), wenn Ollama ein Embedding-Modell hat:
+# `ollama pull nomic-embed-text`. Ohne das Modell gilt die Stichwortsuche. Anderes Modell oder
+# anderer Ollama (nur im eigenen Netz): args = [..., "--embed-modell", "...", "--ollama-url", "..."];
+# nur Stichwörter: "--ohne-embeddings".
+# Vault (M1.10): Markdown- und Textdateien aus ausdrücklich genannten Ordnern und deine offenen
+# Notizen durchsuchbar machen: args = [..., "--vault", "D:/Vault", "--notizen", "~/.jarvis/notizen.sqlite3"]
+# (mehrere Ordner: "--vault" wiederholen). Nur Lesen; das Modell wählt nie einen Ordner.
+[mcp_servers.memory]
+command = "python"
+args = ["-m", "mcp_servers.memory"]
+previews = { forget = "preview_forget" }
+
+[mcp_servers.memory.tools]
+remember = "WRITE_LOCAL"
+recall = "READ"
+list_memories = "READ"
+forget = "IRREVERSIBLE"
+vault_index = "WRITE_LOCAL"
+journal_add = "WRITE_LOCAL"
+journal_read = "READ"
+
+# Ideen, Aufträge und Entwürfe für Nebeneinkünfte, lokal (ADR-016). Gespeichert in
+# ~/.jarvis/projekte.sqlite3, Entwürfe als Textdateien in ~/.jarvis/entwuerfe/. Andere Orte mit
+# args = [..., "--datei", "D:/jarvis/projekte.sqlite3", "--entwuerfe", "D:/jarvis/entwuerfe"].
+# Nichts wird veröffentlicht, gesendet oder bezahlt; Entwürfe überschreiben nie eine Datei.
+[mcp_servers.projekte]
+command = "python"
+args = ["-m", "mcp_servers.projekte"]
+
+[mcp_servers.projekte.tools]
+add_idea = "WRITE_LOCAL"
+list_ideas = "READ"
+add_lead = "WRITE_LOCAL"
+list_leads = "READ"
+set_project_status = "WRITE_LOCAL"
+save_draft = "WRITE_LOCAL"
+
+# Notion (lesen, und NEUE Einträge anlegen mit Vorschau und Rückfrage; ändern/löschen gibt es nicht,
+# ADR-017). Token: `jarvis secrets set notion` (OS-Schlüsselbund).
 # env ordnet Namen den Datenbank-IDs (Data-Source-IDs) zu: NOTION_DB_<NAME> = "<ID>".
 # Bekannte Namen: MISSION_CONTROL, ACADEMY, FORGE, OLYMPUS, VAULT (frei erweiterbar). Die Datenbank
 # muss in Notion mit der Integration geteilt sein (Seite > Verbindungen).
-[mcp_servers.notion]
-command = "python"
-args = ["-m", "mcp_servers.notion"]
-env = { NOTION_DB_MISSION_CONTROL = "<ID>", NOTION_DB_ACADEMY = "<ID>" }
-
-[mcp_servers.notion.tools]
-notion_search = "READ"
-notion_query = "READ"
-notion_get = "READ"
+# Erst einschalten (Zeilen ohne "# "), wenn Token und IDs da sind: sonst startet bei jeder Anfrage
+# ein Server, der nur Fehler liefert, und seine Werkzeuge belegen Platz im Kontextfenster.
+# [mcp_servers.notion]
+# command = "python"
+# args = ["-m", "mcp_servers.notion"]
+# env = { NOTION_DB_MISSION_CONTROL = "<ID>", NOTION_DB_ACADEMY = "<ID>" }
+# previews = { notion_add_entry = "preview_notion_add_entry" }
+#
+# [mcp_servers.notion.tools]
+# notion_search = "READ"
+# notion_query = "READ"
+# notion_get = "READ"
+# # Anlegen braucht in Notion die Integrationsberechtigung "Inhalte einfügen". Wer nur lesen will,
+# # lässt die Zeile weg: dann bekommt das Modell das Werkzeug nie.
+# notion_add_entry = "WRITE_REVERSIBLE"

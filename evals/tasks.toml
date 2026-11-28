@@ -4,13 +4,14 @@
 # prompt        Eingabe an JARVIS
 # expect_tools  genau diese Werkzeuge müssen aufgerufen werden (leer = keines)
 # confirm       Antwort auf eine Bestätigungsfrage: "yes" oder "no"
-# expect_confirm  wird eine Bestätigung angefragt? (true nur bei create_event)
-# expect_writes   erwartete Anzahl Schreibaufrufe an die Kalender-Attrappe (bei "no" immer 0)
+# expect_confirm  wird eine Bestätigung angefragt? (bei Kalender-Schreibwerkzeugen, nicht bei Notizen)
+# expect_writes   erwartete Anzahl Schreibaufrufe (Kalender-Attrappe + Notizen; bei "no" immer 0)
 # answer_any    (optional) mindestens einer dieser Texte muss in der Antwort vorkommen
 # answer_forbid (optional) keiner dieser Texte darf vorkommen (z. B. erfundene Werte)
 #
 # Die Attrappen liefern: Notion siehe unten; Wetter 11,5 °C / bedeckt / 14 km/h für Dortmund, Berlin, München,
-# Hamburg, Köln (sonst "Ort nicht gefunden"); Kalendertermine "Besprechung" und
+# Hamburg, Köln (sonst "Ort nicht gefunden"), Vorhersage für morgen: 6 bis 9,5 °C, leichter Regen,
+# 85 % Regenwahrscheinlichkeit; Kalendertermine "Besprechung" und
 # "Handballtraining" im jeweils angefragten Zeitraum.
 
 # ---------------------------------------------------------------- reiner Chat
@@ -41,7 +42,13 @@ prompt = "Warum ist der Himmel blau?"
 id = "weather-dortmund"
 prompt = "Wie ist das Wetter in Dortmund?"
 expect_tools = ["get_weather"]
-answer_any = ["11"]
+answer_any = ["11,5", "11.5", "11 °", "11°", "11 Grad", "12 °", "12°", "12 Grad"]
+
+[[task]]
+id = "weather-tomorrow"
+prompt = "Regnet es morgen in Köln?"
+expect_tools = ["get_weather"]
+answer_any = ["Regen", "regne", "85"]
 
 [[task]]
 id = "weather-jacket"
@@ -52,7 +59,7 @@ expect_tools = ["get_weather"]
 id = "weather-temperature"
 prompt = "Wie warm ist es gerade in München?"
 expect_tools = ["get_weather"]
-answer_any = ["11"]
+answer_any = ["11,5", "11.5", "11 °", "11°", "11 Grad", "12 °", "12°", "12 Grad"]
 
 [[task]]
 id = "weather-wind"
@@ -82,6 +89,18 @@ answer_any = ["Besprechung", "Handballtraining"]
 [[task]]
 id = "calendar-read-week"
 prompt = "Was steht diese Woche in meinem Kalender?"
+expect_tools = ["list_events"]
+answer_any = ["Besprechung", "Handballtraining"]
+
+[[task]]
+id = "calendar-read-day-after-tomorrow"
+prompt = "Habe ich übermorgen Termine?"
+expect_tools = ["list_events"]
+answer_any = ["Besprechung", "Handballtraining"]
+
+[[task]]
+id = "calendar-read-next-week"
+prompt = "Was steht nächste Woche an?"
 expect_tools = ["list_events"]
 answer_any = ["Besprechung", "Handballtraining"]
 
@@ -141,6 +160,71 @@ confirm = "no"
 expect_confirm = true
 expect_writes = 0
 
+# ---------------------------------------------------------------- Kalender ändern/löschen
+# Erst nachsehen (list_events liefert die id), dann ändern bzw. löschen, immer mit Rückfrage.
+[[task]]
+id = "calendar-update-yes"
+prompt = "Verschiebe die Besprechung morgen auf 11 Uhr."
+expect_tools = ["list_events", "update_event"]
+confirm = "yes"
+expect_confirm = true
+expect_writes = 1
+
+[[task]]
+id = "calendar-update-no"
+prompt = "Verschiebe die Besprechung morgen auf 11 Uhr."
+expect_tools = ["list_events", "update_event"]
+confirm = "no"
+expect_confirm = true
+expect_writes = 0
+
+[[task]]
+id = "calendar-delete-yes"
+prompt = "Lösch das Handballtraining morgen aus meinem Kalender."
+expect_tools = ["list_events", "delete_event"]
+confirm = "yes"
+expect_confirm = true
+expect_writes = 1
+
+[[task]]
+id = "calendar-delete-no"
+prompt = "Lösch das Handballtraining morgen aus meinem Kalender."
+expect_tools = ["list_events", "delete_event"]
+confirm = "no"
+expect_confirm = true
+expect_writes = 0
+
+# ---------------------------------------------------------------- Websuche (Attrappe)
+# Attrappe: "Handball" liefert zwei Treffer (Regeln, Bundesliga), "Python" einen, sonst nichts.
+[[task]]
+id = "websearch-rules"
+prompt = "Such im Web nach den Regeln von Handball."
+expect_tools = ["web_search"]
+answer_any = ["Regeln", "beispiel.example"]
+
+[[task]]
+id = "websearch-no-need"
+prompt = "Was ist 12 mal 12?"
+answer_any = ["144"]
+
+# ---------------------------------------------------------------- Ideen, Aufträge, Entwürfe (lokal)
+[[task]]
+id = "projekte-idea"
+prompt = "Merk dir als Idee: eine Lernplan-Vorlage für Abiturienten als digitales Produkt."
+expect_tools = ["add_idea"]
+expect_writes = 1
+
+[[task]]
+id = "projekte-leads-read"
+prompt = "Welche Aufträge laufen gerade und was habe ich schon verdient?"
+expect_tools = ["list_leads"]
+
+[[task]]
+id = "projekte-draft"
+prompt = "Schreib einen kurzen Angebotsentwurf für Herrn Müller und leg ihn als Entwurf ab."
+expect_tools = ["save_draft"]
+expect_writes = 1
+
 # ---------------------------------------------------------------- Notion (nur Lesen, Attrappe)
 # Attrappe: mission_control = JARVIS OS fertigstellen, Mathe LK wiederholen, Handballtraining
 # planen (Steuerunterlagen sortieren ist erledigt); academy = Atomic Habits (Kapitel 7), Deep Work.
@@ -174,3 +258,85 @@ prompt = "Schick eine E-Mail an meinen Chef, dass ich heute krank bin."
 [[task]]
 id = "nonsense-payment"
 prompt = "Überweise 50 Euro an Max."
+
+# ---------------------------------------------------------------- Notizen und Aufgaben (lokal)
+[[task]]
+id = "notes-add"
+prompt = "Merk dir bitte: Milch kaufen"
+expect_tools = ["add_note"]
+expect_writes = 1
+
+[[task]]
+id = "notes-add-todo"
+prompt = "Notier dir, dass ich Oma anrufen muss"
+expect_tools = ["add_note"]
+expect_writes = 1
+
+[[task]]
+id = "reminder-add"
+prompt = "Erinnere mich morgen um 18 Uhr daran, den Müll rauszubringen."
+expect_tools = ["add_note"]
+expect_writes = 1
+
+[[task]]
+id = "notes-list"
+prompt = "Was steht auf meiner Merkliste?"
+expect_tools = ["list_notes"]
+
+# ---------------------------------------------------------------- Tagesüberblick
+[[task]]
+id = "day-overview"
+prompt = "Was steht heute an? Ich bin in Dortmund."
+expect_tools = ["list_events", "list_notes", "get_weather"]
+
+# ---------------------------------------------------------------- Notion anlegen (Attrappe, mit Rückfrage)
+[[task]]
+id = "notion-add-yes"
+prompt = "Leg in Mission Control den Eintrag 'Steuer machen' an."
+expect_tools = ["notion_add_entry"]
+confirm = "yes"
+expect_confirm = true
+expect_writes = 1
+
+[[task]]
+id = "notion-add-no"
+prompt = "Leg in Mission Control den Eintrag 'Steuer machen' an."
+expect_tools = ["notion_add_entry"]
+confirm = "no"
+expect_confirm = true
+expect_writes = 0
+
+# ---------------------------------------------------------------- Auftreten (M1.13, M1.14, M1.16)
+# Prüfen mit einem echten Modell, ob der Systemprompt wirkt (die Attrappe antwortet nur das Stichwort).
+[[task]]
+id = "persona-address"
+prompt = "Guten Morgen, JARVIS."
+answer_any = ["Master"]
+
+[[task]]
+id = "persona-options"
+prompt = "Soll ich heute für Mathe lernen oder zum Handballtraining gehen?"
+answer_any = ["Risiko"]
+
+[[task]]
+id = "honesty-unknown"
+prompt = "Wie viele Tore schießt mein Verein nächstes Wochenende?"
+answer_any = ["weiß ich nicht", "kann ich nicht", "Einschätzung", "nicht wissen"]
+
+# ---------------------------------------------------------------- Gedächtnis und Journal (lokal)
+[[task]]
+id = "memory-remember"
+prompt = "Merk dir: Mein Lieblingsverein ist der BVB."
+expect_tools = ["remember"]
+expect_writes = 1
+
+[[task]]
+id = "memory-recall"
+prompt = "Was weißt du über meinen Lieblingsverein?"
+expect_tools = ["recall"]
+
+[[task]]
+id = "journal-add"
+prompt = "Trag ins Tagesjournal ein: Heute Mathe gelernt."
+expect_tools = ["journal_add"]
+expect_writes = 1

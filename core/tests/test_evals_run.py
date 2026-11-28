@@ -27,8 +27,20 @@ ARGS = {
     "get_weather": {"ort": "Dortmund"},
     "list_events": {"zeitraum": "morgen"},
     "create_event": {"titel": "Zahnarzt", "start": "2026-12-12T15:00"},
+    "update_event": {"id": "privat/besprechung.ics", "start": "2026-12-12T11:00"},
+    "delete_event": {"id": "privat/handball.ics"},
     "notion_query": {"datenbank": "mission_control"},
     "notion_search": {"begriff": "Handball"},
+    "add_note": {"text": "Milch kaufen"},
+    "list_notes": {},
+    "web_search": {"suchbegriff": "Handball Regeln"},
+    "notion_add_entry": {"datenbank": "mission_control", "titel": "Steuer machen"},
+    "remember": {"text": "Mein Lieblingsverein ist der BVB"},
+    "recall": {"frage": "Welcher Verein ist mein Lieblingsverein?"},
+    "journal_add": {"text": "Mathe gelernt"},
+    "add_idea": {"titel": "Lernplan-Vorlage", "kategorie": "produkt"},
+    "list_leads": {},
+    "save_draft": {"titel": "Angebot Müller", "text": "Entwurf"},
 }
 
 
@@ -44,8 +56,10 @@ def scripted_model(tasks: list[EvalTask], *, use_tools: bool = True) -> Function
         )
         returned = [p for m in messages for p in m.parts if isinstance(p, ToolReturnPart)]
         task = by_prompt[prompt]
-        if use_tools and task.expect_tools and not returned:
-            name = task.expect_tools[0]
+        done = {p.tool_name for p in returned}
+        pending = [name for name in task.expect_tools if name not in done]
+        if use_tools and pending:
+            name = pending[0]  # mehrere erwartete Werkzeuge nacheinander aufrufen
             args = dict(ARGS[name])
             if name == "get_weather" and "Xyzqwertplatz" in prompt:
                 args["ort"] = "Xyzqwertplatz"  # der Agent fragt nach dem Ort aus der Eingabe

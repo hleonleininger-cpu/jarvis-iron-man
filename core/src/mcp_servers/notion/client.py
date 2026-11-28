@@ -1,7 +1,7 @@
-"""Notion-API-Client: AUSSCHLIESSLICH LESEN.
+"""Notion-API-Client: Lesen, und als einzige Schreibaktion NEUE Seiten anlegen (ADR-017).
 
-Es gibt hier keinen Schreib-Endpunkt (kein Anlegen, Ändern, Archivieren, Kommentieren). Die
-Allowlist unten ist die einzige Stelle, die Requests zulässt; alles andere wird vor dem Netz
+Es gibt hier keinen Endpunkt zum Ändern, Archivieren, Löschen oder Kommentieren. Die beiden
+Allowlists unten sind die einzige Stelle, die Requests zulässt; alles andere wird vor dem Netz
 verworfen. Rohantworten verlassen dieses Paket nicht (siehe normalize.py).
 """
 
@@ -23,16 +23,23 @@ TIMEOUT_SECONDS = 15.0
 MAX_QUERY_PAGES = 3  # je 100 Einträge
 
 _UUID = r"[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12}"
-# Einzige erlaubte Zugriffe: Datenbank abfragen (POST ist hier eine LESE-Abfrage), Seite und
-# deren Blöcke lesen.
+# Erlaubte Lesezugriffe: Datenbank abfragen (POST ist hier eine LESE-Abfrage), ihr Schema,
+# Seite und deren Blöcke.
 ALLOWED_REQUESTS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("POST", re.compile(rf"^/data_sources/{_UUID}/query$")),
+    ("GET", re.compile(rf"^/data_sources/{_UUID}$")),
     ("GET", re.compile(rf"^/pages/{_UUID}$")),
     ("GET", re.compile(rf"^/blocks/{_UUID}/children$")),
 )
+# Die einzige erlaubte Schreibaktion: eine neue Seite anlegen. Aufgerufen wird sie nur vom
+# Werkzeug notion_add_entry, und das verlangt die Bestätigung des Nutzers (Policy).
+WRITE_REQUESTS: tuple[tuple[str, re.Pattern[str]], ...] = (("POST", re.compile(r"^/pages$")),)
 
 ERROR_TEXTS: dict[str, str] = {
     "not_configured": "Kein Notion-Token gesetzt. Bitte 'jarvis secrets set notion' ausführen.",
+    "keyring_unavailable": (
+        "Der OS-Schlüsselbund ist nicht verfügbar; der Notion-Token ist nicht lesbar."
+    ),
     "unauthorized": (
         "Notion hat den Token abgelehnt (ungültig oder widerrufen). "
         "Bitte 'jarvis secrets set notion' erneut ausführen."
@@ -41,10 +48,18 @@ ERROR_TEXTS: dict[str, str] = {
         "Die Datenbank bzw. Seite wurde nicht gefunden oder ist nicht mit der Integration "
         "geteilt (in Notion: Seite > Verbindungen > Integration hinzufügen)."
     ),
+    "invalid_request": (
+        "Notion hat die Anfrage abgelehnt (z. B. ist die ID eine Datenbank statt einer Seite)."
+    ),
     "rate_limited": "Notion begrenzt gerade die Anfragen. Bitte später erneut versuchen.",
     "unavailable": "Notion ist gerade nicht erreichbar.",
     "invalid_response": "Notion lieferte eine unerwartete Antwort.",
-    "forbidden_request": "Dieser Notion-Zugriff ist nicht erlaubt (nur Lesen).",
+    "forbidden_request": "Dieser Notion-Zugriff ist nicht erlaubt.",
+    "write_denied": (
+        "Notion hat das Anlegen abgelehnt. Die Integration braucht die Berechtigung 'Inhalte "
+        "einfügen' und Zugriff auf die Datenbank (Seite > Verbindungen)."
+    ),
+    "no_title_property": "Die Datenbank hat keine Titel-Spalte; dort kann nichts angelegt werden.",
 }
 
 
@@ -79,6 +94,11 @@ def urllib_transport(
         return Response(err.code, err.read().decode("utf-8", "replace"))
 
 
+def is_notion_id(value: str) -> bool:
+    """32 Hex-Zeichen, mit oder ohne Bindestriche (Form der Notion-IDs)."""
+    return re.fullmatch(_UUID, value) is not None
+
+
 def normalize_token(raw: str) -> str:
     """Entfernt Whitespace, ein mitkopiertes 'Bearer ' und umschließende Anführungszeichen."""
     value = raw.strip()
@@ -106,11 +126,15 @@ class NotionClient:
         if not self._token:
             raise NotionError("not_configured")
         self._transport = transport
+        # True, wenn die letzte Abfrage (Datenbank oder Blöcke) nicht alles geliefert hat.
+        self.incomplete = False
 
     def _request(
         self, step: str, method: str, path: str, body: dict[str, Any] | None = None
     ) -> dict[str, Any]:
-        if not any(m == method and rx.match(path) for m, rx in ALLOWED_REQUESTS):
+        if not any(
+            m == method and rx.match(path) for m, rx in (*ALLOWED_REQUESTS, *WRITE_REQUESTS)
+        ):
             log_error(step, None, "forbidden_request")
             raise NotionError("forbidden_request")
         headers = {
@@ -127,9 +151,14 @@ class NotionClient:
         if response.status == 401:
             log_error(step, 401, _error_code(response.body))
             raise NotionError("unauthorized")
+        if response.status == 400:
+            log_error(step, 400, _error_code(response.body))
+            raise NotionError("invalid_request")
         if response.status in (403, 404):
             log_error(step, response.status, _error_code(response.body))
-            raise NotionError("not_found")
+            raise NotionError(
+                "write_denied" if method == "POST" and path == "/pages" else "not_found"
+            )
         if response.status == 429:
             log_error(step, 429, _error_code(response.body))
             raise NotionError("rate_limited")
@@ -151,7 +180,8 @@ class NotionClient:
         """Alle Einträge einer Datenbank (bis zu MAX_QUERY_PAGES Seiten). Nur Lesen."""
         results: list[dict[str, Any]] = []
         cursor: str | None = None
-        for _ in range(MAX_QUERY_PAGES):
+        self.incomplete = False
+        for page_number in range(1, MAX_QUERY_PAGES + 1):
             body: dict[str, Any] = {"page_size": 100}
             if cursor:
                 body["start_cursor"] = cursor
@@ -164,13 +194,45 @@ class NotionClient:
             if not data.get("has_more") or not isinstance(next_cursor, str):
                 break
             cursor = next_cursor
+            self.incomplete = page_number == MAX_QUERY_PAGES
         return results
+
+    def title_property(self, source_id: str, step: str) -> str:
+        """Name der Titel-Spalte einer Datenbank (liest nur das Schema)."""
+        data = self._request(step, "GET", f"/data_sources/{source_id}")
+        for name, prop in as_dict(data.get("properties")).items():
+            if as_dict(prop).get("type") == "title":
+                return name
+        log_error(step, 200, "invalid_response:no_title_property")
+        raise NotionError("no_title_property")
+
+    def add_entry(
+        self, source_id: str, title_property: str, title: str, paragraphs: list[str], step: str
+    ) -> dict[str, Any]:
+        """Legt in der Datenbank EINE neue Seite mit Titel und optionalem Text an."""
+        body: dict[str, Any] = {
+            "parent": {"type": "data_source_id", "data_source_id": source_id},
+            "properties": {
+                title_property: {"title": [{"type": "text", "text": {"content": title}}]}
+            },
+            "children": [
+                {
+                    "object": "block",
+                    "type": "paragraph",
+                    "paragraph": {"rich_text": [{"type": "text", "text": {"content": text}}]},
+                }
+                for text in paragraphs
+            ],
+        }
+        return self._request(step, "POST", "/pages", body)
 
     def get_page(self, page_id: str) -> dict[str, Any]:
         return self._request("PAGE", "GET", f"/pages/{page_id}")
 
     def get_blocks(self, page_id: str) -> list[dict[str, Any]]:
+        """Die ersten Blöcke der Seite; `incomplete` sagt, ob es weitere gibt."""
         data = self._request("BLOCKS", "GET", f"/blocks/{page_id}/children")
         if not isinstance(data.get("results"), list):
             raise NotionError("invalid_response")
+        self.incomplete = bool(data.get("has_more"))
         return [d for d in map(as_dict, as_list(data["results"])) if d]

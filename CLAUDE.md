@@ -5,6 +5,10 @@ Persönlicher, lokal laufender KI-Assistent: Python-Core-Server, dünne Clients,
 Jede Änderung verbessert das bestehende System, erweitert es nie chaotisch.
 Das alte Repo `jarvis-os` ist nur Referenz und wird nicht verändert.
 
+## Auftrag
+Maßgeblich sind `docs/MASTERAUFTRAG.md` (Regeln und Ablauf), `docs/CHECKLISTE.md` (einzige Quelle
+dafür, was gebaut wird) und `docs/STAND.md` (Ist-Stand). Immer genau ein Meilenstein pro Auftrag.
+
 ## Arbeitsmodus (immer in dieser Reihenfolge)
 1. Repository analysieren.
 2. Bestehende Architektur verstehen.

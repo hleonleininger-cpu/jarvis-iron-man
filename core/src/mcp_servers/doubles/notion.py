@@ -1,4 +1,5 @@
-"""Notion-Attrappe: feste Seiten statt der echten API (nur Lesen, wie der echte Server).
+"""Notion-Attrappe: feste Seiten statt der echten API. Das Anlegen neuer Seiten wird nur
+protokolliert (JSON-Zeile in die per Argument übergebene Datei), nie irgendwohin geschrieben.
 
 Die Datenbank-IDs kommen wie im Betrieb aus NOTION_DB_<NAME>; die Attrappe liefert je Name
 passende Beispieldaten (mission_control -> Missionen, academy -> Reading Vault).
@@ -85,7 +86,7 @@ BLOCKS = [
 ]
 
 
-def make_transport() -> Transport:
+def make_transport(log_path: str | None = None) -> Transport:
     ids = {
         key[len(server.ENV_PREFIX) :].lower(): value
         for key, value in os.environ.items()
@@ -101,6 +102,22 @@ def make_transport() -> Transport:
             if pages is None:
                 return Response(404, json.dumps({"code": "object_not_found"}))
             return Response(200, json.dumps({"results": pages, "has_more": False}))
+        schema = re.match(r"^/data_sources/([^/]+)$", path)
+        if method == "GET" and schema:
+            if schema.group(1) not in by_id:
+                return Response(404, json.dumps({"code": "object_not_found"}))
+            props = {"Status": {"type": "select"}, "Name": {"type": "title"}}
+            return Response(200, json.dumps({"properties": props}))
+        if method == "POST" and path == "/pages":
+            if log_path:
+                entry = {"method": "POST", "path": path, "body": json.loads(body or b"{}")}
+                with open(log_path, "a", encoding="utf-8") as fh:
+                    fh.write(json.dumps(entry) + "\n")
+            created = {
+                "id": "33333333-3333-3333-3333-333333333301",
+                "url": "https://www.notion.so/x",
+            }
+            return Response(200, json.dumps(created))
         if method == "GET" and path.startswith("/pages/"):
             return Response(200, json.dumps(MISSION_PAGES[0]))
         if method == "GET" and path.endswith("/children"):
@@ -111,7 +128,9 @@ def make_transport() -> Transport:
 
 
 def main() -> None:
-    transport = make_transport()
+    log_path = sys.argv[1] if len(sys.argv) > 1 else None
+    sys.argv = sys.argv[:1]
+    transport = make_transport(log_path)
     server.make_client = lambda: NotionClient("eval", transport=transport)
     server.main()
 

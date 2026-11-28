@@ -7,23 +7,26 @@ Liefert `policy.decide` für ein Werkzeug CONFIRM (z. B. Termin anlegen), darf n
 bevor der Nutzer ausdrücklich zugestimmt hat. M1a lehnte CONFIRM nur ab.
 
 ## Entscheidung
-Ein einziger, werkzeugunabhängiger Fluss im Core:
+Ein einziger, werkzeugunabhängiger Fluss im Core. Er gilt für WRITE_REVERSIBLE, IRREVERSIBLE und
+EXTERNAL_COMMUNICATION; READ und WRITE_LOCAL (nur lokale, eigene Daten, ADR-012) laufen ohne
+Rückfrage:
 
 1. Das Gate im MCP-Hub hält den Aufruf an und holt eine **Vorschau**. Optional nennt
    `jarvis.toml` je Werkzeug ein Vorschau-Werkzeug (`previews`), das nichts schreibt und dem
    Modell nie angeboten wird; sonst zeigt der Hub Werkzeugname und Argumente.
    Meldet die Vorschau einen Fehler (ungültige Eingabe), geht der Fehler ans Modell, ohne Rückfrage.
-2. Die Anfrage geht als Ereignis an den Kanal; der `ConfirmationBroker` wartet auf Ja/Nein
-   (Timeout 120 s = Nein).
-   - **CLI:** interaktive Rückfrage `Anlegen? [j/N]`; nur j/ja gilt als Ja.
+2. Die Anfrage geht als Ereignis an den Kanal; der `ConfirmationBroker` wartet auf Ja/Nein.
+   - **CLI:** interaktive Rückfrage `Anlegen? [j/N]`; nur j/ja gilt als Ja. Kein Timeout: der
+     Nutzer sitzt vor der Frage, eine späte Antwort darf nicht verworfen werden.
    - **API:** SSE-Event `confirm` mit ID, Vorschau und Frage; Antwort per
-     `POST /v1/confirm/{id}` mit `{"approve": true|false}`.
+     `POST /v1/confirm/{id}` mit `{"approve": true|false}`. Timeout 120 s = Nein, mit eigenem
+     Hinweis ("Keine Antwort innerhalb von 120 s").
 3. Nur nach Ja wird mit **denselben** Argumenten ausgeführt. Nein, Timeout, Abbruch oder fehlender
    Kanal: nichts passiert.
 
 **Audit (nur Metadaten):** zwei Zeilen: `CONFIRM/pending`, dann `CONFIRMED/ok|error` oder
 `DENIED/denied|aborted`. Ohne Bestätigungskanal `CONFIRM/blocked`, bei ungültiger Eingabe
-`CONFIRM/invalid`.
+`CONFIRM/invalid`, bei hängender Vorschau `CONFIRM/timeout`.
 
 ## Konsequenzen
 - Der Agent läuft in einem eigenen Task, damit die Anfrage ausgeliefert wird, während der

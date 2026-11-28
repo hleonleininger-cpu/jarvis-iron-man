@@ -67,3 +67,15 @@ def test_save_format_and_filename(tmp_path: Path) -> None:
     assert {"ok", "tools_called", "writes", "error", "reasons", "answer"} <= set(
         task_b["results"][0]
     )
+
+
+def test_second_report_in_the_same_second_does_not_overwrite(tmp_path: Path) -> None:
+    from datetime import datetime
+
+    from jarvis_core.evals.report import Report, save_report
+
+    report = Report("m", 1, datetime(2026, 11, 11, 12, 0, 0), 1.0, [])
+    first = save_report(report, tmp_path)
+    second = save_report(report, tmp_path)
+    assert first != second and first.exists() and second.exists()
+    assert second.name == "20261111-120000-m-2.json"

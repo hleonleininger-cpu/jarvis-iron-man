@@ -9,7 +9,7 @@ import sqlite3
 import tempfile
 import time
 from collections.abc import Callable
-from contextlib import aclosing
+from contextlib import aclosing, closing
 from datetime import datetime
 from pathlib import Path
 
@@ -39,7 +39,7 @@ EVAL_NOTION_ENV = {
 }
 
 
-def eval_servers(writes_log: Path) -> dict[str, McpServerConfig]:
+def eval_servers(writes_log: Path, notes_file: Path | None = None) -> dict[str, McpServerConfig]:
     """Dieselben Werkzeuge und Risikoklassen wie jarvis.example.toml, aber mit Attrappen."""
     return {
         "weather": McpServerConfig(
@@ -47,27 +47,113 @@ def eval_servers(writes_log: Path) -> dict[str, McpServerConfig]:
             args=["-m", "mcp_servers.doubles.weather"],
             tools={"get_weather": RiskClass.READ},
         ),
+        "websearch": McpServerConfig(
+            command="python",
+            args=["-m", "mcp_servers.doubles.websearch"],
+            tools={"web_search": RiskClass.READ},
+        ),
         "notion": McpServerConfig(
             command="python",
-            args=["-m", "mcp_servers.doubles.notion"],
+            args=["-m", "mcp_servers.doubles.notion", str(writes_log)],
             env=EVAL_NOTION_ENV,
             tools={
                 "notion_search": RiskClass.READ,
                 "notion_query": RiskClass.READ,
                 "notion_get": RiskClass.READ,
+                "notion_add_entry": RiskClass.WRITE_REVERSIBLE,
             },
+            previews={"notion_add_entry": "preview_notion_add_entry"},
         ),
         "calendar": McpServerConfig(
             command="python",
             args=["-m", "mcp_servers.doubles.calendar", str(writes_log)],
-            tools={"list_events": RiskClass.READ, "create_event": RiskClass.WRITE_REVERSIBLE},
-            previews={"create_event": "preview_create_event"},
+            tools={
+                "list_events": RiskClass.READ,
+                "create_event": RiskClass.WRITE_REVERSIBLE,
+                "update_event": RiskClass.WRITE_REVERSIBLE,
+                "delete_event": RiskClass.IRREVERSIBLE,
+            },
+            previews={
+                "create_event": "preview_create_event",
+                "update_event": "preview_update_event",
+                "delete_event": "preview_delete_event",
+            },
+        ),
+        # Der echte Notiz-Server: er arbeitet ohnehin nur lokal, hier mit einer Wegwerf-Datei.
+        "notes": McpServerConfig(
+            command="python",
+            args=[
+                "-m",
+                "mcp_servers.notes",
+                "--datei",
+                str(notes_file or writes_log.with_suffix(".notes")),
+            ],
+            tools={
+                "add_note": RiskClass.WRITE_LOCAL,
+                "list_notes": RiskClass.READ,
+                "complete_note": RiskClass.WRITE_LOCAL,
+            },
+            previews={"add_note": "preview_add_note", "complete_note": "preview_complete_note"},
+            reminders="take_due_reminders",
+        ),
+        # Das Gedächtnis: ebenfalls der echte Server (nur lokal), mit Wegwerf-Datei und -Ordner.
+        "memory": McpServerConfig(
+            command="python",
+            args=[
+                "-m",
+                "mcp_servers.memory",
+                "--datei",
+                str(writes_log.with_suffix(".gedaechtnis")),
+                "--journal",
+                str(writes_log.with_suffix(".journal")),
+                "--ohne-embeddings",  # Evals brauchen kein laufendes Ollama für Embeddings
+            ],
+            tools={
+                "remember": RiskClass.WRITE_LOCAL,
+                "recall": RiskClass.READ,
+                "list_memories": RiskClass.READ,
+                "forget": RiskClass.IRREVERSIBLE,
+                "vault_index": RiskClass.WRITE_LOCAL,
+                "journal_add": RiskClass.WRITE_LOCAL,
+                "journal_read": RiskClass.READ,
+            },
+            previews={"forget": "preview_forget"},
+        ),
+        # Ebenfalls der echte Server (nur lokal), mit Wegwerf-Datei und -Ordner.
+        "projekte": McpServerConfig(
+            command="python",
+            args=[
+                "-m",
+                "mcp_servers.projekte",
+                "--datei",
+                str(_projects_file(writes_log)),
+                "--entwuerfe",
+                str(_drafts_dir(writes_log)),
+            ],
+            tools={
+                "add_idea": RiskClass.WRITE_LOCAL,
+                "list_ideas": RiskClass.READ,
+                "add_lead": RiskClass.WRITE_LOCAL,
+                "list_leads": RiskClass.READ,
+                "set_project_status": RiskClass.WRITE_LOCAL,
+                "save_draft": RiskClass.WRITE_LOCAL,
+            },
         ),
     }
 
 
+def _projects_file(writes_log: Path) -> Path:
+    return writes_log.with_suffix(".projekte")
+
+
+def _drafts_dir(writes_log: Path) -> Path:
+    return writes_log.with_suffix(".entwuerfe")
+
+
 def _tools_from_audit(db_path: Path) -> list[str]:
-    with sqlite3.connect(db_path) as conn:
+    # closing(): `with sqlite3.connect()` allein schließt nicht; unter Windows bliebe die Datei
+    # gesperrt und das Aufräumen des Eval-Ordners scheiterte.
+    with closing(sqlite3.connect(db_path)) as conn:
         rows = conn.execute("SELECT tool FROM audit WHERE tool IS NOT NULL ORDER BY id").fetchall()
     seen: list[str] = []
     for (tool,) in rows:
@@ -76,10 +162,28 @@ def _tools_from_audit(db_path: Path) -> list[str]:
     return seen
 
 
-def _count_writes(log: Path) -> int:
-    if not log.exists():
-        return 0
-    return len([line for line in log.read_text(encoding="utf-8").splitlines() if line.strip()])
+def _count_writes(log: Path, notes_file: Path) -> int:
+    """Schreibaufrufe: Zeilen im Protokoll der Kalender-Attrappe, gespeicherte Notizen sowie
+    Ideen/Aufträge und Entwürfe des Projekte-Servers."""
+    writes = 0
+    memory, journal = log.with_suffix(".gedaechtnis"), log.with_suffix(".journal")
+    if memory.exists():
+        with closing(sqlite3.connect(memory)) as conn:
+            writes += int(conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0])
+    if journal.exists():
+        writes += len(list(journal.iterdir()))
+    projects, drafts = _projects_file(log), _drafts_dir(log)
+    if projects.exists():
+        with closing(sqlite3.connect(projects)) as conn:
+            writes += int(conn.execute("SELECT COUNT(*) FROM items").fetchone()[0])
+    if drafts.exists():
+        writes += len(list(drafts.iterdir()))
+    if log.exists():
+        writes += len([ln for ln in log.read_text(encoding="utf-8").splitlines() if ln.strip()])
+    if notes_file.exists():
+        with closing(sqlite3.connect(notes_file)) as conn:
+            writes += int(conn.execute("SELECT COUNT(*) FROM notes").fetchone()[0])
+    return writes
 
 
 async def _consume(service: ChatService, task: EvalTask) -> tuple[str, int]:
@@ -106,8 +210,9 @@ async def run_once(
     with tempfile.TemporaryDirectory(prefix="jarvis-eval-") as tmp:
         workdir = Path(tmp)
         writes_log = workdir / "writes.jsonl"
+        notes_file = workdir / "notizen.sqlite3"
         settings = base.model_copy(
-            update={"data_dir": workdir, "mcp_servers": eval_servers(writes_log)}
+            update={"data_dir": workdir, "mcp_servers": eval_servers(writes_log, notes_file)}
         )
         audit = AuditLog(settings.audit_db_path)
         service = build_service(settings, audit, model, model_name)
@@ -120,7 +225,7 @@ async def run_once(
             error = f"{type(exc).__name__}: {str(exc)[:200]}"
         observation = Observation(
             tools_called=_tools_from_audit(settings.audit_db_path),
-            writes=_count_writes(writes_log),
+            writes=_count_writes(writes_log, notes_file),
             confirm_requests=confirms,
             answer=answer,
             error=error,

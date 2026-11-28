@@ -7,6 +7,7 @@ from jarvis_core.policy import Decision, PolicyContext, RiskClass, decide
     ("risk", "expected"),
     [
         (RiskClass.READ, Decision.ALLOW),
+        (RiskClass.WRITE_LOCAL, Decision.ALLOW),
         (RiskClass.WRITE_REVERSIBLE, Decision.CONFIRM),
         (RiskClass.IRREVERSIBLE, Decision.CONFIRM),
         (RiskClass.EXTERNAL_COMMUNICATION, Decision.CONFIRM),
