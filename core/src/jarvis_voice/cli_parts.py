@@ -15,7 +15,10 @@ class ConsoleIndicator:
     """Zeigt jeden Zustandswechsel in der Konsole (Mikrofon-Anzeige, Masterauftrag §6)."""
 
     def show(self, state: State) -> None:
-        typer.echo(f"● {state.value}", err=True)
+        # Die Anzeige ist nur Komfort: Ein ungültiges Konsolenhandle (Windows error 6, z. B. in
+        # manchen Terminals) darf den Sprachclient nicht beenden.
+        with contextlib.suppress(OSError):
+            typer.echo(f"● {state.value}", err=True)
 
     def cue(self, name: str) -> None:
         del name  # Hinweistöne kommen mit der Audio-Ausgabe (Block B)

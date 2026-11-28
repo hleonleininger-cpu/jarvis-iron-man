@@ -150,3 +150,17 @@ def test_voice_is_off_by_default_and_core_must_be_local() -> None:
         VoiceConfig(core_url="ftp://localhost")
     assert VoiceConfig(core_url="http://100.64.1.2:8765/").core_url == "http://100.64.1.2:8765"
     assert VoiceConfig(confirm_by_voice=False).barge_in == "key"
+
+
+def test_console_indicator_survives_a_broken_console(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Windows error 6 (ungültiges Konsolenhandle) darf den Sprachclient nicht beenden."""
+    import typer
+
+    from jarvis_voice.cli_parts import ConsoleIndicator
+    from jarvis_voice.protocols import State
+
+    def broken_echo(*_args: object, **_kwargs: object) -> None:
+        raise OSError(6, "Windows error 6")
+
+    monkeypatch.setattr(typer, "echo", broken_echo)
+    ConsoleIndicator().show(State.LISTENING)  # darf nicht werfen
