@@ -10,7 +10,7 @@ from jarvis_voice.clap import ClapDetector
 from jarvis_voice.cli_parts import ConsoleIndicator, NeverWake, NoSource, NullSink, core_client
 from jarvis_voice.engines import MissingPackage
 from jarvis_voice.hotkeys import HotkeyListener
-from jarvis_voice.models import ModelEntry, ModelError, load_registry, model_path
+from jarvis_voice.models import ModelEntry, ModelError, load_registry, model_path, verify
 from jarvis_voice.protocols import (
     AudioSink,
     AudioSource,
@@ -99,6 +99,10 @@ def build_parts(settings: Settings, with_audio: bool = True) -> Parts:
         if with_audio:
             raise
         detector = NeverWake()  # nur Funktionsprobe/Messung auf Systemen ohne das Wake-Word-Paket
+    # Englische Stimme optional: fehlt sie, bleibt die deutsche (Fehler erst bei Englisch).
+    voices = {"de": model_path(directory, registry["piper_de"], f"{config.tts_voice_de}.onnx")}
+    if not verify(directory, registry["piper_en"]):
+        voices["en"] = model_path(directory, registry["piper_en"], f"{config.tts_voice_en}.onnx")
     speaker = build_speaker(settings, directory, registry) if config.speaker_check else None
     typer: TextTyper | None = None
     watcher: WindowWatcher | None = None
@@ -125,12 +129,7 @@ def build_parts(settings: Settings, with_audio: bool = True) -> Parts:
             "float16" if config.stt_device == "cuda" else "int8",
             None if config.language == "auto" else config.language,
         ),  # fmt: skip
-        tts=PiperTts(
-            {
-                "de": model_path(directory, registry["piper_de"], f"{config.tts_voice_de}.onnx"),
-                "en": model_path(directory, registry["piper_en"], f"{config.tts_voice_en}.onnx"),
-            }
-        ),
+        tts=PiperTts(voices),
         core=core_client(settings),
         indicator=AudioIndicator(sink),
         speaker=speaker,
